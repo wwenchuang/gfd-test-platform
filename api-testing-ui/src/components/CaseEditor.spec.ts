@@ -61,6 +61,15 @@ function workflowDraft(): CaseDraft {
 }
 
 describe('CaseEditor', () => {
+  it('explains the saved case version and how to create an independent case', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT, editingVersion: { name: '原用例', version: 3 } } })
+    expect(wrapper.get('[data-testid="case-editing-context"]').text()).toContain('原用例')
+    expect(wrapper.get('[data-testid="case-editing-context"]').text()).toContain('v3')
+    expect(wrapper.text()).toContain('新版本')
+    expect(wrapper.text()).toContain('从接口创建用例')
+    await wrapper.setProps({ editingVersion: null })
+    expect(wrapper.get('[data-testid="case-editing-context"]').text()).toContain('新用例')
+  })
   it('preserves, edits and clears the advisory response threshold', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: { ...DRAFT, processing: { ...DRAFT.processing, response_time_warning_ms: 1500 } } } })
     const input = wrapper.get<HTMLInputElement>('[data-testid="response-time-warning"]')

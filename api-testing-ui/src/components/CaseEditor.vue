@@ -16,8 +16,8 @@ import CaseValidationSummary from './CaseValidationSummary.vue'
 
 type ProcessingPhase = 'pre' | 'post'
 
-const props = withDefaults(defineProps<{ modelValue: CaseDraft; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; operationError?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[]; environmentRevisionId?: string; environmentName?: string }>(), {
-  validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', operationError: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
+const props = withDefaults(defineProps<{ modelValue: CaseDraft; editingVersion?: { name: string; version: number } | null; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; operationError?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[]; environmentRevisionId?: string; environmentName?: string }>(), {
+  editingVersion: null, validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', operationError: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: []; debug: [] }>()
 const { active: testApplications } = useTestApplications()
@@ -318,6 +318,13 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
         <button data-testid="raw-tab" type="button" :class="{ active: mode === 'raw' }" @click="mode = 'raw'"><Code2 :size="15" />原始 JSON</button>
       </div>
     </header>
+
+    <div class="case-editing-context" data-testid="case-editing-context">
+      <template v-if="editingVersion">
+        <span>正在编辑：{{ editingVersion.name }} · v{{ editingVersion.version }}。保存会创建该用例的新版本，已采纳的基线不会自动替换。需要独立用例时，请到用例管理选择“从接口创建用例”。</span>
+      </template>
+      <span v-else>新用例草稿：保存后会创建独立用例。</span>
+    </div>
 
     <div v-if="mode === 'structured'" class="editor-form">
       <div class="form-grid case-identity-grid">

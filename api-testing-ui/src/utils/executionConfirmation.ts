@@ -3,6 +3,7 @@ export interface ApiExecutionConfirmation {
   environmentName: string
   targetName?: string
   caseCount?: number
+  effect?: string
 }
 
 export function isProductionLikeEnvironment(name: string): boolean {
@@ -12,10 +13,11 @@ export function isProductionLikeEnvironment(name: string): boolean {
 export function confirmApiExecution(input: ApiExecutionConfirmation): boolean {
   const target = input.targetName ? `“${input.targetName}”` : ''
   const count = input.caseCount == null ? '' : `（${input.caseCount} 条用例）`
+  const effect = input.effect ? ` ${input.effect}` : ''
   if (isProductionLikeEnvironment(input.environmentName)) {
     return window.confirm(
-      `当前目标是生产环境“${input.environmentName}”。确认${input.action}${target}${count}？请求将真实发送到该环境。`,
+      `当前目标是生产环境“${input.environmentName}”。确认${input.action}${target}${count}？请求将真实发送到该环境。${effect}`,
     )
   }
-  return window.confirm(`确认在“${input.environmentName}”${input.action}${target}${count}？`)
+  return window.confirm(`确认在“${input.environmentName}”${input.action}${target}${count}？${effect}`)
 }

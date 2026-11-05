@@ -260,3 +260,21 @@ test('long wait validates state controls and exact millisecond decimal seconds',
  input(sec,'180');for(const v of ['打印进度入口可见','上传进度按钮可见','取消打印完成按钮可见','打印进度详情入口可见','上传进度查询按钮可见','打印进度页面可见']){input(tar,v);assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,true,v);}
  for(const v of ['打印机EP3-9888E0094F2A处于工作中，姓名牌打印进度条已出现，暂停打印和取消打印按钮可见','取消打印已完成，取消原因反馈页已出现，页面显示取消原因和提交反馈']){input(tar,v);assert.equal(f.node.querySelector('[data-draft-confirm-all]').disabled,false,v);}
 });
+
+test('unsaved guard covers source text, structured edits and YAML while saved content stays clean',async t=>{
+ const f=fixture(t);await wait();assert.equal(f.mounted.hasUnsavedChanges(),false);
+ const source=f.node.querySelector('[data-draft-text]');source.value='新的测试目标';source.dispatchEvent(new f.w.Event('input',{bubbles:true}));
+ assert.equal(f.mounted.hasUnsavedChanges(),true);const unload=new f.w.Event('beforeunload',{cancelable:true});f.w.dispatchEvent(unload);assert.equal(unload.defaultPrevented,true);
+ source.value='';source.dispatchEvent(new f.w.Event('input',{bubbles:true}));await open(f);assert.equal(f.mounted.hasUnsavedChanges(),false);
+ const title=f.node.querySelector('[data-draft-title]');title.value='未保存';title.dispatchEvent(new f.w.Event('input',{bubbles:true}));assert.equal(f.mounted.hasUnsavedChanges(),true);
+ f.node.querySelector('[data-draft-save]').click();await wait();assert.equal(f.mounted.hasUnsavedChanges(),false);
+ const yaml=f.node.querySelector('[data-draft-yaml-input]');yaml.value='tasks: [';yaml.dispatchEvent(new f.w.Event('input',{bubbles:true}));assert.equal(f.mounted.hasUnsavedChanges(),true);
+ f.mounted.dispose();assert.equal(f.mounted.hasUnsavedChanges(),false);
+});
+
+test('switching drafts or applications asks before discarding an edited source description',async t=>{
+ const f=fixture(t,p=>p==='/ui-case-drafts/d1'?{ok:true,draft:{...draft,source_text:'已保存描述'}}:p.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'a',name:'应用A'},{app_id:'b',name:'应用B'}],modules:[]}:undefined);await open(f);
+ const input=f.node.querySelector('[data-draft-text]');input.value='尚未生成的新描述';input.dispatchEvent(new f.w.Event('input',{bubbles:true}));let prompts=0;f.w.confirm=()=>{prompts++;return false;};
+ const requests=f.calls.length;f.node.querySelector('[data-open-draft]').click();await wait();assert.equal(prompts,1);assert.equal(f.calls.length,requests);assert.equal(input.value,'尚未生成的新描述');
+ const app=f.node.querySelector('[data-draft-app]');app.value='b';app.dispatchEvent(new f.w.Event('change'));await wait();assert.equal(prompts,2);assert.equal(app.value,'a');assert.equal(input.value,'尚未生成的新描述');assert.equal(f.node.querySelector('[data-draft-title]').value,'导航');
+});

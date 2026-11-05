@@ -98,7 +98,7 @@ describe('CasesView', () => {
     vi.spyOn(tasks, 'list').mockResolvedValue([])
     vi.spyOn(tasks, 'restore').mockResolvedValue(null)
     vi.spyOn(context, 'saveContext').mockResolvedValue()
-    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({
+    const saveSelection = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({
       id: 'task-1', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1',
       name: '3D 家用接口测试', state: 'ready', selected_endpoint_ids: ['endpoint-1'], runnable_baseline_count: 1,
       latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
@@ -139,16 +139,71 @@ describe('CasesView', () => {
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表')
     expect((wrapper.get('[data-testid="case-application"]').element as HTMLSelectElement).value).toBe('com.kfb.model')
     expect(wrapper.get('[data-testid="case-business-home"]').classes()).toContain('active')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    wrapper.findComponent(CaseListPanel).vm.$emit('run-version', {
+      ...version, id: 'missing-version', endpoint_id: 'missing-endpoint',
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('该用例对应的接口不在当前接口版本中')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(saveForDebug).not.toHaveBeenCalled()
+    expect(saveSelection).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="save-and-debug"]').trigger('click')
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('创建并保存新用例'))
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('更新当前任务范围'))
 
     await wrapper.get('[data-testid="case-version-edit-version-1"]').trigger('click')
     await flushPromises()
 
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('我的收藏列表 - 基础正向流程')
     expect(wrapper.get('[data-testid="case-management-shell"]').classes()).toContain('mobile-detail-open')
+    expect(wrapper.get('[data-testid="case-editing-context"]').text()).toContain('基础正向流程 · v1')
 
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get('[data-testid="case-name"]').setValue('未保存的用例名称')
+    await wrapper.get('[data-testid="case-version-run-version-1"]').trigger('click')
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('保存用例新版本并更新当前任务范围'))
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('未保存的用例名称'))
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('包含未保存修改'))
+    cases.registerVersion(savedCase('version-2', '同接口另一用例'), false)
+    await flushPromises()
+    await wrapper.get('[data-testid="case-version-run-version-2"]').trigger('click')
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('未保存编辑'))
+    expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('未保存的用例名称')
+    const secondEndpoint = { ...ENDPOINT, id: 'endpoint-2', path: '/collection/other', summary: '另一接口' }
+    assets.endpoints.push(secondEndpoint)
+    cases.registerVersion({ ...savedCase('version-b', '接口 B 用例'), endpoint_id: secondEndpoint.id }, false)
+    await flushPromises()
+    await wrapper.get('[data-testid="case-version-edit-version-b"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="case-name"]').setValue('接口 B 的未保存编辑')
+    await wrapper.get('[data-testid="case-version-run-version-2"]').trigger('click')
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('替换该接口的未保存编辑'))
+    expect(cases.drafts[ENDPOINT.id].name).toBe('未保存的用例名称')
+    await wrapper.get('[data-testid="case-version-run-version-1"]').trigger('click')
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('未保存的用例名称'))
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('包含未保存修改'))
+    let preparedName = ''
+    saveForDebug.mockImplementationOnce(async endpointId => {
+      preparedName = cases.drafts[endpointId].name
+      return version
+    })
+    confirm.mockReturnValue(true)
+    await wrapper.get('[data-testid="case-version-run-version-1"]').trigger('click')
+    await flushPromises()
+    expect(preparedName).toBe('未保存的用例名称')
+    expect(debug).toHaveBeenCalledWith(expect.objectContaining({ caseVersionId: version.id }))
+    expect(cases.drafts[secondEndpoint.id].name).toBe('接口 B 的未保存编辑')
+    saveForDebug.mockClear()
+    debug.mockClear()
+    confirm.mockReturnValue(false)
+    await wrapper.get('[data-testid="case-version-edit-version-1"]').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('未保存的用例名称')
+    await wrapper.get('[data-testid="case-name"]').setValue('我的收藏列表 - 基础正向流程')
     await wrapper.get('[data-testid="save-and-debug"]').trigger('click')
     await flushPromises()
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('保存用例新版本并更新当前任务范围'))
     expect(saveForDebug).not.toHaveBeenCalled()
     expect(debug).not.toHaveBeenCalled()
 

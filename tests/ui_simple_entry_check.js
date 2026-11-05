@@ -618,3 +618,125 @@ test('video library opens the selected private original in a visible player',asy
  assert.match(path,/\/video\?app_id=a/);assert.equal(f.q('video').hidden,false);assert.equal(f.q('video').getAttribute('src'),'blob:video');
  assert.equal(f.q('[data-video-technical]').contains(f.q('video')),false);
 });
+
+test('start page leads into the existing creation chooser for text, recording, materials and video',async t=>{
+ const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ const entry=w.document.querySelector('[data-ui-start-create]');assert.ok(entry);assert.match(w.document.querySelector('[data-ui-start-create-help]').textContent,/需求.*文字.*视频.*录制/);
+ w.activateWorkflow=async key=>{w.activeWorkflow=key;w.showUiSimpleWorkflow();};entry.click();await wait();
+ assert.equal(w.activeWorkflow,'ui_library');assert.deepEqual([...w.document.querySelectorAll('[data-ui-case-source]')].map(node=>node.dataset.uiCaseSource),['text','recording','materials','video']);
+});
+
+test('start creation entry respects edit permission and a rejected navigation',async t=>{
+ const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';
+ w.hasPermission=key=>key==='ui.view';w.showUiSimpleWorkflow();assert.equal(w.document.querySelector('[data-ui-start-create]').disabled,true);assert.match(w.document.querySelector('[data-ui-start-create-help]').textContent,/联系管理员.*编辑权限/);
+ w.hasPermission=()=>true;w.showUiSimpleWorkflow();const entry=w.document.querySelector('[data-ui-start-create]');let calls=0;
+ w.activateWorkflow=async()=>{calls++;};entry.click();await wait();assert.equal(calls,1);assert.equal(w.activeWorkflow,'ui_start');assert.equal(w.document.querySelector('[data-ui-case-source]'),null);
+});
+
+test('start creation continuation cannot affect another identity or workflow',async t=>{
+ const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ let done;w.activateWorkflow=()=>new Promise(resolve=>{done=resolve;});w.document.querySelector('[data-ui-start-create]').click();
+ w.resetUiSimpleWorkflow();w.currentAccessProfile={user_id:'u2'};w.activeWorkflow='ui_reports';w.document.getElementById('editor-area').textContent='其他账号报告';done();await wait();
+ assert.equal(w.document.getElementById('editor-area').textContent,'其他账号报告');
+});
+
+test('a delayed creation navigation cannot reopen a chooser after leaving the original page',async t=>{
+ const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ let done;w.activateWorkflow=()=>new Promise(resolve=>{done=resolve;});w.document.querySelector('[data-ui-start-create]').click();
+ w.activeWorkflow='ui_reports';w.showUiSimpleWorkflow();w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();done();await wait();
+ assert.ok(w.document.querySelector('[data-ui-create-case]'));assert.equal(w.document.querySelector('[data-ui-case-source]'),null);
+});
+
+test('return from dirty creation asks once and cancellation preserves the editor',async t=>{
+ const {w}=fixture(t);let disposed=0,confirmations=0,allow=false;
+ w.UiCaseDraft={mount:(node)=>{node.textContent='未保存草稿';return {dispose:()=>disposed++,hasUnsavedChanges:()=>true};}};
+ w.confirm=()=>{confirmations++;return allow;};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();
+ w.document.querySelector('[data-ui-create-case]').click();w.document.querySelector('[data-ui-case-source="text"]').click();
+ const back=w.document.querySelector('[data-ui-case-back]');back.click();assert.equal(confirmations,1);assert.equal(disposed,0);assert.match(w.document.getElementById('editor-area').textContent,/未保存草稿/);
+ allow=true;back.click();assert.equal(confirmations,2);assert.equal(disposed,1);assert.ok(w.document.querySelector('[data-ui-create-case]'));
+});
+
+test('workflow navigation consults creation guard before saving or disposing',async t=>{
+ const {w}=fixture(t);let saveCalls=0,confirmed=0;w.UiCaseDraft={mount:node=>{node.textContent='未保存草稿';return {dispose(){},hasUnsavedChanges:()=>true};}};
+ w.confirm=()=>{confirmed++;return false;};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();w.document.querySelector('[data-ui-create-case]').click();w.document.querySelector('[data-ui-case-source="text"]').click();
+ w.normalizeWorkflowKey=x=>x;w.canAccessWorkflow=()=>true;w.WORKFLOW_SECTIONS={ui_reports:{title:'我的测试'},dashboard:{title:'首页'}};w.saveEditorBeforeNavigation=async()=>{saveCalls++;return true;};
+ const shell=fs.readFileSync('js/agent-status.js','utf8');w.eval(shell.slice(shell.indexOf('async function activateWorkflow('),shell.indexOf('\nfunction ',shell.indexOf('async function activateWorkflow(')+1)));
+ await w.activateWorkflow('ui_reports');assert.equal(confirmed,1);assert.equal(saveCalls,0);assert.equal(w.activeWorkflow,'ui_library');assert.match(w.document.getElementById('editor-area').textContent,/未保存草稿/);
+});
+
+test('a slower earlier workflow navigation cannot replace the later page',async t=>{
+ const {w}=fixture(t);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ const pending=[];w.normalizeWorkflowKey=x=>x;w.canAccessWorkflow=()=>true;w.WORKFLOW_SECTIONS={ui_library:{title:'用例库'},ui_reports:{title:'我的测试'},dashboard:{title:'首页'}};
+ w.saveEditorBeforeNavigation=()=>new Promise(resolve=>pending.push(resolve));w.hasOpenEditor=()=>false;w.closeTransientUiForNavigation=()=>{};w.setActiveWorkflow=key=>{w.activeWorkflow=key;};w.resetYamlToolbarForManager=()=>{};w.applyLazyLoadForSection=()=>{};
+ const shell=fs.readFileSync('js/agent-status.js','utf8');w.eval(shell.slice(shell.indexOf('async function activateWorkflow('),shell.indexOf('\nfunction ',shell.indexOf('async function activateWorkflow(')+1)));
+ const first=w.activateWorkflow('ui_library'),second=w.activateWorkflow('ui_reports');pending[1](true);await second;assert.equal(w.activeWorkflow,'ui_reports');
+ pending[0](true);await first;assert.equal(w.activeWorkflow,'ui_reports');
+});
+
+test('a pending workflow navigation cannot cross an account change',async t=>{
+ const {w}=fixture(t);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ let done;w.normalizeWorkflowKey=x=>x;w.canAccessWorkflow=()=>true;w.WORKFLOW_SECTIONS={ui_library:{title:'用例库'},dashboard:{title:'首页'}};
+ w.saveEditorBeforeNavigation=()=>new Promise(resolve=>{done=resolve;});w.hasOpenEditor=()=>false;w.closeTransientUiForNavigation=()=>{};w.setActiveWorkflow=key=>{w.activeWorkflow=key;};w.resetYamlToolbarForManager=()=>{};w.applyLazyLoadForSection=()=>{};
+ const shell=fs.readFileSync('js/agent-status.js','utf8');w.eval(shell.slice(shell.indexOf('async function activateWorkflow('),shell.indexOf('\nfunction ',shell.indexOf('async function activateWorkflow(')+1)));
+ const pending=w.activateWorkflow('ui_library');w.currentAccessProfile={user_id:'u2'};done(true);await pending;assert.equal(w.activeWorkflow,'ui_start');
+});
+
+test('late Agent updates keep simple workflow editors intact and refresh navigation badges',async t=>{
+ const {w}=fixture(t);let disposed=0,centers=0,badges=0,renders=0;
+ w.UiCaseDraft={mount:node=>{node.textContent='用户未保存的编辑';return {dispose:()=>disposed++,hasUnsavedChanges:()=>true};}};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();w.document.querySelector('[data-ui-create-case]').click();w.document.querySelector('[data-ui-case-source="text"]').click();
+ w.renderAgentCenter=()=>centers++;w.updateNavigationBadges=()=>badges++;w.renderActiveWorkflowPage=()=>renders++;
+ const shell=fs.readFileSync('js/agent-status.js','utf8');w.eval(shell.slice(shell.indexOf('function renderAgentPageAfterRunUpdate('),shell.indexOf('\nasync function confirmAgentStep(',shell.indexOf('function renderAgentPageAfterRunUpdate('))));
+ w.renderAgentPageAfterRunUpdate();assert.equal(centers,1);assert.equal(badges,1);assert.equal(renders,0);assert.equal(disposed,0);assert.match(w.document.getElementById('editor-area').textContent,/用户未保存的编辑/);
+});
+
+test('cancelling a later navigation also invalidates an older pending one',async t=>{
+ const {w}=fixture(t);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ let done;w.normalizeWorkflowKey=x=>x;w.canAccessWorkflow=()=>true;w.WORKFLOW_SECTIONS={ui_library:{title:'用例库'},ui_reports:{title:'我的测试'},dashboard:{title:'首页'}};
+ w.saveEditorBeforeNavigation=()=>new Promise(resolve=>{done=resolve;});w.hasOpenEditor=()=>false;w.closeTransientUiForNavigation=()=>{};w.setActiveWorkflow=key=>{w.activeWorkflow=key;};w.resetYamlToolbarForManager=()=>{};w.applyLazyLoadForSection=()=>{};
+ const shell=fs.readFileSync('js/agent-status.js','utf8');w.eval(shell.slice(shell.indexOf('async function activateWorkflow('),shell.indexOf('\nfunction ',shell.indexOf('async function activateWorkflow(')+1)));
+ const first=w.activateWorkflow('ui_library');w.confirmUiCaseDraftLeave=()=>false;await w.activateWorkflow('ui_reports');done(true);await first;assert.equal(w.activeWorkflow,'ui_start');
+});
+
+test('explicit logout asks before discarding unsaved draft and cancellation sends no request',async t=>{
+ const {w}=fixture(t);let requests=0,disposes=0,confirmations=0,allow=false;
+ w.UiCaseDraft={mount:()=>({dispose:()=>disposes++,hasUnsavedChanges:()=>true})};w.confirm=()=>{confirmations++;return allow;};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_library';w.showUiSimpleWorkflow();w.document.querySelector('[data-ui-create-case]').click();w.document.querySelector('[data-ui-case-source="text"]').click();
+ w.apiRequest=async()=>{requests++;return {ok:true};};w.clearAuthSession=()=>{disposes++;};const source=fs.readFileSync('js/auth.js','utf8');w.eval(source.slice(source.indexOf('async function doLogout()')));
+ await w.doLogout();assert.equal(confirmations,1);assert.equal(requests,0);assert.equal(disposes,0);
+ allow=true;await w.doLogout();assert.equal(confirmations,2);assert.equal(requests,1);assert.equal(disposes,1);
+});
+
+test('a forced 401 logout is not blocked by the unsaved draft confirmation',async t=>{
+ const {w}=fixture(t);let cleared=0,confirmed=0;w.clearAuthSession=()=>{cleared++;};w.confirmUiCaseDraftLeave=()=>{confirmed++;return false;};w.showToast=()=>{};
+ const source=fs.readFileSync('js/utils.js','utf8');w.eval(source.slice(source.indexOf('function forceLogoutWithMessage('),source.indexOf('\nasync function aiRequest(',source.indexOf('function forceLogoutWithMessage('))));
+ assert.throws(()=>w.forceLogoutWithMessage('会话失效'),error=>error.status===401);assert.equal(cleared,1);assert.equal(confirmed,0);
+});
+
+test('first-week guide exposes existing entry points and distinguishes unimplemented evidence',async t=>{
+ const {w,calls}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ const guide=w.document.querySelector('[data-ui-week-one]');assert.ok(guide);assert.equal(guide.open,false);assert.match(guide.querySelector('summary').textContent,/第.?1.?周/);
+ assert.match(guide.textContent,/快速体检/);assert.match(guide.textContent,/固定图.*尚未接入网页/);assert.match(guide.textContent,/人工.*耗时/);assert.match(guide.textContent,/证据/);
+ assert.equal(guide.querySelector('[data-week-api]').getAttribute('href'),'/api-test/');assert.equal(guide.querySelector('[data-week-api-runs]').getAttribute('href'),'/api-test/#/runs');
+ guide.querySelector('[data-week-workflow="system_config"]').click();assert.equal(calls.at(-1),'system_config');w.activeWorkflow='ui_start';guide.querySelector('[data-week-workflow="config"]').click();assert.equal(calls.at(-1),'config');
+});
+
+test('first-week guide explains unavailable permission without exposing inaccessible links',async t=>{
+ const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';
+ w.hasPermission=p=>p==='ui.view';w.canAccessWorkflow=()=>false;w.showUiSimpleWorkflow();const guide=w.document.querySelector('[data-ui-week-one]');
+ assert.ok(guide);assert.equal(guide.querySelector('[data-week-workflow="system_config"]').disabled,true);assert.equal(guide.querySelector('[data-week-workflow="config"]').disabled,true);
+ assert.equal(guide.querySelector('[data-week-api]'),null);assert.equal(guide.querySelector('[data-week-api-runs]'),null);assert.match(guide.textContent,/权限/);
+});
+
+test('first-week API links remain keyboard reachable with readable button styling',async t=>{
+ const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};w.canAccessWorkflow=()=>true;
+ const style=w.document.createElement('style');style.textContent=fs.readFileSync('css/ui-case-draft.css','utf8');w.document.head.append(style);
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ const guide=w.document.querySelector('[data-ui-week-one]');guide.open=true;
+ for(const [selector,href] of [['[data-week-api]','/api-test/'],['[data-week-api-runs]','/api-test/#/runs']]){
+  const link=guide.querySelector(selector);assert.equal(link.tagName,'A');assert.equal(link.getAttribute('href'),href);
+  assert.equal(w.getComputedStyle(link).color,'rgb(131, 235, 203)');link.focus();assert.equal(w.document.activeElement,link);
+ }
+ const css=style.textContent;assert.match(css,/\.ui-week-link:visited/);assert.match(css,/\.ui-week-link:focus-visible/);
+});
