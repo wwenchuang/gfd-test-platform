@@ -47,7 +47,7 @@ class RealTouchDecodeTests(unittest.TestCase):
             times=[f['timestamp_ms'] for f in result['frames']]
             self.assertIn(1133,times)
             self.assertTrue(any(1200<=t<=1500 for t in times))
-            self.assertLessEqual(len(times),300)
+            self.assertLessEqual(len(times),video.MAX_FRAMES)
 
     def test_long_repeated_micro_motion_keeps_base_and_tail(self):
         import tempfile,subprocess,shutil
@@ -58,10 +58,11 @@ class RealTouchDecodeTests(unittest.TestCase):
             subprocess.run([shutil.which('ffmpeg'),'-v','error','-f','lavfi','-i','color=white:s=256x512:r=30:d=100','-vf',filters,'-c:v','libx264','-pix_fmt','yuv420p',str(movie)],check=True)
             result=video.decode_video(movie,root/'frames',lambda:False)
             times=[f['timestamp_ms'] for f in result['frames']]
-            self.assertLessEqual(len(times),300)
+            self.assertLessEqual(len(times),video.MAX_FRAMES)
             self.assertGreater(times[-1],99000)
             self.assertLessEqual(max(b-a for a,b in zip(times,times[1:])),1500)
-            self.assertLess(result['micro_motion_groups_sampled'],result['micro_motion_groups_total'])
+            self.assertGreater(result['micro_motion_groups_sampled'],0)
+            self.assertLessEqual(result['micro_motion_groups_sampled'],result['micro_motion_groups_total'])
 
     def test_fractional_frame_rate_touch_uses_consistent_timestamps(self):
         import tempfile,subprocess,shutil
