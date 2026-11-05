@@ -14276,3 +14276,6 @@ git diff --check
 
 - QA 693d0da7 deployed (same code as main 16b5d6cd); source version 7 failed `return_gesture_not_explicit` during reconciliation. The rejected model response and exact window were not retained. Three bounded replay runs of retained first-pass/review candidates over frames 332–343 all returned four distinct returns and passed local coverage; this does not establish that this was the original failing window or that the full video passed. Source version 8 was queued for full verification; its terminal result and all Android runs remain pending.
 - Pending change stores a bounded set of actual coverage-conflict frame identifiers on the owner/app-scoped source failure record, validating all identifiers against that source media; no model prose is added to shared logs. Scoped 284 tests, backend static 63, compile and diff check passed. Do not restart the service while version 8 or another active task is running.
+- 17:20 后前端记录链接及编号 UI 已增量上线，网页选中 W02 真实记录后 URL 与编号均已验证；W02 请求追踪快照可见。并行旧版本 693d0da7 再次覆盖了第二周后端，当前有视频分析运行，禁止重启打断。第二周分析按钮此时返回 404；待视频任务终态且源代码版本稳定后，应从包含 7610acbd 与 6f8abe18 的主线恢复对应后端，核对静态资源与真实网页运行；不得把此前通过当当前可用。
+
+- 18:02 视频分析已无 queued/decoding/analyzing 任务，检查版本与健康状态后，在 693d0da7 上定向恢复第二周后端并更新前端；这是增量恢复，健康 revision 仍为 693d0da7，并非完整主线发布。真实网页重跑默认记录：原始业务断言 3/3，授权读取后的本地数据处理 17/17，业务新请求 0；刷新后最新结果仍在。并行旧版本发布可能再次覆盖，后续部署应合入主线并验证。
