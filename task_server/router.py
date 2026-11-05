@@ -2836,6 +2836,57 @@ def _get_week1_probes(handler, qs):
         handler._json({"ok": True, "results": week1_probe.list_results(owner)})
 
 
+@route_get("/api/platform/week1-smoke")
+def _get_week1_smoke(handler, qs):
+    from task_server.services import week1_smoke
+    owner = _week1_probe_owner(handler)
+    if owner:
+        handler._json({"ok": True, "results": week1_smoke.list_results(owner)})
+
+
+@route_get("/api/platform/week1-smoke/artifact")
+def _get_week1_smoke_artifact(handler, qs):
+    from task_server.services import week1_smoke
+    owner = _week1_probe_owner(handler)
+    if not owner:
+        return
+    try:
+        if set(qs) != {'id', 'item'}:
+            raise ValueError('not_found')
+        content, mime = week1_smoke.get_artifact(owner, qs['id'], qs['item'])
+    except (ValueError, OSError):
+        handler._json({'ok': False, 'error': '证据不存在或无权访问'}, 404)
+        return
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header('Content-Type', mime)
+    handler.send_header('Cache-Control', 'private, no-store')
+    handler.send_header('X-Content-Type-Options', 'nosniff')
+    if mime == 'application/zip':
+        handler.send_header('Content-Disposition', 'attachment; filename="week1-trace.zip"')
+    handler.send_header('Content-Length', str(len(content)))
+    handler.end_headers()
+    handler.wfile.write(content)
+
+
+@route_post("/api/platform/week1-smoke")
+def _post_week1_smoke(handler, qs):
+    from task_server.services import week1_smoke
+    owner = _week1_probe_owner(handler)
+    if not owner:
+        return
+    body = handler._body()
+    if not isinstance(body, dict) or set(body) != {"kind"} or body["kind"] not in ("api", "ui", "environment"):
+        handler._json({"ok": False, "error": "请选择环境、接口或页面检查"}, 400)
+        return
+    try:
+        result = week1_smoke.run(owner, body["kind"])
+    except week1_smoke.SmokeBusy:
+        handler._json({"ok": False, "error": "检查正在执行或刚刚完成，请稍后再试", "code": "smoke_busy"}, 429)
+        return
+    handler._json({"ok": True, "result": result})
+
+
 @route_get("/api/platform/week1-probes/fixture")
 def _get_week1_probe_fixture(handler, qs):
     from task_server.services import week1_probe

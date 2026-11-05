@@ -119,24 +119,37 @@ function showUiSimpleWorkflow(){
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}
   });
   if(activeWorkflow==='ui_library')attachUiCaseCreation(page);
-  if(activeWorkflow==='ui_start'){attachUiStartCreation(page);attachUiFirstWeekGuide(page);}
+  if(activeWorkflow==='ui_start')attachUiStartCreation(page);
   if(openCreation)page.querySelector('[data-ui-create-case]')?.click();
   // Keep the exact internal link through loading, errors, refresh and reauthentication.
   // Only an explicit close, selecting another test, or workflow departure abandons it.
   return true;
 }
+function showAiPractice(){
+  if(activeWorkflow!=='ai_practice'||!uiSimpleIdentity()||!hasPermission('platform.configure'))return false;
+  leaveUiSimpleWorkflow();
+  document.getElementById('app')?.classList.add('ui-simple-active');
+  const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
+  const page=document.createElement('div');page.className='ui-simple-page';
+  page.innerHTML='<div class="ui-simple-heading"><div><div class="workflow-kicker">AI 测试实战</div><h1>实战计划</h1><p>按周练习并查看阶段证据；真实模型调用可能产生费用。</p></div></div>';
+  area.append(page);toggleLibrary(false);attachUiFirstWeekGuide(page);return true;
+}
 function attachUiFirstWeekGuide(page){
   const identity=uiSimpleIdentity(),epoch=uiSimpleEpoch;
-  const current=()=>page.isConnected&&activeWorkflow==='ui_start'&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch;
+  const current=()=>page.isConnected&&activeWorkflow==='ai_practice'&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch&&hasPermission('platform.configure');
   const canOpen=key=>typeof canAccessWorkflow==='function'&&canAccessWorkflow(key);
   const guide=document.createElement('details');guide.dataset.uiWeekOne='';guide.className='ui-case-source-picker';
-  guide.innerHTML='<summary>第一次使用？查看第 1 周入门步骤</summary><ol><li>先做快速体检，检查服务、执行环境和模型配置。 <button type="button" data-week-workflow="system_config">打开环境体检</button></li><li>检查模型配置，再运行真实文本和固定图视觉探针。 <button type="button" data-week-workflow="config">打开模型配置</button><span data-week-probe-slot></span></li><li>选择只读业务接口，执行并核对业务断言。 <span data-week-api-slot></span></li><li>回到此页创建或选择用例，选择设备后执行；在“我的测试”查看实际结果。 <button type="button" data-week-workflow="ui_reports">查看我的测试</button></li><li>保存执行证据，并记录人工准备、执行、核验和清理耗时。网页暂不提供周验收和耗时记录，请另行留档。</li></ol>';
+  guide.innerHTML='<summary>第 1 周入门步骤</summary><ol><li>先做快速体检，检查服务、执行环境和模型配置。 <button type="button" data-week-workflow="system_config">打开环境体检</button></li><li>检查模型配置，再运行真实文本和固定图视觉探针。 <button type="button" data-week-workflow="config">打开模型配置</button><span data-week-probe-slot></span></li><li>选择只读业务接口，执行并核对业务断言。 <span data-week-api-slot></span><span data-week-smoke-slot></span></li><li>进入“开始测试”创建或选择用例，选择设备后执行；在“我的测试”查看实际结果。 <button type="button" data-week-workflow="ui_reports">查看我的测试</button></li><li>保存执行证据，并记录人工准备、执行、核验和清理耗时。网页暂不提供周验收和耗时记录，请另行留档。</li></ol>';
+  const snapshot=document.createElement('details');snapshot.dataset.weekSnapshot='';
+  snapshot.innerHTML='<summary>查看第 1 周练习范围和阶段证据</summary><p>2026-11-05 服务器历史快照，不是实时状态，也不是整周验收结果；以下是服务器执行记录，并非由本网页执行。</p><ul><li>平台盘点：已有网页入口、接口记录、模型探针和执行报告；运行版本、Runner 和队列以现场检查为准。</li><li>练习范围：反馈分类只读接口及匿名登录页；业务角色、权限合同和字段规则仍待确认。</li><li>历史已认证业务接口：HTTP 状态 200、业务码 0，返回列表。另一次匿名请求得到业务码 4009，验证的是未登录拒绝，不是业务成功。</li><li>服务器 API 冒烟：正向退出码 0，故意错误预期的反向退出码 1；匿名场景用于验证权限拒绝。</li><li>服务器 UI 冒烟：正向退出码 0，故意错误预期的反向退出码 1；检查登录页文案，未提交登录。</li><li>复现：已下载并使用配套浏览器重跑，但复用已有隔离 Linux 动态库；全新无复用环境复现未完成。</li><li>历史截图和 trace 保存在服务器受控目录，不在网页展示；新执行可在网页按权限查看截图和下载 trace。</li><li>人工耗时、视觉结果人工确认及账单计费方式待确认。</li></ul>';
+  guide.append(snapshot);
   for(const button of guide.querySelectorAll('[data-week-workflow]')){
     const target=button.dataset.weekWorkflow;button.disabled=!canOpen(target);
     if(button.disabled){button.title='当前账号无权使用，请联系管理员';button.insertAdjacentText('afterend','（需要相应权限）');}
     button.onclick=()=>{if(current()&&canOpen(target))activateWorkflow(target);};
   }
   attachUiWeekOneProbe(guide.querySelector('[data-week-probe-slot]'),current);
+  attachUiWeekOneSmoke(guide.querySelector('[data-week-smoke-slot]'),current);
   const slot=guide.querySelector('[data-week-api-slot]');
   if(hasPermission('api.view')){
     for(const [key,label,path] of [['weekApi','打开 API 测试','/api-test/'],['weekApiRuns','查看接口执行记录','/api-test/#/runs']]){
@@ -146,6 +159,96 @@ function attachUiFirstWeekGuide(page){
   }else slot.textContent='（API 测试需要相应权限）';
   const heading=page.querySelector('.ui-simple-heading');
   if(heading)heading.after(guide);else page.prepend(guide);
+}
+
+// These are fixed server-side checks, never client-provided URLs or shell commands.
+function attachUiWeekOneSmoke(slot,current){
+  const panel=document.createElement('details');panel.dataset.weekSmoke='';panel.className='ui-week-probe';
+  const summary=document.createElement('summary');summary.textContent='服务器体检、API / UI 冒烟与结果';panel.append(summary);slot.append(panel);
+  const canRun=()=>hasPermission('platform.configure')&&(currentAccessProfile?.is_superuser===true||currentAccessProfile?.scope?.ui_apps==='*');
+  if(!canRun()){
+    const message=document.createElement('p');message.textContent='运行和查看服务器冒烟需要平台配置权限及完整 UI 应用数据范围，请联系管理员。';panel.append(message);return;
+  }
+  panel.insertAdjacentHTML('beforeend','<p>选择一项后，服务器执行固定的只读检查，不需要填写地址或凭据。环境体检的网络响应不代表模型认证成功，文本和视觉模型需在上方单独验证。</p><p>API 检查匿名访问返回 4009，表示未登录被拒绝，不是已认证业务成功；UI 检查匿名登录页，不提交登录或操作手机。</p><p>API 和 UI 各包含正常断言和故意失败：故意失败是预期演练，要核对实际值与退出码 1；依赖缺失或运行错误会显示阻塞或失败。</p><div class="ui-week-probe-actions"><button type="button" data-smoke-run="environment">运行环境体检</button><button type="button" data-smoke-run="api">运行 API 冒烟</button><button type="button" data-smoke-run="ui">运行 UI 冒烟</button><button type="button" data-smoke-refresh>刷新结果</button></div><p data-smoke-notice role="status" aria-live="polite"></p><div data-smoke-history></div>');
+  const notice=panel.querySelector('[data-smoke-notice]'),history=panel.querySelector('[data-smoke-history]');
+  let busy=false,loaded=false,serial=0;
+  const valid=()=>current()&&canRun();
+  const setBusy=value=>{busy=value;panel.querySelectorAll('button').forEach(button=>{button.disabled=value;});};
+  const fail=error=>{notice.textContent=error?.status===403?'没有所需权限或完整应用范围，请联系管理员。':error?.status===401?'登录已失效，请重新登录。':error?.status===429?'已有服务器冒烟正在执行，请稍后刷新结果。':'操作未完成；请求可能仍在服务器执行，请先刷新结果，再检查服务和依赖。';};
+  const status=value=>({passed:'通过',failed:'失败',blocked:'阻塞',running:'进行中'})[value]||'状态未知';
+  const field=value=>value==null?'未记录':typeof value==='object'?JSON.stringify(value):String(value);
+  const openArtifact=async(row,id,item)=>{
+    if(!valid()||busy||!row.isConnected||!/^[a-f0-9]{32}$/.test(id)||!['positive-screenshot','negative-screenshot','positive-trace','negative-trace'].includes(item))return;
+    setBusy(true);notice.textContent='正在读取本人的受控证据…';
+    const controller=new AbortController();uiSimpleDownloads.add(controller);
+    const live=()=>!controller.signal.aborted&&valid()&&row.isConnected;
+    const ensureLive=()=>{if(!live()){controller.abort();throw new DOMException('已取消','AbortError');}};
+    let timedOut=false;const timeout=setTimeout(()=>{timedOut=true;controller.abort();},30000),screenshot=item.endsWith('-screenshot'),mime=screenshot?'image/png':'application/zip',limit=screenshot?8*1024*1024:25*1024*1024;
+    try{
+      const response=await nativeFetch('/api/platform/week1-smoke/artifact?id='+id+'&item='+item,{headers:authHeaders(),signal:controller.signal,redirect:'error'});
+      ensureLive();
+      if(!response.ok)throw Object.assign(new Error('artifact unavailable'),{status:response.status});
+      if((response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase()!==mime||Number(response.headers.get('content-length'))>limit)throw Error('invalid artifact');
+      let blob;
+      if(response.body?.getReader){
+        const reader=response.body.getReader(),chunks=[];let size=0;
+        try{while(true){const part=await reader.read();ensureLive();if(part.done)break;size+=part.value.byteLength;if(size>limit)throw Error('artifact too large');chunks.push(part.value);}blob=new Blob(chunks,{type:mime});}
+        catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
+      }else blob=await response.blob();
+      ensureLive();if(!blob.size||blob.size>limit)throw Error('invalid artifact');
+      const key=(screenshot?'week-one-smoke-image|':'week-one-smoke-download|')+uiSimpleIdentity()+'|'+id+'|'+item,old=uiSimplePictures.get(key);if(old)URL.revokeObjectURL(old);
+      if(screenshot&&row.dataset.smokePreviewKey&&row.dataset.smokePreviewKey!==key){const previous=uiSimplePictures.get(row.dataset.smokePreviewKey);if(previous)URL.revokeObjectURL(previous);uiSimplePictures.delete(row.dataset.smokePreviewKey);}
+      const src=URL.createObjectURL(blob);uiSimplePictures.set(key,src);
+      if(screenshot){
+        const img=document.createElement('img');img.dataset.smokePreview='';img.alt=item.startsWith('positive')?'正常断言截图':'故意失败截图';img.style.maxWidth='100%';img.style.maxHeight='320px';img.style.display='block';img.src=src;
+        row.dataset.smokePreviewKey=key;
+        row.querySelector('[data-smoke-preview]')?.remove();row.append(img);notice.textContent='截图已加载；这是本次服务器运行的证据。';
+      }else{
+        const link=document.createElement('a');link.href=src;link.download='第1周-'+(item.startsWith('positive')?'正常断言':'故意失败')+'-trace.zip';document.body.append(link);link.click();link.remove();
+        setTimeout(()=>{if(uiSimplePictures.get(key)===src){URL.revokeObjectURL(src);uiSimplePictures.delete(key);}},60000);notice.textContent='trace 下载已发起。';
+      }
+    }catch(error){if(valid()&&row.isConnected&&(timedOut||!controller.signal.aborted))notice.textContent=timedOut?'读取证据超时，请稍后重试。':error?.status===401?'登录已失效，请重新登录。':error?.status===403?'当前账号没有查看证据的权限。':error?.status===404?'证据不存在或当前账号无法查看。':'读取证据失败，请检查网络或稍后重试。';}
+    finally{clearTimeout(timeout);uiSimpleDownloads.delete(controller);if(valid())setBusy(false);}
+  };
+  const render=items=>{
+    for(const [key,src] of uiSimplePictures){if(key.startsWith('week-one-smoke-image|')){URL.revokeObjectURL(src);uiSimplePictures.delete(key);}}
+    history.replaceChildren();
+    if(!Array.isArray(items)||!items.length){history.textContent='暂无服务器冒烟记录。';return;}
+    for(const item of items){
+      const row=document.createElement('section');row.className='ui-week-probe-row';
+      const title=document.createElement('strong');title.textContent=(item.kind==='environment'?'环境体检':item.kind==='api'?'API 冒烟':item.kind==='ui'?'UI 冒烟':'未知类型')+' · '+status(item.status);row.append(title);
+      const meta=document.createElement('p');meta.textContent='时间：'+field(item.created_at);row.append(meta);
+      for(const check of Array.isArray(item.checks)?item.checks:[]){
+        const line=document.createElement('p');line.textContent=field(check.name)+'：'+status(check.status)+'；预期：'+field(check.expected)+'；实际：'+field(check.actual)+'；退出码：'+field(check.exit_code);row.append(line);
+      }
+      if(item.kind==='ui'&&item.artifacts){
+        const evidence=document.createElement('p');evidence.textContent='截图与 trace：'+(({saved:'已保存在服务器受控目录，可在此查看或下载',partial:'部分保存；缺失项无法查看或下载',unavailable:'未保存'})[item.artifacts]||'状态未知');row.append(evidence);
+        if(['saved','partial'].includes(item.artifacts)&&/^[a-f0-9]{32}$/.test(item.id||'')){
+          for(const [name,label] of [['positive-screenshot','查看正常截图'],['negative-screenshot','查看故意失败截图'],['positive-trace','下载正常 trace'],['negative-trace','下载故意失败 trace']]){
+            const button=document.createElement('button');button.type='button';button.disabled=busy;button.dataset.smokeArtifact=name;button.textContent=label;button.onclick=()=>void openArtifact(row,item.id,name);row.append(button);
+          }
+        }
+      }
+      if(item.message){const message=document.createElement('p');message.textContent=String(item.message);row.append(message);}
+      history.append(row);
+    }
+  };
+  const load=async(fresh)=>{
+    const request=++serial,data=await apiRequest('/platform/week1-smoke',{timeoutMs:10000});
+    if(!valid()||request!==serial)return;
+    if(data?.ok!==true||!Array.isArray(data.results))throw Error('invalid history');
+    const items=[...data.results];
+    if(fresh?.id&&!items.some(item=>item.id===fresh.id))items.unshift(fresh);
+    render(items);loaded=true;notice.textContent='显示已保存的服务器冒烟结果。';
+  };
+  panel.addEventListener('toggle',async()=>{if(!panel.open||loaded||busy||!valid())return;setBusy(true);notice.textContent='正在读取历史结果…';try{await load();}catch(error){if(valid())fail(error);}finally{if(valid())setBusy(false);}});
+  panel.querySelector('[data-smoke-refresh]').onclick=async()=>{if(!valid()||busy)return;setBusy(true);notice.textContent='正在读取历史结果…';try{await load();}catch(error){if(valid())fail(error);}finally{if(valid())setBusy(false);}};
+  for(const button of panel.querySelectorAll('[data-smoke-run]'))button.onclick=async()=>{
+    if(!valid()||busy)return;const kind=button.dataset.smokeRun;if(!['environment','api','ui'].includes(kind))return;setBusy(true);notice.textContent='服务器正在执行，请等待，不要重复点击。';
+    let completed=false;
+    try{const data=await apiRequest('/platform/week1-smoke',{method:'POST',body:{kind},timeoutMs:120000});if(!valid())return;if(data?.ok!==true||!data.result)throw Error('invalid result');completed=true;render([data.result]);await load(data.result);}
+    catch(error){if(valid()){if(completed)notice.textContent='本次结果已返回，但历史刷新失败；可稍后刷新结果。';else fail(error);}}finally{if(valid())setBusy(false);}
+  };
 }
 
 // A bounded probe uses only server-controlled inputs; a successful vision response
