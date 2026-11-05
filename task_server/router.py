@@ -2844,6 +2844,52 @@ def _get_week1_smoke(handler, qs):
         handler._json({"ok": True, "results": week1_smoke.list_results(owner)})
 
 
+def _week2_real_actor(handler):
+    from task_server.services import week2_real
+    from task_server.services.operation_attribution import current_actor
+    owner = _week1_probe_owner(handler)
+    if not owner:
+        return None
+    username = current_actor().get('username', '')
+    if not week2_real.authorized_actor(owner, username):
+        handler._json({'ok': False, 'error': '需要 API 查看权限'}, 403)
+        return None
+    return owner, username
+
+
+@route_get("/api/platform/week2-real")
+def _get_week2_real(handler, qs):
+    from task_server.services import week2_real
+    actor = _week2_real_actor(handler)
+    if actor:
+        handler._json({'ok': True, 'results': week2_real.list_results(actor[0], username=actor[1])})
+
+
+@route_post("/api/platform/week2-real")
+def _post_week2_real(handler, qs):
+    from task_server.services import week2_real
+    actor = _week2_real_actor(handler)
+    if not actor:
+        return
+    body = handler._body()
+    if not isinstance(body, dict) or set(body) not in (set(), {'execution_id'}, {'execution_id', 'case_id'}):
+        handler._json({'ok': False, 'error': '固定分析不接受额外参数'}, 400)
+        return
+    if body and any(not isinstance(body[key], str) or not re.fullmatch(
+            r'[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}', body[key])
+                    for key in body):
+        handler._json({'ok': False, 'error': '请填写有效的执行及子用例编号'}, 400)
+        return
+    try:
+        if set(body) == {'execution_id'}:
+            body['case_id'] = None
+        result = week2_real.run(*actor, **body)
+    except week2_real.PracticeBusy:
+        handler._json({'ok': False, 'error': '分析正在执行，请稍后再试', 'code': 'practice_busy'}, 429)
+        return
+    handler._json({'ok': True, 'result': result})
+
+
 @route_get("/api/platform/week1-smoke/artifact")
 def _get_week1_smoke_artifact(handler, qs):
     from task_server.services import week1_smoke
