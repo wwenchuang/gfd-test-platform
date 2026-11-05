@@ -165,6 +165,73 @@ test('preflight blocker stops creation and displays a reason',async t=>{
  await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();
  assert.equal(f.calls.filter(c=>c.path==='/ui-executions'&&c.options.method==='POST').length,0);assert.match(f.node.textContent,/用例已更新/);
 });
+test('switching applications removes old cases while loading and after failure',async t=>{
+ let rejectCatalog;
+ const apps=[{app_id:'app.a',name:'应用甲'},{app_id:'app.b',name:'应用乙'}];
+ const f=fixture(t,path=>{
+  if(!path.startsWith('/ui-executions/catalog'))return;
+  if(path.includes('app_id=app.b'))return new Promise((_,reject)=>{rejectCatalog=reject;});
+  return {ok:true,apps,modules:['导航'],items:[CASE],groups:[],total:1};
+ });
+ await select(t,f);const old=f.node.querySelector('[data-case-id]');
+ const app=f.node.querySelector('[name="ui-app"]');app.value='app.b';app.dispatchEvent(new f.w.Event('change'));
+ assert.equal(old.isConnected,false);assert.equal(f.node.querySelector('[data-case-id]'),null);
+ assert.match(f.node.querySelector('[data-ui-cases]').textContent,/加载|读取/);
+ assert.match(f.node.querySelector('[data-ui-notice]').textContent,/清除|重新选择/);
+ rejectCatalog(new Error('目录暂不可用'));await wait();
+ assert.equal(f.node.querySelector('[data-case-id]'),null);
+ assert.match(f.node.querySelector('[data-ui-cases]').textContent,/无法|失败/);
+ assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
+ assert.equal(creationPosts(f).length,0);
+});
+test('device area distinguishes loading, no devices, and failed refresh',async t=>{
+ let resolveDevices,rejectDevices,phase='loading';
+ const f=fixture(t,path=>path.startsWith('/ui-executions/devices')?(phase==='loading'?new Promise(r=>resolveDevices=r):new Promise((_,r)=>rejectDevices=r)):undefined);
+ f.mount();await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));
+ const hint=()=>f.node.querySelector('[data-ui-device-hint]').textContent;
+ assert.match(hint(),/正在|查找|加载/);
+ resolveDevices({ok:true,devices:[]});await wait();assert.match(hint(),/没有|未发现|暂无/);
+ phase='failure';const refresh=f.w.UiSimpleFlow.refresh();await wait();rejectDevices(new Error('设备服务不可用'));await refresh;
+ assert.match(hint(),/失败|不可用/);assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
+ assert.equal(creationPosts(f).length,0);
+});
+test('clearing application restores the choose-application device hint',async t=>{
+ const f=fixture(t);await select(t,f);const app=f.node.querySelector('[name="ui-app"]');
+ app.value='';app.dispatchEvent(new f.w.Event('change'));await wait();
+ assert.match(f.node.querySelector('[data-ui-device-hint]').textContent,/先选择应用/);
+ assert.equal(f.node.querySelectorAll('[data-device-key]').length,0);
+ assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
+});
+test('busy preflight explains queue while preserving explicit target',async t=>{
+ const f=fixture(t,path=>path==='/ui-executions/preflight'?{ok:true,ready:false,blockers:[{code:'device_busy',message:'手机正在执行任务'}]}:undefined);
+ await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ assert.equal(creationPosts(f).length,1);assert.deepEqual(JSON.parse(JSON.stringify(creationPosts(f)[0].options.body.targets)),[DEVICE.target]);
+ assert.match(f.node.querySelector('[data-ui-notice]').textContent,/占用.*等待空闲/);
+});
+test('busy device does not suppress other preflight blockers',async t=>{
+ const f=fixture(t,path=>path==='/ui-executions/preflight'?{ok:true,ready:false,blockers:[{code:'device_busy'},{code:'case_revision_changed',message:'用例已更新'}]}:undefined);
+ await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ assert.equal(creationPosts(f).length,0);assert.match(f.node.querySelector('[data-ui-notice]').textContent,/用例已更新/);
+});
+test('busy-device explanation survives an uncertain submission retry',async t=>{
+ let attempts=0;
+ const f=fixture(t,(path,o)=>{
+  if(path==='/ui-executions/preflight')return {ok:true,ready:false,blockers:[{code:'device_busy'}]};
+  if(path==='/ui-executions'&&o.method==='POST'&&++attempts===1)return Promise.reject(new Error('网络断开'));
+ });
+ await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ f.node.querySelector('[data-ui-recover]').click();await wait();await wait();
+ assert.match(f.node.querySelector('[data-ui-notice]').textContent,/占用.*等待空闲/);
+ assert.equal(creationPosts(f).length,2);
+ assert.equal(creationPosts(f)[0].options.headers['Idempotency-Key'],creationPosts(f)[1].options.headers['Idempotency-Key']);
+});
+test('created batch receives focus and scroll once without polling stealing focus',async t=>{
+ const f=fixture(t);let scrolls=0;f.w.HTMLElement.prototype.scrollIntoView=function(){scrolls++;};
+ await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();
+ const batch=f.node.querySelector('[data-ui-batch]');assert.equal(batch.hidden,false);assert.equal(f.w.document.activeElement,batch);assert.equal(scrolls,1);
+ const query=f.node.querySelector('[name="ui-query"]');query.focus();await f.w.UiSimpleFlow.refresh();
+ assert.equal(f.w.document.activeElement,query);assert.equal(scrolls,1);
+});
 test('uncertain start retry reuses the same idempotency key',async t=>{
  let attempts=0;const f=fixture(t,(path,o)=>{if(path==='/ui-executions'&&o.method==='POST'&&++attempts===1)return Promise.reject(new Error('网络断开'));});
  await select(t,f);f.node.querySelector('[data-ui-start]').click();await wait();await wait();f.node.querySelector('[data-ui-recover]').click();await wait();await wait();

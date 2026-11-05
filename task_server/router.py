@@ -2852,7 +2852,7 @@ def _week2_real_actor(handler):
         return None
     username = current_actor().get('username', '')
     if not week2_real.authorized_actor(owner, username):
-        handler._json({'ok': False, 'error': '需要 API 查看权限'}, 403)
+        handler._json({'ok': False, 'error': '需要平台配置、API 查看权限及完整应用范围'}, 403)
         return None
     return owner, username
 

@@ -14286,3 +14286,24 @@ git diff --check
 - QA 50949df4 deployed with full shared main and confirmed online. Platform source version 8 reached ready and draft uid_b092376f15ef7c44e70ddb766c83497c revision 3 passed validation after manual source-evidence fixes and staging. Trial uib_9ae93c63dc5242efa924a75257e99a00 failed at the first scroll: current Android home recommendations do not expose the recorded nameplate; Runner stopped and no print was dispatched.
 - Revision 4 adapts entry to the current app search. Trial uib_2b2d6d9a02d84739bfc04fa4eed17f16 passed phase 1 and failed in the editor: the current search result is a different same-name model (52x2x26 mm, default 智小白, no font control); original frame 030 is 40x20x2 mm, default 功夫豆, with font control. Both trials settled and stopped, neither reached printing. Do not claim the two same-name models are identical. Original model location/environment is being sought; do not remove the original font action and claim full original-case coverage.
 - Pending separate guard adds a mandatory review question for adjacent native return events sharing at least two source frames with a subset relationship. Both proposed actions and all source evidence remain; the user must review rather than silently discard or execute duplicate transitions. 207 relevant tests, backend static 63, py_compile and diff check passed. This guard is not yet deployed and does not automatically resolve the duplicate.
+## 2026-11-05 第三周与实战界面优化
+
+- 真实平台核验历史执行 0dfab6ed：文字建模聊天未收到响应，平台诊断 read operation timed out，耗时 30043ms，0 项断言；不是反馈接口超时。第三周已确定范围为真实接口契约、各 10 条正向/边界/权限状态异常、规则追溯与冒烟、同版本三轮；人工审核暂缓，不以历史回归冒充本周验收。
+- “AI 测试实战”改为按周切换、突出下一步、按需查看步骤/验收/历史和本地时间，加入第三周入口；第二周状态区分局部通过与业务规则待验。定向更新线上 HTML/JS/CSS，未重启；浏览器验证第 2/3 周切换、历史读取和既有反馈记录重新分析 17 项通过，本次不请求业务。线上部署仍是混合版本，旧包可覆盖。
+- 真实接口工作台对反馈分类发起一次 AI 用例生成，页面显示模型调用失败且无草稿，不计为成功；原因待进一步定位。发布保护候选独立审查发现恢复/回滚、普通用户权限及并发竞争问题，未上线，发布前仍需核对运行任务与完整源码版本。
+
+- 用户澄清：18 周计划仅是内部改造路线，不是同事使用平台的周次流程；撤除周次切换，界面围绕 UI 测试、API 测试和测试结果组织。测试工作台和开始测试交互曾定向更新并经真实网页检查，随后并行发布 50949df4 覆盖静态资源，须合入主线后重新部署并核验。创建缺陷草稿当前只支持确认发送飞书群消息，不能冒称已对接正式缺陷系统。
+
+- 已将工作台与开始 UI 测试的交互修正合入主线，并按文件哈希校验恢复到线上静态资源；真实网页核验三个入口、历史证据及切换应用时清除旧用例和设备。未发起设备任务；工作台仍受现有平台配置权限限制。发布 revision 不代表整版已更新，旧分支发布仍可能覆盖。
+- 模型调用日志表明，本轮反馈分类 AI 用例生成在 Gateway 120 秒超时，实际为 qwen3.8-max；上游根因未确认，没有生成草稿。路由保存问题与此次超时应分别排查，不能将本地修复视作线上生成成功。
+- 第二周分析服务本地改用可终止子进程、跨进程并发锁及读取前后权限复核；范围单元和隔离 PostgreSQL/Redis 测试通过。实际服务尚未更新或完成线上验证；真实业务异常关联及写入后的可恢复清理仍未证实，人工审核暂缓。
+## 2026-11-05 API 用例生成路由保存
+
+- `api_case_generation` 原先未列入 Gateway 模型路由的读写动作集；保存其他能力配置会删除该项，后续调用可能退回 `qwen_plus`。加入动作集后，旧客户端部分更新也保留该项及备用路由；隔离假上游测试覆盖保留、实际选路、显式修改及非法配置不落盘。
+- 该修复不修改线上模型配置，也不能恢复以前丢失的配置；线上模型调用超时问题仍需独立诊断和真实验收。本工作未发起真实模型调用、未部署。
+
+## 2026-11-05 测试工作台的同事访问
+
+- 测试工作台入口接受 UI 查看、API 查看或平台配置权限；各实际入口仍按现有 UI/API 权限与功能可用性控制，UI 查看不授予执行权限。环境/模型检查仅向拥有完整应用范围的配置管理员展示，反馈历史证据另需 API 查看权限；鉴权刷新时立即移除已显示的管理面板。后端权限未修改。
+- 本地交互检查 143 项、UI 工作流 89 项与前端静态 84 项通过；未部署，普通同事权限的真实网页验收仍需进行。
+- 普通同事可访问工作台的前端改动及浏览器缓存版本已合入主线；静态文件按旧版本哈希检查后定向更新，宿主和静态容器的安装哈希均已核对，未重启服务。管理员真实网页已验证工作台和我的测试入口；UI-only/API-only 等权限、撤权与管理证据隐藏经过本地测试，尚未以普通同事账号在线验证。

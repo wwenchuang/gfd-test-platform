@@ -109,7 +109,7 @@
         const input=label.querySelector('input');input.disabled=!item.execution_eligible||!s.options.canExecute();input.checked=s.selected.has(item.case_id);
         input.onchange=()=>{
           if(s.busy||s.uncertain)return;
-          if(item.app_id!==s.app){s.app=item.app_id;s.module='';s.cursor='';s.previous=[];s.selected.clear();s.node.querySelector('[name="ui-app"]').value=s.app;loadCatalog(s);loadDevices(s);}
+          if(item.app_id!==s.app)changeApp(s,item.app_id);
           if(input.checked)s.selected.set(item.case_id,{case_id:item.case_id,revision:item.revision,task_name:item.task_name});else s.selected.delete(item.case_id);
           invalidateStart(s);remember(s);
         };
@@ -144,7 +144,10 @@
       renderCases(s,data);
     }catch(error){
       if(s.app&&['app_forbidden','app_unavailable'].includes(error.code)&&!s.uncertain){changeApp(s,'');notice(s,'之前选择的应用已不可用，请重新选择。',true);}
-      else notice(s,error.message,true);
+      else{
+        const host=s.node.querySelector('[data-ui-cases]');host.replaceChildren();host.textContent='无法加载用例，请点击页面刷新后重试。';
+        s.node.querySelector('[data-ui-case-count]').textContent='';notice(s,error.message,true);
+      }
     }
   }
   function lockCatalogPages(s){
@@ -164,10 +167,15 @@
   }
   function changeApp(s,app){
     if(s.busy||s.uncertain)return;
+    const hadSelection=s.selected.size>0||!!s.target;
     s.app=app;s.module='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';s.notifyEnabled=false;s.notificationChannel=null;
     s.node.querySelector('[name="ui-app"]').value=app;
     s.pending.get('devices')?.abort();s.pending.delete('devices');s.deviceNodes.clear();
-    s.node.querySelector('[data-ui-devices]')?.replaceChildren();invalidateStart(s);remember(s);loadCatalog(s);loadDevices(s);
+    const cases=s.node.querySelector('[data-ui-cases]');cases.replaceChildren();cases.textContent='正在加载当前应用的用例…';
+    s.node.querySelector('[data-ui-case-count]').textContent='';
+    if(hadSelection)notice(s,'已切换应用，之前选择的用例和手机已清除，请重新选择。');
+    s.node.querySelector('[data-ui-devices]')?.replaceChildren();invalidateStart(s);remember(s);loadCatalog(s);
+    if(s.options.mode==='start'&&!app)renderDevices(s);else loadDevices(s);
   }
   function renderDevices(s){
     const host=s.node.querySelector('[data-ui-devices]'),keep=new Set(),connections=new Map();
@@ -216,14 +224,16 @@
       if(s.target===key){card.querySelector('input').disabled=true;card.querySelector('[data-phone-state]').textContent='所选手机已断开，请连接后刷新或明确改选';}
       else{card.remove();s.deviceNodes.delete(key);}
     }}
-    const hint=s.node.querySelector('[data-ui-device-hint]');hint.textContent=s.app?'每 5 秒同步连接状态；执行前核对占用与用例兼容性。':'先选择应用，再选择手机。';
+    const hint=s.node.querySelector('[data-ui-device-hint]');
+    hint.textContent=!s.app?'先选择应用，再选择手机。':s.deviceLoading&&!s.devices.length?'正在查找手机，请稍候。':s.deviceError?'手机状态读取失败，请点击页面刷新重试。':!s.devices.length?'没有发现手机，请检查连接后刷新。':'每 5 秒同步连接状态；执行前核对占用与用例兼容性。';
     buttonState(s);
   }
   async function loadDevices(s){
     if(s.options.mode!=='start'||!s.app||s.pending.has('devices'))return;
     const app=s.app;
-    try{const data=await request(s,'devices','/ui-executions/devices?'+new URLSearchParams({app_id:app}));if(!data||s.app!==app)return;s.devices=data.devices||[];renderDevices(s);}
-    catch(error){notice(s,'手机状态刷新失败：'+error.message,true);s.devices=s.devices.map(d=>({...d,connection_status:'unknown',snapshot_url:''}));renderDevices(s);}
+    s.deviceLoading=true;s.deviceError=false;renderDevices(s);
+    try{const data=await request(s,'devices','/ui-executions/devices?'+new URLSearchParams({app_id:app}));if(!data||s.app!==app)return;s.deviceLoading=false;s.devices=data.devices||[];renderDevices(s);}
+    catch(error){s.deviceLoading=false;s.deviceError=true;notice(s,'手机状态刷新失败：'+error.message,true);s.devices=s.devices.map(d=>({...d,connection_status:'unknown',snapshot_url:''}));renderDevices(s);}
   }
   function canRefreshPictures(s){return valid(s)&&s.options.mode==='start'&&s.options.canAdmit()&&s.options.canRefreshPictures()===true;}
   function pictureButtonState(s){
@@ -268,7 +278,7 @@
     if(!retry&&s.node.querySelector('[data-ui-start]').disabled)return;
     if(s.uncertain&&!retry){notice(s,'上次提交结果待确认，请先核对上次提交。',true);return;}
     s.busy=true;buttonState(s);notice(s,retry?'正在核对上次提交…':'正在检查所选用例和手机…');
-    let submitted=false;
+    let submitted=false,deviceWasBusy=retry&&s.startIntent?.deviceWasBusy===true;
     try{
       const body=retry?s.startIntent?.body:payload(s);if(!body)return;
       if(!s.startIntent||JSON.stringify(s.startIntent.body)!==JSON.stringify(body))s.startIntent={key:requestId(),body};
@@ -276,11 +286,14 @@
         if(!preflight.ready && !(preflight.blockers||[]).length)throw new Error('尚未通过执行检查，请刷新后重试');
         const blocking=(preflight.blockers||[]).filter(b=>b.code!=='device_busy');
         if(blocking.length)throw new Error(blocking.map(b=>b.message||b.code||'执行条件未满足').join('；'));
+        deviceWasBusy=(preflight.blockers||[]).some(b=>b.code==='device_busy');
+        s.startIntent.deviceWasBusy=deviceWasBusy;
       }
       store(s,'pending',s.startIntent);submitted=true;
       const data=await request(s,'start','/ui-executions',{method:'POST',headers:{'Idempotency-Key':s.startIntent.key},body});if(!data)return;
       s.uncertain=false;store(s,'pending',null);s.startIntent=null;selectBatch(s,data.batch.ui_batch_id);store(s,'lastBatch',s.batchId);
-      notice(s,'已创建本次测试。');showBatch(s,data.batch);
+      notice(s,deviceWasBusy?'已创建本次测试；手机占用期间任务会等待空闲，请查看下方实时状态。':'已创建本次测试。');showBatch(s,data.batch);
+      const batch=s.node.querySelector('[data-ui-batch]');batch.tabIndex=-1;batch.focus({preventScroll:true});batch.scrollIntoView?.({block:'start',behavior:'smooth'});
     }catch(error){if(valid(s)){s.uncertain=submitted&&!error.definitive;if(!s.uncertain){store(s,'pending',null);s.startIntent=null;}if(s.uncertain)notice(s,'提交结果待确认，可安全重试核对：'+error.message,true);else notice(s,error.message,true);}}
     finally{if(valid(s)){s.busy=false;buttonState(s);s.node.querySelector('[data-ui-recover]').hidden=!s.uncertain;}}
   }
@@ -385,7 +398,7 @@
   }
   function mount(node,options){
     leave();const mode=modes[options.mode]?options.mode:'start';
-    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canRefreshPictures:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],selected:new Map(),app:'',module:'',query:'',includeDrafts:false,composing:false,cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},releaseEnabled:false,notifyEnabled:false,notificationChannel:null,pictureRefreshAfter:0};
+    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canRefreshPictures:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],deviceLoading:false,deviceError:false,selected:new Map(),app:'',module:'',query:'',includeDrafts:false,composing:false,cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},releaseEnabled:false,notifyEnabled:false,notificationChannel:null,pictureRefreshAfter:0};
     state=s;const saved=read(s,'selection');if(saved&&typeof saved.app==='string'){s.app=saved.app;s.module=typeof saved.module==='string'?saved.module:'';s.target=typeof saved.target==='string'?saved.target:'';}
     s.startIntent=mode==='library'?null:read(s,'pending');s.uncertain=!!s.startIntent;
     const entry=options.entrySelection;

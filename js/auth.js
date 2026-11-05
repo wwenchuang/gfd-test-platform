@@ -98,6 +98,7 @@ const WORKFLOW_PERMISSIONS = {
 };
 
 function canAccessWorkflow(key) {
+  if (key === 'ai_practice') return hasPermission('ui.view') || hasPermission('api.view') || hasPermission('platform.configure');
   if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(key)) return isUiSimpleAvailable(key) && hasPermission('ui.view');
   if (['dashboard', 'agent', 'agent_confirm'].includes(key)) return canOperateAgent();
   if (key === 'generate') return canUseSharedUiAi();
