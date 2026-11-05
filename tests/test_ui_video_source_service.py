@@ -198,7 +198,7 @@ class VideoRetryAdmissionTests(unittest.TestCase):
             self.assertEqual(sum(d['status']=='queued' for d in store.list('one','com.example.app')),4)
             with self.assertRaisesRegex(ValueError,'video_capacity'):store.retry(docs[5]['source_id'],'one','com.example.app')
             for doc in docs[:3]:store.cancel(doc['source_id'])
-            with patch.object(store,'_disk_bytes',return_value=2*1024**3-1):
+            with patch.object(store,'_disk_bytes',return_value=4*1024**3-1):
                 with self.assertRaisesRegex(ValueError,'video_capacity'):store.retry(docs[5]['source_id'],'one','com.example.app')
             self.assertEqual(store.get(docs[5]['source_id'],'one','com.example.app')['analysis_version'],1)
             with self.assertRaises(KeyError):store.retry(docs[5]['source_id'],'other','com.example.app')

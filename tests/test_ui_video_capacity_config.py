@@ -42,11 +42,19 @@ def test_configured_limit_is_still_enforced(tmp_path,monkeypatch):
     with pytest.raises(ValueError,match='video_capacity'):upload(store)
 
 
+def test_storage_limit_allows_existing_two_gib_library_but_keeps_reserve(tmp_path,monkeypatch):
+    store=VideoStore(tmp_path)
+    monkeypatch.setattr(store,'_disk_bytes',lambda:2*1024**3)
+    assert upload(store)['status']=='queued'
+    monkeypatch.setattr(store,'_disk_bytes',lambda:4*1024**3-1)
+    with pytest.raises(ValueError,match='video_capacity'):upload(store)
+
+
 @pytest.mark.parametrize('guard',['disk','concurrency'])
 def test_larger_count_keeps_other_admission_guards(tmp_path,monkeypatch,guard):
     monkeypatch.setenv('TASK_UI_VIDEO_MAX_SOURCES','200')
     store=VideoStore(tmp_path)
-    if guard=='disk':monkeypatch.setattr(store,'_disk_bytes',lambda:2*1024**3-1)
+    if guard=='disk':monkeypatch.setattr(store,'_disk_bytes',lambda:4*1024**3-1)
     else:
         for _ in range(4):upload(store)
     with pytest.raises(ValueError,match='video_capacity'):upload(store)

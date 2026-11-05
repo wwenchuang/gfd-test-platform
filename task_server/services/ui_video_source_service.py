@@ -19,6 +19,7 @@ MAX_BYTES = 200 * 1024 * 1024
 MAX_DURATION_MS = 600000
 MAX_FRAMES = 360
 MAX_EXTRACTED_FRAME_BYTES = 32 * 1024 * 1024
+MAX_VIDEO_LIBRARY_BYTES = 4 * 1024 ** 3
 _ADMISSION = threading.Lock()
 @contextmanager
 def _admit():
@@ -165,7 +166,7 @@ class VideoStore:
         if not 1<=source_limit<=1000:source_limit=100
         # Reserve the newly admitted decoder as well as existing active work.
         visible=sum(not d.get('history_removed') for d in docs)
-        if active>=4 or (new_source and visible>=source_limit) or self._disk_bytes()+additional_bytes+128*1024**2*(active+1)>2*1024**3:
+        if active>=4 or (new_source and visible>=source_limit) or self._disk_bytes()+additional_bytes+128*1024**2*(active+1)>MAX_VIDEO_LIBRARY_BYTES:
             raise ValueError('video_capacity')
 
     def retry(self, identifier, owner, app):
