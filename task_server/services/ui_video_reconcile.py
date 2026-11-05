@@ -401,6 +401,28 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     return result
 
 
+def _exclude_focus_context_groups(groups,sources):
+    """Do not offer a shared result/focus context frame as a duplicate click."""
+    blocked=set()
+    for name,events in sources.items():
+        for i in range(len(events)-2):
+            previous,focus,typed=events[i:i+3]
+            if (previous['action']=='aiTap' and focus['action']=='aiTap' and typed['action']=='aiInput'
+                and previous['target']!=focus['target']==typed['target']
+                and len(focus['frame_refs'])>=3 and previous['frame_refs'][-1]==focus['frame_refs'][0]
+                and set(previous['frame_refs'])&set(focus['frame_refs'])=={focus['frame_refs'][0]}
+                and focus['frame_refs'][-1] in typed['frame_refs']
+                and re.search(r'输入框.*(?:获得焦点|键盘)|键盘.*(?:弹出|显示)',focus['observation'])):
+                blocked.add((name,i,i+1,focus['frame_refs'][0]))
+    def is_focus_group(group):
+        ids=set(group.get('anchor_ids',[]))
+        return any(group.get('common_frame')==ref and {f'{name}:{i}',f'{name}:{j}'}<=ids
+                   and all(sum(a.startswith(other+':') for a in ids)<=1 for other in sources if other!=name)
+                   and sum(a.startswith(name+':') for a in ids)==2
+                   for name,i,j,ref in blocked)
+    return [g for g in groups if not is_focus_group(g)]
+
+
 def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2):
     """Revisit one bounded gap without accepting omission or copying old semantics."""
     import copy
@@ -455,7 +477,9 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     payload['coverage_resolution_contract']['rules']+=' same_scroll_gesture仅用于相邻点击和滚动原来属于一次连续拖动：完整引用两个锚点全部原帧，共同交互帧真实存在，interaction明确触点持续移动且内容随之位移；why_not_separate_actions明确未见独立点击、未见松开后重新按下。结果只为aiScroll，除由content_motion_direction原图证据纠正的方向外，既有滚动参数必须保持一致；所有旧原帧须在examined_frame_refs中完整审查，结果frame_refs只保留本次交互的前/中/后证据，不强塞下一操作的起始上下文。若确实先点击再滚动，保留两项，不提交映射；真实无响应点击也必须保留。空心圆跨控件移动是触点，不因起点在按钮旁就当点击或加载图标。证据不清保留疑问。'
     payload['coverage_resolution_contract']['gesture_facts_for_same_scroll_gesture']={'content_motion_direction':'原帧内容移动方向up/down/left/right，与结果浏览direction相反；可纠正旧误判方向，其它参数保持','interaction_count':'实际独立交互次数整数','independent_click_observed':'存在独立点击的布尔事实','continuous_drag_observed':'原帧证明持续拖动的布尔事实','release_then_press_observed':'松开后再次按下的布尔事实'}
     from .ui_video_coverage_resolution import eligible_groups
-    payload['eligible_resolution_groups']=[g for g in eligible_groups({'first_pass':original,'independent_review':checked['events']},window_ids) if g['common_frame'] in missing_refs]
+    sources={'first_pass':original,'independent_review':checked['events']}
+    payload['eligible_resolution_groups']=_exclude_focus_context_groups(
+        [g for g in eligible_groups(sources,window_ids) if g['common_frame'] in missing_refs],sources)
     payload['gap_note']+=' coverage_checks只列真正冲突的旧识别，不能为未列出的正常操作编造映射。其余画面仍按原图输出，后端独立检查完整性。'
     repair_version='coverage'
     # Scroll-only duplicates are legal but not enumerated by eligible_groups.
@@ -482,7 +506,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         payload['gesture_hypotheses']=[]
         payload['validation_feedback']=(REVIEW_QUESTION if motion_review else '')+DELAYED_QUESTION
     if _overlapping_input_refs(original) or _overlapping_input_refs(checked['events']):
-        payload['validation_feedback']+=' 点击输入框与后续输入的原证据区间重叠：逐帧区分点击聚焦、键盘弹出与实际文字修改。前一控件的点击必须独立保留；如输入框的起始帧只是前一控件的结果，且下一帧确为点击输入框、再下一帧显示键盘，可在同一aiInput中保留实际点击和键盘原帧，并明确描述点击输入框及唤起键盘，不把前一控件的点击合并进输入，也不要提交覆盖映射。无法确认焦点点击时保留疑问。同一字段删除旧字后连续输入新字、切换输入法及选择候选词属于一次完整文字替换，保留删改到最终文字的证据，不把中间暂时清空拆成空值输入；不能跨提交、换字段或其他独立业务操作合并。不得按时间直接裁剪或补造边界，不得删除不同控件操作；无法从原图确认则保留疑问。'
+        payload['validation_feedback']+=' 点击输入框与后续输入的原证据区间重叠：逐帧区分点击聚焦、键盘弹出与实际文字修改。若聚焦点击独立保留，输入证据从实际删改文字开始。前一控件的点击必须独立保留；如输入框的起始帧只是前一控件的结果，且下一帧确为点击输入框、再下一帧显示键盘，可在同一aiInput中保留实际点击和键盘原帧，并明确描述点击输入框及唤起键盘，不把前一控件的点击合并进输入，也不要提交覆盖映射。无法确认焦点点击时保留疑问。同一字段删除旧字后连续输入新字、切换输入法及选择候选词属于一次完整文字替换，保留删改到最终文字的证据，不把中间暂时清空拆成空值输入；不能跨提交、换字段或其他独立业务操作合并。不得按时间直接裁剪或补造边界，不得删除不同控件操作；无法从原图确认则保留疑问。'
     if list(_input_rounds(original)) or list(_input_rounds(checked['events'])):
         payload['validation_feedback']+=' 相邻同字段aiInput可能是跨窗口拆开的同一轮编辑。必须核对全部原图：仅确认为同一输入框的一轮连续编辑时输出一个aiInput，保留每个旧输入片段的首尾原帧、从首段开始至末段结束的完整时间范围；observation明确同一输入框的一轮连续编辑及最终状态，不转录输入值。不要用coverage_resolutions声明输入合并。存在切换页面、字段、提交、重新进入或疑问时保留独立输入。'
     input_groups=list(_input_rounds(checked['events']))

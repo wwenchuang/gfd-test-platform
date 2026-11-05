@@ -71,6 +71,21 @@ def test_input_focus_can_use_previous_frame_as_context_without_erasing_font_clic
             vr.check_coverage([font,focus,typed],[font,bad])
 
 
+def test_focus_context_does_not_propose_font_and_focus_as_one_click():
+    font={**event(1),'target':'字体','frame_refs':['f1','f2','f3'],'start_ms':100,'end_ms':300}
+    focus={**event(3),'target':'文字输入框','frame_refs':['f3','f4','f5'],'start_ms':300,'end_ms':500,
+           'observation':'点击输入框，随后键盘弹出'}
+    typed={**event(5,'aiInput'),'target':'文字输入框','frame_refs':['f5','f6'],'start_ms':500,'end_ms':600}
+    sources={'first_pass':[font,focus,typed],'independent_review':[copy.deepcopy(font)]}
+    from task_server.services.ui_video_coverage_resolution import eligible_groups
+    groups=eligible_groups(sources,{'f1','f2','f3','f4','f5','f6'})
+    assert groups
+    assert vr._exclude_focus_context_groups(groups,sources)==[]
+    changed=copy.deepcopy(sources)
+    changed['first_pass'][2]['target']='其他字段'
+    assert vr._exclude_focus_context_groups(groups,changed)==groups
+
+
 def test_review_all_frames_and_shared_secrets(monkeypatch,tmp_path):
     from task_server.services import ai_skill_service as ai
     fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(90)]
