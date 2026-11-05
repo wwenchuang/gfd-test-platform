@@ -139,7 +139,7 @@ function attachUiFirstWeekGuide(page){
   const slot=guide.querySelector('[data-week-api-slot]');
   if(hasPermission('api.view')){
     for(const [key,label,path] of [['weekApi','打开 API 测试','/api-test/'],['weekApiRuns','查看接口执行记录','/api-test/#/runs']]){
-      const link=document.createElement('a');link.dataset[key]='';link.href=path;link.textContent=label;
+      const link=document.createElement('a');link.dataset[key]='';link.className='ui-week-link';link.href=path;link.textContent=label;
       link.onclick=event=>{if(!current()||!hasPermission('api.view'))event.preventDefault();};slot.append(link,document.createTextNode(' '));
     }
   }else slot.textContent='（API 测试需要相应权限）';

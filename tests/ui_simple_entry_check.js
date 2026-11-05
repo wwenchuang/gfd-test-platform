@@ -728,3 +728,15 @@ test('first-week guide explains unavailable permission without exposing inaccess
  assert.ok(guide);assert.equal(guide.querySelector('[data-week-workflow="system_config"]').disabled,true);assert.equal(guide.querySelector('[data-week-workflow="config"]').disabled,true);
  assert.equal(guide.querySelector('[data-week-api]'),null);assert.equal(guide.querySelector('[data-week-api-runs]'),null);assert.match(guide.textContent,/权限/);
 });
+
+test('first-week API links remain keyboard reachable with readable button styling',async t=>{
+ const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};w.canAccessWorkflow=()=>true;
+ const style=w.document.createElement('style');style.textContent=fs.readFileSync('css/ui-case-draft.css','utf8');w.document.head.append(style);
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ const guide=w.document.querySelector('[data-ui-week-one]');guide.open=true;
+ for(const [selector,href] of [['[data-week-api]','/api-test/'],['[data-week-api-runs]','/api-test/#/runs']]){
+  const link=guide.querySelector(selector);assert.equal(link.tagName,'A');assert.equal(link.getAttribute('href'),href);
+  assert.equal(w.getComputedStyle(link).color,'rgb(131, 235, 203)');link.focus();assert.equal(w.document.activeElement,link);
+ }
+ const css=style.textContent;assert.match(css,/\.ui-week-link:visited/);assert.match(css,/\.ui-week-link:focus-visible/);
+});
