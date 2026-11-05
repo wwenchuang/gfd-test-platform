@@ -35,10 +35,10 @@ test('practice page is available without simple UI feature and denies missing pl
  assert.equal(w.showAiPractice(),true);assert.ok(w.document.querySelector('[data-ui-week-one]'));assert.ok(w.document.querySelector('[data-week-probe]'));
  w.hasPermission=()=>false;w.document.getElementById('editor-area').replaceChildren();assert.equal(w.showAiPractice(),false);assert.equal(w.document.querySelector('[data-ui-week-one]'),null);
 });
-test('practice navigation checks platform permission even if simple UI is disabled',async t=>{
+test('practice navigation accepts view permissions even if simple UI is disabled',async t=>{
  const {w}=fixture(t);const auth=fs.readFileSync('js/auth.js','utf8');
  w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
- w.hasPermission=p=>p==='ui.view';assert.equal(w.isUiSimpleAvailable(),false);assert.equal(w.canAccessWorkflow('ai_practice'),false);
+ w.hasPermission=p=>p==='ui.view';assert.equal(w.isUiSimpleAvailable(),false);assert.equal(w.canAccessWorkflow('ai_practice'),true);
  w.hasPermission=p=>p==='platform.configure';assert.equal(w.canAccessWorkflow('ai_practice'),true);
 });
 test('restored practice workflow renders the independent guide',async t=>{
@@ -768,7 +768,7 @@ test('environment section preserves real model and server checks behind one disc
 test('environment section explains unavailable permissions',async t=>{
  const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';
  w.currentAccessProfile={user_id:'limited',scope:{ui_apps:['app']}};w.hasPermission=p=>p==='platform.configure';w.canAccessWorkflow=()=>false;w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-one]');
- assert.ok(guide);assert.equal(guide.querySelector('[data-probe-run]'),null);assert.equal(guide.querySelector('[data-smoke-run]'),null);assert.match(guide.textContent,/权限/);
+ assert.equal(guide,null);assert.equal(w.document.querySelector('[data-ui-week-two]'),null);
 });
 
 test('first-week snapshot distinguishes historical evidence from pending acceptance',async t=>{
@@ -807,7 +807,7 @@ test('week one model probe loads persisted evidence and keeps vision review sepa
 test('week one probe denies unprivileged execution and ignores stale responses',async t=>{
  const {w}=fixture(t);let resolve,gets=0;w.canAccessWorkflow=()=>true;w.hasPermission=p=>p==='ui.view';
  w.apiRequest=async(path)=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};gets++;return new Promise(r=>resolve=r);};
- await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';assert.equal(w.showAiPractice(),false);let panel=w.document.querySelector('[data-week-probe]');assert.equal(panel,null);assert.equal(gets,0);
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';assert.equal(w.showAiPractice(),true);let panel=w.document.querySelector('[data-week-probe]');assert.equal(panel,null);assert.equal(gets,0);
  w.hasPermission=()=>true;w.showAiPractice();panel=w.document.querySelector('[data-week-probe]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();
  w.currentAccessProfile={user_id:'u2'};resolve({ok:true,results:[{id:'x',mode:'text',status:'success',answer:'previous-account-secret'}]});await wait();assert.doesNotMatch(panel.textContent,/previous-account-secret/);
 });
@@ -844,8 +844,7 @@ test('text probe distinguishes a received answer from matching CONNECTED and exp
 test('model probe requires complete app scope even with platform configure permission',async t=>{
  const {w}=fixture(t);w.currentAccessProfile={user_id:'restricted',scope:{ui_apps:['app-one']}};w.canAccessWorkflow=()=>true;w.hasPermission=()=>true;let calls=0;
  w.apiRequest=async(path)=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};calls++;return {ok:true,results:[]};};
- await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week-probe]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();
- assert.match(panel.textContent,/完整.*应用.*范围/);assert.equal(panel.querySelector('[data-probe-run]'),null);assert.equal(calls,0);
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week-probe]');assert.equal(panel,null);assert.equal(calls,0);
 });
 
 test('reviewed vision result can be corrected and displays the confirmation time',async t=>{
@@ -877,7 +876,7 @@ test('week one smoke runs one fixed kind at a time and shows returned evidence',
 test('week one smoke hides controls without complete scope and ignores old account results',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.currentAccessProfile={user_id:'limited',scope:{ui_apps:['x']}};let resolve,calls=0;
  w.apiRequest=async(path)=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};calls++;return new Promise(r=>resolve=r);};
- await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let panel=w.document.querySelector('[data-week-smoke]');assert.match(panel.textContent,/完整.*应用.*范围/);assert.equal(panel.querySelector('[data-smoke-run]'),null);assert.equal(calls,0);
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let panel=w.document.querySelector('[data-week-smoke]');assert.equal(panel,null);assert.equal(calls,0);
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.showAiPractice();panel=w.document.querySelector('[data-week-smoke]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();assert.equal(calls,1);
  w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};resolve({ok:true,results:[{kind:'api',status:'passed',created_at:'previous-account-secret'}]});await wait();assert.doesNotMatch(panel.textContent,/previous-account-secret/);
 });
@@ -950,7 +949,7 @@ test('week two historical timeout identifies its actual chat execution without c
  w.hasPermission=p=>p==='platform.configure';w.showAiPractice();assert.equal(w.document.querySelector('[data-week2-timeout-evidence] a'),null);
 });
 test('existing evidence requires API permission and prevents stale account record links',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.hasPermission=p=>p==='platform.configure';await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let guide=w.document.querySelector('[data-ui-week-two]');assert.equal(guide.querySelector('[data-week2-trace-link]'),null);assert.match(guide.textContent,/API 查看.*权限/);
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.hasPermission=p=>p==='platform.configure';await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let guide=w.document.querySelector('[data-ui-week-two]');assert.equal(guide,null);
  w.hasPermission=()=>true;w.showAiPractice();guide=w.document.querySelector('[data-ui-week-two]');const link=guide.querySelector('[data-week2-trace-link]');assert.ok(link);w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
 });
 
@@ -967,7 +966,7 @@ test('week two real evidence exercise runs once, renders returned check detail a
 });
 test('week two real exercise controls require full UI scope and ignore stale account results',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.currentAccessProfile={user_id:'limited',scope:{ui_apps:['app']}};let calls=0,resolve;
- w.apiRequest=async path=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};calls++;return new Promise(r=>resolve=r);};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let panel=w.document.querySelector('[data-week2-real]');assert.match(panel.textContent,/完整.*应用.*范围/);assert.equal(panel.querySelector('[data-week2-real-run]'),null);assert.equal(calls,0);
+ w.apiRequest=async path=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};calls++;return new Promise(r=>resolve=r);};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let panel=w.document.querySelector('[data-week2-real]');assert.equal(panel,null);assert.equal(calls,0);
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.showAiPractice();panel=w.document.querySelector('[data-week2-real]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};resolve({ok:true,results:[{id:'secret',execution_id:'previous-secret'}]});await wait();assert.doesNotMatch(panel.textContent,/previous-secret/);
 });
 
@@ -991,7 +990,7 @@ test('week two can use an execution ID or same-origin run link without a case ID
 test('week two preserves real trace evidence and guards the execution link',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let guide=w.document.querySelector('[data-ui-week-two]'),snapshot=guide.querySelector('[data-week2-snapshot]');
  assert.match(snapshot.textContent,/2026-11-05.*X-Request-ID/);assert.match(snapshot.textContent,/UUID.*一致/);assert.match(snapshot.textContent,/HTTP 200.*业务码.?0.*结构.*通过/);assert.match(snapshot.textContent,/未回显/);assert.match(snapshot.textContent,/日志关联.*未验证/);const link=snapshot.querySelector('[data-week2-trace-link]');assert.equal(link.getAttribute('href'),'/api-test/#/runs?executionId=6e5ae109-ba21-4434-9835-5d1e58d228ff');w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
- w.currentAccessProfile={user_id:'limited',scope:{ui_apps:'*'}};w.hasPermission=p=>p==='platform.configure';w.showAiPractice();guide=w.document.querySelector('[data-ui-week-two]');assert.equal(guide.querySelector('[data-week2-trace-link]'),null);
+ w.currentAccessProfile={user_id:'limited',scope:{ui_apps:'*'}};w.hasPermission=p=>p==='platform.configure';w.showAiPractice();guide=w.document.querySelector('[data-ui-week-two]');assert.equal(guide,null);
 });
 
 test('week two task progress follows latest authorized analysis and opens its exact evidence',async t=>{
@@ -1015,4 +1014,25 @@ test('week two explains when the analysis service is not deployed',async t=>{
 
 test('week two clears returned evidence when history denies authorization after analysis',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;let gets=0;w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(path==='/platform/week2-real'&&options.method==='POST')return {ok:true,result:{id:'private',status:'passed',execution_id:'private-source'}};if(path==='/platform/week2-real'&&++gets>1)throw Object.assign(Error('denied'),{status:403});return {ok:true,results:[]};};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-two]'),panel=guide.querySelector('[data-week2-real]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();panel.querySelector('[data-week2-real-run]').click();await wait();await wait();assert.doesNotMatch(panel.querySelector('[data-week2-real-history]').textContent,/private-source/);assert.match(guide.querySelector('[data-week2-progress]').textContent,/待核验/);assert.match(panel.textContent,/权限/);
+});
+
+test('colleague access to the workspace follows UI or API view without exposing admin evidence',async t=>{
+ const {w,calls}=fixture(t);const auth=fs.readFileSync('js/auth.js','utf8');w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
+ let permissions=new Set(['ui.view']);w.hasPermission=p=>permissions.has(p);const requests=[];w.apiRequest=async(path,opts={})=>{requests.push([path,opts.method||'GET']);return {ok:true,enabled:true};};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';assert.equal(w.canAccessWorkflow('ai_practice'),true);assert.equal(w.showAiPractice(),true);
+ let page=w.document.querySelector('[data-practice-workbench]');assert.ok(page);assert.equal(page.querySelector('[data-practice-api]'),null);assert.equal(page.querySelector('[data-practice-workflow="ui_start"]').disabled,false);assert.equal(page.querySelector('[data-practice-workflow="ui_reports"]').disabled,false);assert.equal(page.querySelector('[data-ui-week-one]'),null);assert.equal(page.querySelector('[data-ui-week-two]'),null);assert.equal(requests.filter(([path])=>path.startsWith('/platform/')).length,0);
+ const button=page.querySelector('[data-practice-workflow="ui_start"]');permissions.clear();button.click();assert.equal(calls.includes('ui_start'),false);
+ permissions=new Set(['api.view']);w.resetUiSimpleWorkflow();w.activeWorkflow='ai_practice';assert.equal(w.canAccessWorkflow('ai_practice'),true);assert.equal(w.showAiPractice(),true);page=w.document.querySelector('[data-practice-workbench]');assert.equal(page.querySelector('[data-practice-api]').getAttribute('href'),'/api-test/');assert.equal(page.querySelector('[data-practice-workflow="ui_start"]').disabled,true);assert.equal(page.querySelector('[data-practice-workflow="ui_reports"]').disabled,true);assert.equal(page.querySelector('[data-ui-week-one]'),null);assert.equal(page.querySelector('[data-ui-week-two]'),null);const link=page.querySelector('[data-practice-api]');permissions.clear();assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);assert.equal(w.canAccessWorkflow('ai_practice'),false);
+});
+
+test('workbench administration requires full app scope and feedback evidence also needs API view',async t=>{
+ const {w}=fixture(t);const auth=fs.readFileSync('js/auth.js','utf8');w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
+ let permissions=new Set(['platform.configure']);w.hasPermission=p=>permissions.has(p);w.currentAccessProfile={user_id:'limited',scope:{ui_apps:['one']}};w.activeWorkflow='ai_practice';assert.equal(w.showAiPractice(),true);let page=w.document.querySelector('[data-practice-workbench]');assert.equal(page.querySelector('[data-ui-week-one]'),null);assert.equal(page.querySelector('[data-ui-week-two]'),null);
+ w.currentAccessProfile={user_id:'admin',scope:{ui_apps:'*'}};w.showAiPractice();page=w.document.querySelector('[data-practice-workbench]');assert.ok(page.querySelector('[data-ui-week-one]'));assert.equal(page.querySelector('[data-ui-week-two]'),null);
+ permissions.add('api.view');w.showAiPractice();page=w.document.querySelector('[data-practice-workbench]');assert.ok(page.querySelector('[data-ui-week-two]'));
+});
+
+test('authentication refresh removes visible administrator evidence immediately',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.activeWorkflow='ai_practice';w.showAiPractice();assert.ok(w.document.querySelector('[data-ui-week-one]'));assert.ok(w.document.querySelector('[data-ui-week-two]'));
+ w.currentAccessProfile={user_id:'u1',scope:{ui_apps:['app']}};w.hasPermission=p=>p==='ui.view';w.resetUiSimpleWorkflow();assert.equal(w.document.querySelector('[data-ui-week-one]'),null);assert.equal(w.document.querySelector('[data-ui-week-two]'),null);
 });

@@ -35,7 +35,9 @@ function resetUiSimpleWorkflow(){
   uiStartCreationIntent=null;
   uiSimpleEpoch++;uiSimpleEnabled=false;uiSimpleEvidenceAvailable=false;
   window.UiSimpleFlow?.reset();leaveUiSimpleWorkflow();
+  document.querySelectorAll('[data-practice-workbench] [data-ui-week-one], [data-practice-workbench] [data-ui-week-two]').forEach(node=>node.remove());
 }
+
 async function initUiSimpleAvailability({navigate=true}={}){
   const epoch=++uiSimpleEpoch,identity=uiSimpleIdentity(),initialWorkflow=activeWorkflow;
   if(!identity||!hasPermission('ui.view'))return;
@@ -127,8 +129,9 @@ function showUiSimpleWorkflow(){
   // Only an explicit close, selecting another test, or workflow departure abandons it.
   return true;
 }
+function canUseTaskWorkbench(){return hasPermission('ui.view')||hasPermission('api.view')||hasPermission('platform.configure');}
 function showAiPractice(){
-  if(activeWorkflow!=='ai_practice'||!uiSimpleIdentity()||!hasPermission('platform.configure'))return false;
+  if(activeWorkflow!=='ai_practice'||!uiSimpleIdentity()||!canUseTaskWorkbench())return false;
   leaveUiSimpleWorkflow();
   document.getElementById('app')?.classList.add('ui-simple-active');
   const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
@@ -138,7 +141,7 @@ function showAiPractice(){
 }
 function attachTaskWorkbench(page){
   const identity=uiSimpleIdentity(),epoch=uiSimpleEpoch;
-  const current=()=>page.isConnected&&activeWorkflow==='ai_practice'&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch&&hasPermission('platform.configure');
+  const current=()=>page.isConnected&&activeWorkflow==='ai_practice'&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch&&canUseTaskWorkbench();
   const canOpen=key=>typeof canAccessWorkflow==='function'&&canAccessWorkflow(key);
   const cards=document.createElement('section');cards.className='ui-practice-tasks';cards.setAttribute('aria-label','选择测试任务');
   cards.innerHTML='<article><h2>开始 UI 测试</h2><p>选择应用、用例和手机，可用于发版回归。</p><button type="button" data-practice-workflow="ui_start">选择用例和手机</button></article><article><h2>API 测试</h2><p>管理接口资产、用例、执行结果和基线。</p><span data-practice-api-slot></span></article><article><h2>我的测试</h2><p>查看自己发起的测试结果、步骤、截图和报告。</p><button type="button" data-practice-workflow="ui_reports">查看测试结果</button></article>';
@@ -147,12 +150,14 @@ function attachTaskWorkbench(page){
   const apiSlot=cards.querySelector('[data-practice-api-slot]');
   if(hasPermission('api.view')){const link=document.createElement('a');link.dataset.practiceApi='';link.href='/api-test/';link.textContent='打开 API 测试';link.onclick=event=>{if(!current()||!hasPermission('api.view'))event.preventDefault();};apiSlot.append(link);}
   else apiSlot.textContent='需要 API 查看权限，请联系管理员。';
+  if(!hasPermission('platform.configure')||(currentAccessProfile?.is_superuser!==true&&currentAccessProfile?.scope?.ui_apps!=='*'))return;
   attachUiFirstWeekGuide(page);
   const previousEnvironment=page.querySelector('[data-ui-week-one]');
   const environment=document.createElement('details');environment.dataset.uiWeekOne='';environment.className='ui-case-source-picker ui-practice-panel';environment.innerHTML='<summary>环境与模型检查</summary><p>检查服务与模型的已有结果；真实模型调用可能产生费用。</p>';
   environment.append(previousEnvironment.querySelector('[data-week-probe]'),previousEnvironment.querySelector('[data-week-smoke]'));
   const firstSnapshot=previousEnvironment.querySelector('[data-week-snapshot]');firstSnapshot.querySelector('summary').textContent='查看历史检查证据';
   firstSnapshot.querySelector('p').textContent='2026-11-05 的历史快照，不是实时状态；当前情况请以实际检查为准。';environment.append(firstSnapshot);previousEnvironment.remove();page.append(environment);
+  if(!hasPermission('api.view'))return;
   attachUiWeekTwoGuide(page);
   const previousEvidence=page.querySelector('[data-ui-week-two]'),panel=previousEvidence.querySelector('[data-week2-real]');
   const evidence=document.createElement('section');evidence.dataset.uiWeekTwo='';evidence.className='ui-practice-evidence';
