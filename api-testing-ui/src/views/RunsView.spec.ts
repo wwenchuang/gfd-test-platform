@@ -87,6 +87,20 @@ describe('RunsView', () => {
     expect(select).toHaveBeenCalledWith('execution-new')
   })
 
+  it('updates the URL for a selected execution without discarding other query values', async () => {
+    routeState.query = { endpointId: 'endpoint-1', filter: 'kept' }
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(executions, 'load').mockResolvedValue()
+    vi.spyOn(executions, 'select').mockResolvedValue()
+    const wrapper = mount(RunsView, { global: { stubs: { ExecutionConsole: true, ExecutionDetailDrawer: true } } })
+    await flushPromises()
+    wrapper.findComponent({ name: 'ExecutionConsole' }).vm.$emit('select', 'execution-new')
+    expect(routerState.replace).toHaveBeenCalledWith({ query: { endpointId: 'endpoint-1', filter: 'kept', executionId: 'execution-new' } })
+  })
+
   it('does not rerun a production execution until the user confirms the environment and scope', async () => {
     const context = useContextStore()
     const executions = useExecutionsStore()

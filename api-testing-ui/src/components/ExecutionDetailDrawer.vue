@@ -96,6 +96,12 @@ function handleKeydown(event: KeyboardEvent): void {
   <aside ref="drawer" class="execution-detail-drawer" role="dialog" aria-modal="true" aria-label="执行详情" tabindex="-1" @keydown="handleKeydown">
     <header><div><h2>执行详情</h2><span>{{ executionTypeLabel(execution) }}</span></div><button class="mini-icon" type="button" title="关闭详情" @click="emit('close')"><X :size="17" /></button></header>
     <ReportSummary :summary="execution.summary" :elapsed-duration-ms="metrics.elapsedDurationMs" :case-duration-ms="metrics.caseDurationMs" :environment-name="execution.environment_name" />
+    <details class="execution-detail-identifiers">
+      <summary>用于 AI 实战的记录编号</summary>
+      <p>选择编号后复制；切换用例时子用例编号会更新。</p>
+      <p>执行编号：<code data-testid="practice-execution-id">{{ execution.id }}</code></p>
+      <p v-if="active">子用例编号：<code data-testid="practice-case-id">{{ active.execution_case_id }}</code></p>
+    </details>
     <div class="execution-detail-grid">
       <div ref="listPane" class="execution-detail-list" role="region" aria-label="用例结果列表" tabindex="0">
         <CaseResultList :results="execution.case_results" :active-id="active?.execution_case_id" @select="active = $event" />

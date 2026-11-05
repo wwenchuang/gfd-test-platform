@@ -50,6 +50,14 @@ function requestedEndpointFilter(): boolean {
   return typeof route.query.endpointId === 'string' || typeof route.query.endpointKey === 'string'
 }
 
+function selectExecution(executionId: string): void {
+  if (requestedExecutionId() === executionId) {
+    void executions.select(executionId)
+    return
+  }
+  void router.replace({ query: { ...route.query, executionId } })
+}
+
 async function selectFirstEndpointExecution(): Promise<void> {
   const endpointId = typeof route.query.endpointId === 'string' ? route.query.endpointId : ''
   const endpointKey = typeof route.query.endpointKey === 'string' ? route.query.endpointKey : ''
@@ -164,7 +172,7 @@ async function loadCaseEvidence(result: ExecutionCaseResult): Promise<void> {
       :case-evidence-errors="executions.caseEvidenceErrors"
       :endpoint-id="typeof route.query.endpointId === 'string' ? route.query.endpointId : ''"
       :endpoint-stable-key="typeof route.query.endpointKey === 'string' ? route.query.endpointKey : ''"
-      @select="executions.select($event)"
+      @select="selectExecution"
       @cancel="executions.cancel($event)"
       @rerun="rerun"
       @rerun-case="rerunCase"
