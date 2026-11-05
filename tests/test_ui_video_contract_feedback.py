@@ -59,6 +59,10 @@ def test_recorded_terminal_distinguishes_feedback_from_unrelated_disappearances(
     assert not check('显示打印任务卡片，任务状态为模型处理中，暂停打印按钮消失，仅保留取消打印按钮。')
     assert not check('点击提交反馈按钮，随后页面中央出现反馈成功提示，表明提交操作已完成。')
     assert not check('Toast提示未消失时，任务卡片没有消失，尚未进入取消原因页。')
+    assert check('原有的任务进度卡片消失。页面恢复空闲。此过程为系统自动处理，未见用户滚动或点击操作。')
+    assert check('页面跳转至反馈页面，包含“取消原因”选项。此前未见针对该页面的入口点击，判断为系统自动触发。')
+    assert check('页面跳转至反馈页面，包含“取消原因”选项。鉴于frame-299中未见针对该页面的入口点击，且紧接在任务取消流程结束后出现，判断为自动触发。')
+    assert not check('任务进度卡片没有消失，未见用户滚动或点击操作。')
 
 
 @pytest.mark.parametrize('opening_target', ['确认按钮','确认打印按钮'])
