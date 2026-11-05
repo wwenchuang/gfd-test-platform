@@ -112,7 +112,7 @@ const upstream = http.createServer(async (req, res) => {
       return;
     }
     if (body.model === 'gpt-hang') {
-      await new Promise((resolve) => setTimeout(resolve, 4000));
+      await new Promise((resolve) => setTimeout(resolve, 6500));
     }
     if (body.model === 'gpt-down') {
       sendJson(res, 503, {error: {message: 'model temporarily unavailable', type: 'server_error'}});
@@ -207,6 +207,20 @@ try {
   gateway.stderr.on('data', (chunk) => { gatewayOutput += chunk.toString(); });
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
   await waitForGateway(gatewayUrl, gateway, () => gatewayOutput);
+
+  const providerCall = async (model) => {
+    const response = await fetch(`${gatewayUrl}/ai/api-case-generation`, {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({messages: [{role: 'user', content: 'test'}], providerId: 'qwen_plus', model, timeoutMs: 5000}),
+    });
+    return {status: response.status, data: await response.json()};
+  };
+  const timedOutCall = await providerCall('gpt-hang');
+  assert.equal(timedOutCall.status, 500);
+  assert.equal(timedOutCall.data.error_code, 'provider_timeout');
+  const failedCall = await providerCall('gpt-down');
+  assert.equal(failedCall.status, 500);
+  assert.notEqual(failedCall.data.error_code, 'provider_timeout');
 
   const first = await requestJson(gatewayUrl, '/ai/providers?refresh=1');
   assert.equal(modelListCalls, 1);

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 from types import MappingProxyType
 from typing import Any, List, Mapping, Optional, Tuple
 import urllib.error
@@ -83,7 +84,9 @@ class AiJobInputError(ValueError):
 
 
 class AiGatewayError(RuntimeError):
-    pass
+    def __init__(self, message, code="gateway_error"):
+        super().__init__(message)
+        self.code = code if code in {"gateway_error", "gateway_timeout"} else "gateway_error"
 
 
 class AiCandidateValidationError(ValueError):
@@ -105,6 +108,7 @@ class AiBatchView:
     fallback_reason: str
     generated_draft_ids: List[str]
     validation_errors: Tuple[Mapping[str, Any], ...]
+    error_code: str
 
     def __post_init__(self):
         object.__setattr__(self, "endpoint_ids", tuple(self.endpoint_ids))
@@ -166,7 +170,7 @@ class AiGatewayClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with urllib.request.urlopen(request, timeout=timeout_seconds + 5) as response:
                 parsed = json.loads(
                     read_response_bytes(
                         response,
@@ -175,9 +179,22 @@ class AiGatewayClient:
                     ).decode("utf-8")
                 )
         except urllib.error.HTTPError as exc:
+            # Only a small, whitelisted code may cross the gateway boundary.
+            # Never surface provider messages or unbounded response bodies.
+            try:
+                raw = exc.read(4097)
+                body = json.loads(raw) if len(raw) <= 4096 else {}
+            except (ValueError, OSError):
+                body = {}
+            if exc.code == 500 and isinstance(body, dict) and body.get("error_code") == "provider_timeout":
+                raise AiGatewayError("AI provider timed out", "gateway_timeout") from None
             raise AiGatewayError(f"AI Gateway HTTP {exc.code}") from None
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise AiGatewayError("AI Gateway request failed") from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise AiGatewayError("AI Gateway request timed out", "gateway_timeout") from None
+            raise AiGatewayError("AI Gateway request failed") from None
+        except (TimeoutError, socket.timeout):
+            raise AiGatewayError("AI Gateway request timed out", "gateway_timeout") from None
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise AiGatewayError("AI Gateway returned invalid JSON") from exc
         if not isinstance(parsed, dict) or parsed.get("success") is not True:
@@ -616,7 +633,7 @@ class AiCaseService:
             self._finish_failed_batch(
                 batch_id,
                 "failed_gateway",
-                "gateway_error",
+                getattr(exc, "code", "gateway_error"),
                 self._safe_error(exc),
                 actor_id,
             )
@@ -1677,6 +1694,8 @@ class AiCaseService:
             fallback_reason=str(evidence.get("fallback_reason", "")),
             generated_draft_ids=list(result.get("draft_version_ids", [])),
             validation_errors=tuple(result.get("validation_errors", [])),
+            error_code=("gateway_timeout" if isinstance(batch.error, dict) and batch.error.get("code") == "gateway_timeout"
+                        else "gateway_error" if batch.state == "failed_gateway" else ""),
         )
 
     @classmethod
