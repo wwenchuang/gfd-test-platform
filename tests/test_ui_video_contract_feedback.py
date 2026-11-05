@@ -65,6 +65,8 @@ def test_recorded_terminal_distinguishes_feedback_from_unrelated_disappearances(
     assert not check('任务进度卡片没有消失，未见用户滚动或点击操作。')
     assert check('任务卡片“姓名牌”突然消失，页面正在同步。未见用户滚动或点击操作。任务已不在列表中。')
     assert not check('此前页面停留在取消原因反馈页，提交反馈后显示反馈成功，页面跳转回设备详情页。')
+    assert check('背景中的任务卡片（姓名牌）消失，布局重排。此过程未见用户触点，属于系统自动同步。')
+    assert not check('背景中的任务卡片（姓名牌）没有消失。此过程未见用户触点。')
 
 
 @pytest.mark.parametrize('opening_target', ['确认按钮','确认打印按钮'])
