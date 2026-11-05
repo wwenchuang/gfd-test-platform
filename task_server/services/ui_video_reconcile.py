@@ -248,7 +248,7 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     if repair_refs:
         checked=_repair_coverage(events,checked,frames,duration,root,cancelled,secrets,repair_refs)
         check_coverage(events,checked['events'],duration,checked.get('reconciliation_audit',{}).get('coverage_resolutions'),'first_pass')
-    warnings=[q for e in checked['events'] for q in e['uncertainties'] if q.startswith(('首轮点击','首轮滚动'))]
+    warnings=[q for e in checked['events'] for q in e['uncertainties'] if q.startswith(('首轮点击','首轮滚动','点击与返回'))]
     checked['uncertainties']=list(dict.fromkeys(checked['uncertainties']+warnings))
     return checked
 
@@ -430,12 +430,13 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     payload['validation_feedback']+=' action是待核对的旧识别，不是真实答案。将旧点击改为aiAssert时，必须引用该锚点全部帧，并明确实际是否无新点击而为自动加载/静止变化；确有导航不得如此改写。将旧滚动改为实际点击时，引用原锚点全部帧，明确说明未见滚动、实际点击的控件及所见变化。禁止为满足锚点数量创造操作。'
     payload['coverage_resolution_contract']={
         'purpose':'旧锚点不是操作真值。两条旧锚点若对应同一个触点/交互，不要编造额外点击或aiAssert，提交coverage_resolutions明确映射；真实重复操作必须保留。',
-        'schema':{'source_anchor_ids':['first_pass:索引','independent_review:索引'],'resolution':'same_interaction 或 same_interaction_with_action_correction 或 same_return_gesture 或 same_scroll_gesture','reviewed_event_index':'本次events数组索引',
+        'schema':{'source_anchor_ids':['first_pass:索引','independent_review:索引'],'resolution':'same_interaction 或 same_interaction_with_action_correction 或 same_return_gesture 或 same_scroll_gesture 或 tap_return_conflict','reviewed_event_index':'本次events数组索引',
             'evidence':{'before_frame':'原帧','interaction_frame':'实际交互原帧；普通映射须所有锚点共同包含，same_return_gesture例外见规则','after_frame':'结果原帧','examined_frame_refs':['包含各旧锚点全部原帧，最多8张'],
                 'before_state':'操作前页面','interaction':'明确操作及旧动作误判原因','after_state':'操作后页面','why_not_separate_actions':'为何仅同一次操作而非独立重试或多次导航'}},
-        'rules':'仅为同一来源内部重复或误判导致的多个旧锚点提交映射；不同来源各一条的正常对应不用声明。结果允许aiTap；连续同方向同参数滚动可用same_interaction，所有旧滚动value必须与结果完全相同，禁止反向/再次手势合并；2至8个锚点映射一个真实事件，共同交互帧必须属于每个锚点和结果事件，结果事件含前/交互/后帧；不能跨其他独立操作、不能合并输入、不能声明不确定。scroll改tap须明确未见独立滚动及实际点击。多个来源中对应同次交互的锚点一并列入。events每项1至8帧，自动加载选代表帧，不罗列所有帧。无映射需求时coverage_resolutions为空数组。'}
+        'rules':'仅为同一来源内部重复或误判导致的多个旧锚点提交映射；不同来源各一条的正常对应不用声明，tap_return_conflict按下述专用规则例外。结果允许aiTap；连续同方向同参数滚动可用same_interaction，所有旧滚动value必须与结果完全相同，禁止反向/再次手势合并；2至8个锚点映射一个真实事件，共同交互帧必须属于每个锚点和结果事件，结果事件含前/交互/后帧；不能跨其他独立操作、不能合并输入、不能声明不确定。scroll改tap须明确未见独立滚动及实际点击。多个来源中对应同次交互的锚点一并列入。events每项1至8帧，自动加载选代表帧，不罗列所有帧。无映射需求时coverage_resolutions为空数组。'}
     payload['coverage_resolution_contract']['rules']+=' 唯一例外same_return_gesture：适用于相同可见返回箭头目标的aiTap重复假设或相同原生navigateBack重复假设，完整原帧证实同一次连续返回手势；实际interaction_frame须属于至少一条旧锚点及结果，且不晚于任何旧锚点结束。后窗只含同次手势后半段时不伪造新的触点：所有锚点时间须与所引原帧一致，并在实际触点之后、结果之前共享至少一张中间原帧，该帧也须保留在结果事件中。不得用共享动画帧冒充实际手势帧。aiTap映射的before_state明确返回箭头/按钮可见；原生navigateBack不需要虚构箭头。interaction明确同一次返回手势，why_not_separate_actions明确未见第二次按下/手势/导航。无独立操作夹入，各旧帧完整审查，不合并不同目标、再次返回或输入。'
     payload['coverage_resolution_contract']['rules']+=' 对原生navigateBack的重复锚点，若完整原帧证实同一次连续返回手势，可以输出同目标的navigateBack并使用same_return_gesture；无需虚构可见返回箭头，仍需审查全部旧帧、确认真实触点和后态且排除第二次返回。不得混合点击和原生返回，证据不足保留疑问。'
+    payload['coverage_resolution_contract']['rules']+=' tap_return_conflict仅用于首轮与独立复核各一条、时间及完整原帧完全相同但分别为aiTap和navigateBack的冲突。重新查看全部原图，确证返回且未点击旧目标时，结果为navigateBack、target为上一页面；列出两条锚点及全部原帧，interaction明确写未见点击旧目标、实际执行返回操作，after_state说明退回的页面，why_not_separate_actions明确未见第二次独立点击。确有独立点击或证据不清时不得映射；平台仍要求人工核对。'
     payload['coverage_resolution_contract']['rules']+=' interaction_frame不必是首次按下帧：原图若证明共同帧仍显示同一次持续触点，可选该共同按压帧，并使用更晚的已提供原帧核对after_state。页面转场本身不证明触点存在；共同帧没有真实触点时不得用它凑映射，证据不足保留疑问。'
     payload['validation_feedback']+=' 相邻旧点击和滚动也可能实际是两次滚动，不能强行合并。旧点击若为第一段连续拖动，可一对一改为aiScroll，不提交映射，但结果必须引用该旧点击的全部原帧，observation明确未见独立点击、触点连续移动、内容随之位移；保留之后新的独立滚动。真实点击无响应仍须保留。只有多个旧锚点确属一次手势才使用same_scroll_gesture；普通一对一改型coverage_resolutions为空。'
     payload['coverage_resolution_contract']['rules']+=' same_scroll_gesture仅用于相邻点击和滚动原来属于一次连续拖动：完整引用两个锚点全部原帧，共同交互帧真实存在，interaction明确触点持续移动且内容随之位移；why_not_separate_actions明确未见独立点击、未见松开后重新按下。结果只为aiScroll，除由content_motion_direction原图证据纠正的方向外，既有滚动参数必须保持一致；所有旧原帧须在examined_frame_refs中完整审查，结果frame_refs只保留本次交互的前/中/后证据，不强塞下一操作的起始上下文。若确实先点击再滚动，保留两项，不提交映射；真实无响应点击也必须保留。空心圆跨控件移动是触点，不因起点在按钮旁就当点击或加载图标。证据不清保留疑问。'
@@ -508,6 +509,11 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             continue
         try:
             resolutions=validate_resolutions(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
+            for resolution in resolutions:
+                if resolution['resolution']=='tap_return_conflict':
+                    event=repaired['events'][resolution['reviewed_event_index']]
+                    question='点击与返回识别冲突，请对照原视频核对该段操作'
+                    if question not in event['uncertainties']:event['uncertainties'].append(question)
             from .ui_video_coverage_resolution import boundary_safe
             if any(not boundary_safe(e,boundary,resolutions,window) for e in repaired['events']):
                 raise ValueError('video_reference_invalid')

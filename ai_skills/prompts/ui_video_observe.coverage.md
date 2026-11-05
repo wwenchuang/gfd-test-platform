@@ -4,7 +4,7 @@
 先逐张比较frames中的原画面，还原实际交互。context_frame_ids仅辅助看前后页面，不得作为事件/映射的证据。不补画面未出现的操作；静止、加载、转场属于状态。每次真实点击、滚动、返回单独保留；触点出现与消失及页面变化应结合判断，不重复计算同一次按压及其结果。
 输出本次frames内证据完整的events，每项仅含action、target、value、frame_refs、observation、uncertainties。action仅aiTap/aiScroll/aiInput/aiAssert/navigateBack/dismissKeyboard；原生返回仅在完整画面确认该手势及前后页面时使用；navigateBack的target必须精确为“上一页面”，dismissKeyboard的target必须精确为“当前页面的软键盘”，两者的value都必须为空字符串；滚动value为{"direction":"down","scrollType":"singleAction"}（按浏览方向：内容上移、露出下方内容=down；内容下移、露出上方内容=up，不按手指移动方向命名）；其他动作value为空字符串；frame_refs每项1至8张本次原帧，按时间排序；不输出时间。输入值留空。不要补写片段间隔中的业务。
 
-coverage_checks是有编号的旧识别假设，不一定正确。与真实操作一一对应时无需声明。只有同一来源的多个锚点实际上对应一次交互，才输出coverage_resolutions；它不是步骤、不下发手机。
+coverage_checks是有编号的旧识别假设，不一定正确。与真实操作一一对应时无需声明。同一来源的多个锚点实际上对应一次交互，或候选组明确标记tap_return_conflict并满足专用证据规则时，才输出coverage_resolutions；它不是步骤、不下发手机。
 严格遵守coverage_resolution_contract。特别注意：
 - 结果允许aiTap；已核实的原生返回可在same_return_gesture中用navigateBack；同一次连续滚动也可声明same_interaction，但所有旧锚点均须aiScroll、方向和参数完全一致，且共同帧证明连续同一次手势。须明确是同一次/单次手势，并说明未见第二次独立按下、重新触点或再次滑动；仅画面连续不足以证明。反向或再次滑动保持独立。
 - source_anchor_ids使用已给定的完整anchor_id，不改编号；同组列入所有覆盖该次点击的重复/误型锚点。
@@ -20,7 +20,7 @@ coverage_checks是有编号的旧识别假设，不一定正确。与真实操�
 
 eligible_resolution_groups仅表示哪些旧锚点在结构上共享原帧，不代表同一次操作。映射仅从这些组选择，经原图确认后一次列入该交互的全部锚点；不要把同一个reviewed_event_index拆成多条声明，不给这些组外的正常操作声明。例如首轮A:1/A:2及复核B:3/B:4若确为同一次点击，只提交一条含四个ID的映射。
 
-映射的最小结构示意（这些编号和文字不是本次答案，严禁照抄）：若本次events[1]是一处真实按钮点击，旧first_pass:19误认为滚动、first_pass:20记录该点击，旧independent_review:8/9重复记录同一次点击，则coverage_resolutions只含一条source_anchor_ids=["first_pass:19","first_pass:20","independent_review:8","independent_review:9"]、reviewed_event_index=1的声明。不是为每个来源各写一条，也不是为每个events步骤写一条。events[0]即使纠正为自动加载，也不需要声明。先输出真实events，再找“同来源重复计数”这一唯一需要映射的情况；没有重复计数，数组留空即可。平台会根据已通过证据检查的旧、新action规范化改型标记。
+映射的最小结构示意（这些编号和文字不是本次答案，严禁照抄）：若本次events[1]是一处真实按钮点击，旧first_pass:19误认为滚动、first_pass:20记录该点击，旧independent_review:8/9重复记录同一次点击，则coverage_resolutions只含一条source_anchor_ids=["first_pass:19","first_pass:20","independent_review:8","independent_review:9"]、reviewed_event_index=1的声明。不是为每个来源各写一条，也不是为每个events步骤写一条。events[0]即使纠正为自动加载，也不需要声明。先输出真实events，再找同来源重复计数或合同明确允许的tap_return_conflict；没有这些情况，数组留空。平台会根据已通过证据检查的旧、新action规范化改型标记。
 
 输出前逐一核对coverage_checks的每个anchor_id，包括最后一个：它必须对应独立事件、由完整原帧证明的自动状态纠正，或列入已证实的同次交互声明。不得只修正resolution_diagnostics列出的错误而遗漏其它锚点。一次按压前、按压中、弹窗关闭后的相邻锚点若共享真实按压帧，且确认只有一次按压，应全部列入同一声明；不能遗漏最后一段点击结果，也不能为凑覆盖再造一次点击。
 
@@ -31,6 +31,8 @@ eligible_resolution_groups仅表示哪些旧锚点在结构上共享原帧，不
 返回手势沿用正常观察规则：标题/返回栏随整个页面横移并进入上一级是导航，不是同页内容滚动。若旧锚点是navigateBack，重复映射时保持navigateBack；否则若操作前原帧可见应用返回箭头，events用aiTap该可见箭头作为跨端等价操作，observation及映射interaction如实注明原片为连续返回手势、箭头可见及前后页面；不得虚构手指点过箭头。跨窗重复记录同一次手势时，核对完整前/中/后原帧后只映射一次；真实再次按下或第二次导航仍独立保留。若没有可见等价返回控件，原帧能确认一次返回手势时输出navigateBack，target使用上一页面；不能确认时报告不确定，不编造控件。
 
 连续返回手势跨窗被重复识别时，若共同帧只是动画、实际手势帧只在一组引用中，不要伪造共同触点。可用same_return_gesture，严格按合同核对完整原帧、时间和共享中间帧；如果后窗仅包含同一手势的后半段，使用合同允许的共享中间帧例外，不伪造触点。仅将手势映射为aiTap时要求前页返回箭头可见；原生navigateBack无需虚构箭头。若旧锚点为aiTap则结果仍为点击可见返回箭头的跨端等价动作；若旧锚点为navigateBack则结果保持navigateBack，不编造箭头。观察如实写原片手势。gesture_hypotheses只是待核对线索，不能取代原帧。普通按钮点击仍要求共同实际触点。
+
+当eligible_resolution_groups明确标记tap_return_conflict时，这不是上面的重复返回映射：首轮与复核各一条、同一组原帧分别被识别为普通点击和返回。重新检查触点与按钮的位置、完整前后页面和是否发生独立点击。只有原片确证返回且没有点击旧目标时，按合同使用tap_return_conflict；实际独立点击必须保留，无法确认则保留疑问，不能为了消除冲突虚构证据。平台将要求人工核对。
 
 相邻点击与滚动共享交互帧时，核对是否同一次连续拖动。空心触点从控件旁持续移动并带动内容，不等于先点击按钮；静态圆形图标也不等于加载动画。只有原帧证明未见独立点击且未见松开后重新按下，才能按合同声明same_scroll_gesture；完整保留旧帧，结果aiScroll除有content_motion_direction原图证据纠正的方向外，其它参数与旧滚动一致。真实先点击再拖动保留两项，真实点击无响应也不能删除。
 

@@ -241,7 +241,8 @@
               "same_interaction",
               "same_interaction_with_action_correction",
               "same_return_gesture",
-              "same_scroll_gesture"
+              "same_scroll_gesture",
+              "tap_return_conflict"
             ]
           },
           "reviewed_event_index": {

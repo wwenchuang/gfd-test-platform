@@ -76,6 +76,42 @@ def _signature(event):
     return (event['action'],event['target'],tuple(event['frame_refs']))
 
 
+def _tap_return_conflict(ids,sources,new,evidence,times):
+    """Validate only an exact, cross-pass disagreement; require human review."""
+    if len(ids)!=2 or {aid.split(':')[0] for aid in ids}!={'first_pass','independent_review'}:_fail()
+    anchors=[]
+    for aid in ids:
+        parts=aid.split(':')
+        if len(parts)!=2 or parts[0] not in sources or not parts[1].isdigit() or int(parts[1])>=len(sources[parts[0]]):_fail()
+        anchors.append(sources[parts[0]][int(parts[1])])
+    if {a['action'] for a in anchors}!={'aiTap','navigateBack'}:_fail()
+    tap=next(a for a in anchors if a['action']=='aiTap')
+    back=next(a for a in anchors if a['action']=='navigateBack')
+    if (new['action']!='navigateBack' or new['target']!='上一页面' or new.get('value','')!='' or
+        back['target']!='上一页面' or not tap.get('target') or
+        tap['frame_refs']!=back['frame_refs'] or len(tap['frame_refs'])<3 or
+        not set(tap['frame_refs'])<=set(new['frame_refs']) or
+        not set(tap['frame_refs'])<=set(evidence['examined_frame_refs']) or
+        tap['start_ms']!=back['start_ms'] or tap['end_ms']!=back['end_ms'] or
+        new['start_ms']>tap['start_ms'] or new['end_ms']<tap['end_ms']):_fail('tap_return_evidence_incomplete')
+    note=evidence['interaction']+'。'+evidence['why_not_separate_actions']+'。'+new.get('observation','')
+    negative=r'(?:未见|没有|未观察到)点击'+re.escape(tap['target'])
+    if (re.search(r'(?:并非|不是|不|没有)(?:未见|没有|未观察到)',note) or
+        not re.search(negative,evidence['interaction']) or
+        not re.search(r'(?:实际执行|实际为|实际是)返回(?:操作|手势|导航)',evidence['interaction']) or
+        not re.search(r'(?:未见|没有|未观察到)第二次独立点击',evidence['why_not_separate_actions']) or
+        not re.search(r'退回|返回',evidence['after_state'])):_fail('tap_return_explanation_invalid')
+    remaining=re.sub(negative,'',note)
+    remaining=re.sub(r'(?:未见|没有|未观察到)第二次独立点击','',remaining)
+    if re.search(r'点击|再次|重新|第二次|两次|多次',remaining):_fail('tap_return_repeat_contradiction')
+    low,high=tap['start_ms'],tap['end_ms']
+    for name,source in sources.items():
+        for pos,old in enumerate(source):
+            if (f'{name}:{pos}' not in ids and old['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
+                and low<=old['start_ms']<high):_fail('tap_return_intervening_action')
+    return anchors
+
+
 def boundary_safe(event,boundary,resolutions,frames):
     """Only validated mappings may share a prior state, never a prior touch."""
     overlap=set(event['frame_refs'])&set(boundary)
@@ -167,8 +203,9 @@ def validate(claims,sources,reviewed,frames):
         ids=claim['source_anchor_ids'];index=claim['reviewed_event_index'];ev=claim['evidence']
         if (not isinstance(ids,list) or not 2<=len(ids)<=8 or any(not isinstance(i,str) for i in ids) or
             len(set(ids))!=len(ids) or set(ids)&used or type(index) is not int or not 0<=index<len(reviewed) or index in destinations):_fail()
-        if not any(sum(aid.startswith(name+':') for aid in ids)>=2 for name in sources):_fail()
-        if claim['resolution'] not in {'same_interaction','same_interaction_with_action_correction','same_return_gesture','same_scroll_gesture'}:_fail()
+        conflict=claim['resolution']=='tap_return_conflict'
+        if not conflict and not any(sum(aid.startswith(name+':') for aid in ids)>=2 for name in sources):_fail()
+        if claim['resolution'] not in {'same_interaction','same_interaction_with_action_correction','same_return_gesture','same_scroll_gesture','tap_return_conflict'}:_fail()
         required_evidence={'before_frame','interaction_frame','after_frame','examined_frame_refs','before_state','interaction','after_state','why_not_separate_actions'}
         if claim['resolution']=='same_scroll_gesture':required_evidence.add('gesture_facts')
         if not isinstance(ev,dict) or set(ev)!=required_evidence:_fail()
@@ -183,6 +220,13 @@ def validate(claims,sources,reviewed,frames):
         new=reviewed[index]
         if new['action'] not in {'aiTap','aiScroll','navigateBack'} or new.get('uncertainties') or not {before,touch,after}<=set(new['frame_refs']):_fail()
         if touch in targets and targets[touch]!=new['target']:_fail()
+        if conflict:
+            anchors=_tap_return_conflict(ids,sources,new,ev,times)
+            if any(touch not in a['frame_refs'] for a in anchors):_fail('interaction_frame_not_shared')
+            used.update(ids);destinations.add(index);targets[touch]=new['target']
+            result.append({**copy.deepcopy(claim),'reviewed_event':copy.deepcopy(new),
+                           'source_anchors':{aid:copy.deepcopy(sources[aid.split(':')[0]][int(aid.split(':')[1])]) for aid in ids}})
+            continue
         gesture=claim['resolution']=='same_return_gesture'
         drag=claim['resolution']=='same_scroll_gesture'
         if new['action']=='navigateBack' and not gesture:_fail()
@@ -321,6 +365,14 @@ def eligible_groups(sources,frame_ids):
             for ref in event['frame_refs']:
                 by_frame.setdefault(ref,[]).append((f'{name}:{index}',event['action']))
     result=[]
+    for i,first in enumerate(sources.get('first_pass',[])):
+        for j,second in enumerate(sources.get('independent_review',[])):
+            if ({first.get('action'),second.get('action')}=={'aiTap','navigateBack'} and
+                first.get('frame_refs')==second.get('frame_refs') and len(first.get('frame_refs',[]))>=3 and
+                set(first['frame_refs'])<=frame_ids and first.get('start_ms')==second.get('start_ms') and
+                first.get('end_ms')==second.get('end_ms')):
+                result.append({'kind':'tap_return_conflict','common_frame':first['frame_refs'][1],
+                               'anchor_ids':[f'first_pass:{i}',f'independent_review:{j}']})
     for ref,anchors in by_frame.items():
         if not any(sum(aid.startswith(name+':') for aid,_ in anchors)>=2 and
                    any(aid.startswith(name+':') and action=='aiTap' for aid,action in anchors) for name in sources):continue

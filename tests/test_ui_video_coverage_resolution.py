@@ -3,6 +3,60 @@ import pytest
 from task_server.services import ui_video_coverage_resolution as cr
 
 
+def tap_return_conflict_fixture():
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,5)]
+    refs=['f1','f2','f3']
+    back={'action':'navigateBack','target':'上一页面','value':'','frame_refs':refs,'start_ms':100,'end_ms':300,'observation':'返回上一级页面','uncertainties':[],'evidence_kind':'inferred'}
+    tap={**copy.deepcopy(back),'action':'aiTap','target':'确认打印按钮','observation':'点击确认打印'}
+    claim={'source_anchor_ids':['first_pass:0','independent_review:0'],'resolution':'tap_return_conflict','reviewed_event_index':0,
+           'evidence':{'before_frame':'f1','interaction_frame':'f2','after_frame':'f3','examined_frame_refs':refs,
+                       'before_state':'打印预览页','interaction':'未见点击确认打印按钮，实际执行返回操作',
+                       'after_state':'退回模型编辑页','why_not_separate_actions':'同一交互，未见第二次独立点击'}}
+    return frames,back,tap,claim
+
+
+def test_cross_source_tap_return_conflict_requires_review_and_preserves_mapping():
+    from task_server.services import ui_video_reconcile as vr
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    out=cr.validate([claim],{'first_pass':[back],'independent_review':[tap]},[back],frames)
+    assert cr.positions(out,'first_pass',[back])=={0:0}
+    assert cr.positions(out,'independent_review',[back])=={0:0}
+    vr.check_coverage([tap],[back],resolutions=out,source='independent_review')
+    assert out[0]['resolution']=='tap_return_conflict'
+
+
+def test_cross_source_conflict_is_reobserved_and_blocked_for_human_review(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    monkeypatch.setattr(windows,'observe_windows',lambda *a,**kw:({'events':[copy.deepcopy(tap)],'uncertainties':[],'multiple_scenarios':False},[]))
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    def model(skill,payload,**kwargs):
+        assert any(g.get('kind')=='tap_return_conflict' for g in payload['eligible_resolution_groups'])
+        return {'events':[{k:v for k,v in back.items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[copy.deepcopy(claim)],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr.reconcile([copy.deepcopy(back)],frames,1000,tmp_path,lambda:False,[])
+    assert result['events'][0]['action']=='navigateBack'
+    assert any('核对' in q and '点击' in q and '返回' in q for q in result['uncertainties'])
+
+
+@pytest.mark.parametrize('mutation',['missing_frame','not_same_source_frame','same_source','no_explicit_negative','wrong_target','intervening','second_click','uncertain','double_negative','result_click'])
+def test_cross_source_tap_return_conflict_rejects_unsafe_evidence(mutation):
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    sources={'first_pass':[back],'independent_review':[tap]}
+    if mutation=='missing_frame': claim['evidence']['examined_frame_refs']=['f1','f2']
+    if mutation=='not_same_source_frame': tap['frame_refs']=['f2','f3','f4']; tap['end_ms']=400
+    if mutation=='same_source': claim['source_anchor_ids']=['first_pass:0','first_pass:1']; sources['first_pass'].append(tap)
+    if mutation=='no_explicit_negative': claim['evidence']['interaction']='页面跳转，执行返回操作'
+    if mutation=='wrong_target': back['target']='其他页面'
+    if mutation=='intervening': sources['first_pass'].append({**tap,'frame_refs':['f2'],'start_ms':200,'end_ms':200})
+    if mutation=='second_click': claim['evidence']['interaction']+='。随后点击确认打印按钮'
+    if mutation=='uncertain': claim['evidence']['interaction']+='，可能是返回'
+    if mutation=='double_negative': claim['evidence']['interaction']='并非未见点击确认打印按钮，实际执行返回操作'
+    if mutation=='result_click': back['observation']='用户点击确认打印按钮后返回编辑页面'
+    with pytest.raises(ValueError):cr.validate([claim],sources,[back],frames)
+
+
 def fixture():
     frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,5)]
     old=[{'action':'aiScroll','target':'弹窗','frame_refs':['f1','f2'],'start_ms':100,'end_ms':200,'uncertainties':[]},
