@@ -40,6 +40,26 @@ def test_cross_source_conflict_is_reobserved_and_blocked_for_human_review(monkey
     assert any('核对' in q and '点击' in q and '返回' in q for q in result['uncertainties'])
 
 
+def test_conflict_retry_requires_examining_actual_disputed_control(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    calls=[]
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        candidate=copy.deepcopy(claim)
+        if len(calls)==1:
+            candidate['evidence']['interaction']='未见针对返回箭头的点击，实际执行返回操作'
+        else:
+            assert '不能仅排除其他控件的点击' in payload['validation_feedback']
+        return {'events':[{k:v for k,v in back.items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[candidate],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr._repair_window([back],{'events':[tap],'uncertainties':[],'multiple_scenarios':False},frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'})
+    assert len(calls)==2
+    assert '点击与返回识别冲突' in result['events'][0]['uncertainties'][0]
+
+
 def test_unresolved_tap_return_hypotheses_reach_review_without_becoming_verified(monkeypatch,tmp_path):
     from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
     frames,back,tap,claim=tap_return_conflict_fixture()
@@ -55,6 +75,20 @@ def test_unresolved_tap_return_hypotheses_reach_review_without_becoming_verified
     resolved=result['reconciliation_audit']['coverage_resolutions'][0]
     assert resolved['review_required'] is True
     assert {e['action'] for e in resolved['source_anchors'].values()}=={'aiTap','navigateBack'}
+
+
+def test_unproven_return_is_preserved_only_as_unresolved_review(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    claim['evidence']['interaction']='未见点击返回箭头，实际执行返回操作'
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in back.items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+        'coverage_resolutions':[copy.deepcopy(claim)],'uncertainties':[],'multiple_scenarios':False})
+    result=vr._repair_window([back],{'events':[tap],'uncertainties':[],'multiple_scenarios':False},frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'})
+    audit=result['reconciliation_audit']['coverage_resolutions'][0]
+    assert audit['resolution_status']=='unresolved' and audit['review_required'] is True
+    assert {e['action'] for e in audit['source_anchors'].values()}=={'aiTap','navigateBack'}
+    assert any('点击与返回识别冲突' in q for q in result['events'][0]['uncertainties'])
 
 
 @pytest.mark.parametrize('mutation',['missing_frame','intervening','different_frames','different_time','missing_candidate_frame'])

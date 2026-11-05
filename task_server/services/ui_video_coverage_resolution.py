@@ -76,7 +76,7 @@ def _signature(event):
     return (event['action'],event['target'],tuple(event['frame_refs']))
 
 
-def _tap_return_conflict(ids,sources,new,evidence,times):
+def _tap_return_conflict(ids,sources,new,evidence,times,*,unresolved=False):
     """Validate only an exact, cross-pass disagreement; require human review."""
     if len(ids)!=2 or {aid.split(':')[0] for aid in ids}!={'first_pass','independent_review'}:_fail()
     anchors=[]
@@ -97,7 +97,7 @@ def _tap_return_conflict(ids,sources,new,evidence,times):
         new['start_ms']>tap['start_ms'] or new['end_ms']<tap['end_ms']):_fail('tap_return_evidence_incomplete')
     # A candidate click does not settle the conflict. It may only be carried
     # forward with both original hypotheses and a mandatory human review gate.
-    if new['action']=='aiTap':
+    if new['action']=='aiTap' or unresolved:
         for name,source in sources.items():
             for pos,old in enumerate(source):
                 if (f'{name}:{pos}' not in ids and old['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
@@ -203,7 +203,7 @@ def diagnose(claims,sources,reviewed,frames):
             'instruction':'reason说明被拒绝的证据规则。shared_intermediate_frame_candidates仅是全部旧锚点共同引用且位于实际触点与后态之间的原帧；必须核对原图确属同一连续手势后再引用到结果，不得把后态或动画虚构成新触点。missing_result_state_frames表示声明中的前态、实际交互或后态帧未被结果事件引用；须重核原图，仅原图支持时完整引用。has_same_source_duplicates为false表示没有同来源多锚点可合并，普通跨来源一对一对应不需要合并声明。删除非法声明不免除旧锚点的解释责任。重新核对完整原帧；结构候选不是动作真值。属于已有交互时完整声明对应组及改型证据，独立操作必须保留；不能确定则报告疑问，不造操作或断言凑数。'}
 
 
-def validate(claims,sources,reviewed,frames):
+def validate(claims,sources,reviewed,frames,*,allow_unresolved_return=False):
     if not isinstance(claims,list) or len(claims)>8:_fail()
     times={f['frame_id']:f['timestamp_ms'] for f in frames}
     used=set();result=[];targets={};destinations=set()
@@ -234,10 +234,18 @@ def validate(claims,sources,reviewed,frames):
             not {before,touch,after}<=set(new['frame_refs'])):_fail()
         if touch in targets and targets[touch]!=new['target']:_fail()
         if conflict:
-            anchors=_tap_return_conflict(ids,sources,new,ev,times)
+            unresolved=False
+            try:
+                anchors=_tap_return_conflict(ids,sources,new,ev,times)
+            except ValueError as error:
+                if not (allow_unresolved_return and getattr(error,'coverage_reason',None)=='tap_return_explanation_invalid'):
+                    raise
+                anchors=_tap_return_conflict(ids,sources,new,ev,times,unresolved=True)
+                unresolved=True
             if any(touch not in a['frame_refs'] for a in anchors):_fail('interaction_frame_not_shared')
             used.update(ids);destinations.add(index);targets[touch]=new['target']
             result.append({**copy.deepcopy(claim),'review_required':True,'reviewed_event':copy.deepcopy(new),
+                           **({'resolution_status':'unresolved'} if unresolved else {}),
                            'source_anchors':{aid:copy.deepcopy(sources[aid.split(':')[0]][int(aid.split(':')[1])]) for aid in ids}})
             continue
         gesture=claim['resolution']=='same_return_gesture'

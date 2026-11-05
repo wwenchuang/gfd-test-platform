@@ -545,7 +545,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。navigateBack的target必须精确为上一页面、value必须为空字符串；dismissKeyboard的target必须精确为当前页面的软键盘、value必须为空字符串。仅在原帧证实相应动作时使用，不能为满足格式编造操作。'
             continue
         try:
-            resolutions=validate_resolutions(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
+            resolutions=validate_resolutions(claims,{'first_pass':original,'independent_review':before},repaired['events'],window,
+                                             allow_unresolved_return=attempt+1>=attempt_limit)
             for resolution in resolutions:
                 if resolution['resolution']=='tap_return_conflict':
                     event=repaired['events'][resolution['reviewed_event_index']]
@@ -582,6 +583,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             payload['validation_feedback']+=' 返回手势映射需逐项核对：aiTap映射的before_state须写明返回箭头可见；原生navigateBack无需可见返回箭头，但必须有原帧证明真实返回手势及前后页面。interaction只陈述实际手势，不将旧假设混入实际动作；why_not_separate_actions明确是否存在第二次按下或导航。仅原帧支持时给出肯定描述，否则保留疑问。'
             from .ui_video_coverage_resolution import diagnose
             payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
+            if any(item['reason']=='tap_return_explanation_invalid' for item in payload['resolution_diagnostics']['result_evidence_to_recheck']):
+                payload['validation_feedback']+=' 点击与返回冲突的旧点击目标不是返回箭头：必须逐帧核对旧点击锚点target所指的实际控件。仅原图确证没有点击该目标时，interaction明确写未见点击该具体目标、实际执行返回操作，after_state明确说明退回的页面，why_not_separate_actions写未见第二次独立点击；不能仅排除其他控件的点击。无法排除旧点击目标时，保留aiTap不确定候选及疑问，由平台强制核对，不要声称已证实返回。'
             if any(item['reason']=='return_repeat_contradiction' for item in payload['resolution_diagnostics']['result_evidence_to_recheck']):
                 payload['validation_feedback']+=' 上次返回映射的肯定描述包含再次、重新或第二次等重复动作字样，与单次手势声明冲突。对照原帧逐项区分历史误判与实际操作：确有第二次手势则保留独立操作；只有一次时明确指出旧识别的错误，不要把旧识别写成实际再次操作；无法确认则保留疑问。'
             # Retain structural rejection facts, not the rejected model prose
