@@ -239,6 +239,11 @@ try {
   assert.equal(testResult.model, 'gpt-new');
   assert.equal(completionModels.at(-1), 'gpt-new');
 
+  // An older client saves only its known actions. Existing API-case selection
+  // and fallback must survive, and the generation route must use that selection.
+  const initialRouter = JSON.parse(await fs.readFile(routerFile, 'utf8'));
+  initialRouter.api_case_generation = {providerId: dynamicNew.id, fallbackProviderIds: ['qwen_plus']};
+  await fs.writeFile(routerFile, JSON.stringify(initialRouter));
   const saved = await requestJson(gatewayUrl, '/ai/model-router', {
     method: 'POST',
     body: JSON.stringify({router: {agent_plan: dynamicNew.id}}),
@@ -246,6 +251,29 @@ try {
   assert.equal(saved.router.agent_plan, dynamicNew.id);
   const persisted = await requestJson(gatewayUrl, '/ai/model-router');
   assert.equal(persisted.router.agent_plan, dynamicNew.id);
+  assert.equal(persisted.router.api_case_generation, dynamicNew.id);
+  assert.deepEqual(persisted.fallbackRouter.api_case_generation, ['qwen_plus']);
+  const onDisk = JSON.parse(await fs.readFile(routerFile, 'utf8'));
+  assert.deepEqual(onDisk.api_case_generation, {providerId: dynamicNew.id, fallbackProviderIds: ['qwen_plus']});
+  const apiResult = await requestJson(gatewayUrl, '/ai/api-case-generation', {
+    method: 'POST', body: JSON.stringify({messages: [{role: 'user', content: 'Return a small JSON object.'}]}),
+  });
+  assert.equal(apiResult.providerId, dynamicNew.id);
+  assert.equal(apiResult.model, 'gpt-new');
+  assert.equal(completionModels.at(-1), 'gpt-new');
+
+  const changed = await requestJson(gatewayUrl, '/ai/model-router', {
+    method: 'POST', body: JSON.stringify({router: {api_case_generation: {providerId: 'qwen_plus', fallbackProviderIds: [dynamicNew.id]}}}),
+  });
+  assert.equal(changed.router.api_case_generation, 'qwen_plus');
+  assert.deepEqual(changed.fallbackRouter.api_case_generation, [dynamicNew.id]);
+  const beforeInvalid = await fs.readFile(routerFile, 'utf8');
+  const invalid = await fetch(`${gatewayUrl}/ai/model-router`, {
+    method: 'POST', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({router: {api_case_generation: 'does_not_exist'}}),
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal(await fs.readFile(routerFile, 'utf8'), beforeInvalid);
 
   const skillResult = await requestJson(gatewayUrl, '/ai/skill', {
     method: 'POST',

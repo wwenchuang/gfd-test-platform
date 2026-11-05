@@ -49,6 +49,7 @@ const PROMPTS = {
 };
 const ROUTER_ACTIONS = [
   'generate_case',
+  'api_case_generation',
   'generate_yaml',
   'analyze_failure',
   'optimize_yaml',
