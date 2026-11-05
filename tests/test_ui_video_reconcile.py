@@ -54,6 +54,23 @@ def test_one_review_event_cannot_cover_multiple_original_actions():
         vr.check_coverage([event(1),event(2)],[new])
 
 
+def test_input_focus_can_use_previous_frame_as_context_without_erasing_font_click():
+    font={**event(1),'target':'篆体选项','frame_refs':['f1','f2','f3'],'start_ms':100,'end_ms':300}
+    focus={**event(3),'target':'文字输入框','frame_refs':['f3','f4','f5'],'start_ms':300,'end_ms':500,
+           'observation':'点击文字输入框，随后键盘弹出'}
+    typed={**event(5,'aiInput'),'target':'文字输入框','frame_refs':['f5','f6'],'start_ms':500,'end_ms':600,'value':'姓名'}
+    combined={**typed,'frame_refs':['f4','f5','f6'],'start_ms':400,
+              'observation':'点击文字输入框，键盘弹出后输入文字'}
+    vr.check_coverage([font,focus,typed],[copy.deepcopy(font),combined])
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr.check_coverage([font,focus,typed],[combined])
+    for bad in ({**combined,'observation':'键盘显示，输入文字'},
+                {**combined,'frame_refs':['f5','f6'],'start_ms':500},
+                {**combined,'target':'其他输入框'}):
+        with pytest.raises(ValueError,match='video_required_action_missing'):
+            vr.check_coverage([font,focus,typed],[font,bad])
+
+
 def test_review_all_frames_and_shared_secrets(monkeypatch,tmp_path):
     from task_server.services import ai_skill_service as ai
     fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(90)]

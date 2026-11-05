@@ -100,10 +100,23 @@ def check_coverage(original,reviewed,duration=None,resolutions=None,source=None)
         if (focus['action']!='aiTap' or typed['action']!='aiInput' or
             focus['target']!=typed['target'] or
             not re.search(r'输入框.*(?:获得焦点|键盘)|键盘.*(?:弹出|显示)',focus['observation'])):continue
-        if any(new['action']=='aiInput' and new['target']==typed['target'] and
-               new['start_ms']<=focus['start_ms'] and new['end_ms']>=typed['end_ms'] and
-               set(new['frame_refs'])&set(focus['frame_refs']) and
-               set(new['frame_refs'])&set(typed['frame_refs']) for new in reviewed):absorbed.add(i)
+        def covers_focus(new):
+            if (new['action']!='aiInput' or new['target']!=typed['target'] or
+                new['end_ms']<typed['end_ms'] or not set(new['frame_refs'])&set(typed['frame_refs'])):return False
+            if new['start_ms']<=focus['start_ms'] and set(new['frame_refs'])&set(focus['frame_refs']):return True
+            # The first focus frame may be the previous control's after-state.
+            # Keep that earlier tap independent, and require the actual focus
+            # and keyboard frames plus explicit focus evidence in the input.
+            previous=required[i-1] if i else None
+            note=new.get('observation','')
+            return bool(previous and previous['action']=='aiTap' and previous['target']!=focus['target'] and
+                        len(focus['frame_refs'])>=3 and focus['frame_refs'][0] in previous['frame_refs'] and
+                        set(focus['frame_refs'][1:])<=set(new['frame_refs']) and
+                        focus['start_ms']<new['start_ms']<=focus['end_ms'] and
+                        re.search(r'(?:点击|点按)[^。；，,]{0,20}输入框',note) and
+                        re.search(r'键盘(?:弹出|出现|显示)|(?:唤起|弹出|显示)键盘',note) and
+                        not re.search(r'未|没有|并非|不是|不确定|可能|疑似',note))
+        if any(covers_focus(new) for new in reviewed):absorbed.add(i)
     # A visual re-observation may combine fragments of one editing round, but
     # must retain every fragment's beginning/end and the exact complete span.
     # Any intervening event (including a page-state event) breaks eligibility.
@@ -469,7 +482,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         payload['gesture_hypotheses']=[]
         payload['validation_feedback']=(REVIEW_QUESTION if motion_review else '')+DELAYED_QUESTION
     if _overlapping_input_refs(original) or _overlapping_input_refs(checked['events']):
-        payload['validation_feedback']+=' 点击输入框与后续输入的原证据区间重叠：逐帧区分点击聚焦、键盘弹出与实际文字修改。保留真实点击及输入；输入证据从实际删改文字开始，不把较早的聚焦或键盘动画当作输入开始。同一字段删除旧字后连续输入新字、切换输入法及选择候选词属于一次完整文字替换，保留删改到最终文字的证据，不把中间暂时清空拆成空值输入；不能跨提交、换字段或其他独立业务操作合并。不得按时间直接裁剪或补造边界，不得删除不同控件操作；无法从原图确认则保留疑问。'
+        payload['validation_feedback']+=' 点击输入框与后续输入的原证据区间重叠：逐帧区分点击聚焦、键盘弹出与实际文字修改。前一控件的点击必须独立保留；如输入框的起始帧只是前一控件的结果，且下一帧确为点击输入框、再下一帧显示键盘，可在同一aiInput中保留实际点击和键盘原帧，并明确描述点击输入框及唤起键盘，不把前一控件的点击合并进输入，也不要提交覆盖映射。无法确认焦点点击时保留疑问。同一字段删除旧字后连续输入新字、切换输入法及选择候选词属于一次完整文字替换，保留删改到最终文字的证据，不把中间暂时清空拆成空值输入；不能跨提交、换字段或其他独立业务操作合并。不得按时间直接裁剪或补造边界，不得删除不同控件操作；无法从原图确认则保留疑问。'
     if list(_input_rounds(original)) or list(_input_rounds(checked['events'])):
         payload['validation_feedback']+=' 相邻同字段aiInput可能是跨窗口拆开的同一轮编辑。必须核对全部原图：仅确认为同一输入框的一轮连续编辑时输出一个aiInput，保留每个旧输入片段的首尾原帧、从首段开始至末段结束的完整时间范围；observation明确同一输入框的一轮连续编辑及最终状态，不转录输入值。不要用coverage_resolutions声明输入合并。存在切换页面、字段、提交、重新进入或疑问时保留独立输入。'
     input_groups=list(_input_rounds(checked['events']))
