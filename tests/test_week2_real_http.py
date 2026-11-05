@@ -11,11 +11,13 @@ def test_http_permission_fixed_input_and_private_history(identity_db, tmp_path, 
     monkeypatch.setenv('TASK_OPERATION_DB', str(tmp_path / 'operations.sqlite3'))
     store.create_role('admin', {'id': 'w2-viewer', 'name': '实战观察员', 'permissions': ['platform.configure', 'api.view']})
     store.create_role('admin', {'id': 'w2-no-api', 'name': '配置员', 'permissions': ['platform.configure']})
+    store.create_role('admin', {'id': 'w2-no-config', 'name': '接口观察员', 'permissions': ['api.view']})
     for name, role, scope in [('alice','w2-viewer',ALL_SCOPE), ('bob','w2-viewer',ALL_SCOPE),
-                              ('limited','w2-viewer',{'ui_apps':['app.a']}), ('noapi','w2-no-api',ALL_SCOPE)]:
+                              ('limited','w2-viewer',{'ui_apps':['app.a']}), ('noapi','w2-no-api',ALL_SCOPE),
+                              ('noconfig','w2-no-config',ALL_SCOPE)]:
         create_member(store, username=name, role_ids=[role], scope=scope)
         activate(store, name)
-    tokens = {name:auth.create_session_token(name) for name in ('alice','bob','limited','noapi')}
+    tokens = {name:auth.create_session_token(name) for name in ('alice','bob','limited','noapi','noconfig')}
     records = {}
     def run(owner, username, **kwargs):
         records.setdefault(owner, []).append({'id':'result','status':'blocked'})
@@ -31,6 +33,8 @@ def test_http_permission_fixed_input_and_private_history(identity_db, tmp_path, 
         assert request(server, 'GET', path)[0] == 401
         assert request(server, 'GET', path, tokens['limited'])[0] == 403
         assert request(server, 'GET', path, tokens['noapi'])[0] == 403
+        assert request(server, 'GET', path, tokens['noconfig'])[0] == 403
+        assert request(server, 'POST', path, tokens['noconfig'], {})[0] == 403
         assert request(server, 'POST', path, tokens['noapi'], {})[0] == 403
         assert request(server, 'POST', path, tokens['alice'], {'url':'http://evil'})[0] == 400
         assert request(server, 'POST', path, tokens['alice'], {'execution_id':'bad'})[0] == 400
@@ -64,6 +68,8 @@ def test_http_filters_previously_visible_results_after_scope_revoked(identity_db
         assert username == 'scoped'
         if denied[0]: raise PermissionError('scope revoked')
     monkeypatch.setattr(week2_real, '_scope_authorized', scope)
+    monkeypatch.setattr(week2_real, '_invoke_authorization', lambda owner, username, sources, timeout, **kwargs:
+                        week2_real._verify_sources(owner, username, sources))
     server = app.ThreadingHTTPServer(('127.0.0.1', 0), app.TaskHTTPHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     try:

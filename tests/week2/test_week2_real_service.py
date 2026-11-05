@@ -1,5 +1,7 @@
 import json
+import os
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -9,11 +11,17 @@ import pytest
 
 from task_server.services import week2_real as service
 
+REAL_INVOKE_WORKER = service._invoke_worker
+REAL_AUTHORIZED_ACTOR = service.authorized_actor
+
 
 @pytest.fixture(autouse=True)
 def authorized(monkeypatch):
     monkeypatch.setattr(service, 'authorized_actor', lambda *_: True)
     monkeypatch.setattr(service, '_scope_authorized', lambda *_: None)
+    monkeypatch.setattr(service, '_invoke_worker', lambda *args, **kwargs: service._derive(*args))
+    monkeypatch.setattr(service, '_invoke_authorization', lambda owner, username, sources, timeout, **kwargs:
+                        service._verify_sources(owner, username, sources))
 
 
 @pytest.fixture
@@ -86,12 +94,185 @@ def test_errors_and_timeout_are_recorded_without_secrets(tmp_path):
     with patch.object(service, '_fetch_authorized', side_effect=RuntimeError('secret-token /path')):
         result = service.run('alice-id', 'alice', db)
     assert result['status'] == 'blocked' and 'secret-token' not in json.dumps(result)
-    with patch.object(service, '_fetch_authorized', side_effect=lambda *_: time.sleep(.1)), patch.object(service, '_TIMEOUT_SECONDS', .01):
+    with patch.object(service, '_invoke_worker', side_effect=subprocess.TimeoutExpired('worker', .01)):
         result = service.run('alice-id', 'alice', db)
         assert result['status'] == 'blocked'
     assert len(service.list_results('alice-id', db)) == 2
-    for worker in service._WORKERS:
-        worker.join(timeout=2)
+
+
+def test_timed_out_isolated_worker_is_reaped_and_does_not_block_next(tmp_path):
+    # Exercise an actual process, including operating-system termination and reap.
+    marker = 'week2-process-secret'
+    pid_file = tmp_path / 'pid'
+    slow = [sys.executable, '-c',
+            'import os,sys,time; open(sys.argv[1], "w").write(str(os.getpid())); time.sleep(60)', str(pid_file)]
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        service._run_isolated(slow, marker, .5)
+    assert time.monotonic() - started < 5
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text()), 0)
+    fast = [sys.executable, '-c', 'import sys; print(sys.stdin.read())']
+    assert service._run_isolated(fast, 'ready', 3).strip() == 'ready'
+
+
+def test_real_worker_rejects_unknown_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv('TASK_AUTH_DB', str(tmp_path / 'identity.sqlite'))
+    ok, data = REAL_INVOKE_WORKER('unknown-id', 'unknown-user', service.EXECUTION_ID, service.CASE_ID)
+    assert not ok and data is None
+
+
+def test_scope_revoked_after_worker_returns_hides_summary(tmp_path, payload):
+    def perform_then_revoke(*args, **kwargs):
+        result = service._derive(*args[:4])
+        def deny(*_): raise PermissionError('scope revoked')
+        service._scope_authorized = deny
+        return result
+    with patch.object(service, '_fetch_authorized', return_value=payload), \
+         patch.object(service, '_scope_authorized', lambda *_: None), \
+         patch.object(service, '_invoke_worker', perform_then_revoke):
+        result = service.run('alice-id', 'alice', tmp_path / 'late-scope.sqlite')
+    assert result['status'] == 'blocked'
+    assert result['checks'] == [] and result['original_assertions'] == []
+
+
+def test_final_authorization_timeout_is_fail_closed(tmp_path, payload):
+    with patch.object(service, '_fetch_authorized', return_value=payload), \
+         patch.object(service, '_invoke_authorization', side_effect=subprocess.TimeoutExpired('authorization', .01)):
+        result = service.run('alice-id', 'alice', tmp_path / 'authorization-timeout.sqlite')
+    assert result['status'] == 'blocked' and result['checks'] == []
+
+
+def test_permission_revoked_after_worker_returns_hides_summary(tmp_path, payload):
+    def revoke(*args, **kwargs):
+        answer = service._derive(*args[:4])
+        service.authorized_actor = lambda *_: False
+        return answer
+    with patch.object(service, '_fetch_authorized', return_value=payload), \
+         patch.object(service, 'authorized_actor', lambda *_: True), \
+         patch.object(service, '_invoke_worker', revoke):
+        result = service.run('alice-id', 'alice', tmp_path / 'late-permission.sqlite')
+    assert result['status'] == 'blocked' and result['checks'] == []
+
+
+@pytest.mark.parametrize('revoked', ['platform.configure', 'ui_apps'])
+def test_platform_permission_or_ui_scope_revoked_during_analysis_hides_result(tmp_path, payload, revoked):
+    profile = {'user_id':'alice-id', 'status':'active', 'must_change_password':False,
+               'is_superuser':False, 'permissions':['api.view','platform.configure'], 'scope':{'ui_apps':'*'}}
+    def analyze_then_revoke(*args, **kwargs):
+        result = service._derive(*args[:4])
+        if revoked == 'ui_apps': profile['scope']['ui_apps'] = ['only-one-app']
+        else: profile['permissions'].remove(revoked)
+        return result
+    with patch.object(service.identity, 'get_access_profile', lambda _: profile), \
+         patch.object(service, 'authorized_actor', REAL_AUTHORIZED_ACTOR), \
+         patch.object(service, '_fetch_authorized', return_value=payload), \
+         patch.object(service, '_invoke_worker', analyze_then_revoke):
+        result = service.run('alice-id', 'alice', tmp_path / ('revoke-' + revoked + '.sqlite'))
+    assert result['status'] == 'blocked' and result['checks'] == []
+    assert result['original_assertions'] == []
+
+
+def test_final_authorization_keeps_lease_and_uses_remaining_time(tmp_path, payload):
+    db = tmp_path / 'pending-authorization.sqlite'
+    started, release = threading.Event(), threading.Event()
+    seen = []
+    def verify(owner, username, sources, timeout, **kwargs):
+        seen.append(timeout)
+        started.set()
+        assert release.wait(timeout=3)
+        return [True]
+    with patch.object(service, '_fetch_authorized', return_value=payload), \
+         patch.object(service, '_invoke_authorization', verify):
+        worker = threading.Thread(target=service.run, args=('alice-id', 'alice', db))
+        worker.start()
+        try:
+            assert started.wait(timeout=3)
+            with pytest.raises(service.PracticeBusy): service._claim(db)
+            assert 0 < seen[0] < service._TIMEOUT_SECONDS
+        finally:
+            release.set()
+            worker.join(timeout=3)
+    assert not worker.is_alive()
+
+
+def test_history_authorization_timeout_hides_all_sources(tmp_path):
+    db = tmp_path / 'history-timeout.sqlite'
+    service._save(db, 'alice-id', {'id':'a'*32, 'status':'passed', 'created_at':'now',
+        'execution_id':service.EXECUTION_ID, 'execution_case_id':service.CASE_ID,
+        'checks':[{'secret':'should-not-leak'}]}, time.time())
+    with patch.object(service, '_invoke_authorization', side_effect=subprocess.TimeoutExpired('authorization', .01)):
+        result = service.list_results('alice-id', db, username='alice')
+    assert result[0]['status'] == 'blocked' and 'checks' not in result[0] and 'execution_id' not in result[0]
+
+
+def test_history_busy_hides_data_and_allows_retry_after_release(tmp_path, monkeypatch):
+    db = tmp_path / 'history-busy.sqlite'
+    service._save(db, 'alice-id', {'id':'a'*32, 'status':'passed', 'created_at':'now',
+        'execution_id':service.EXECUTION_ID, 'execution_case_id':service.CASE_ID,
+        'checks':[{'id':'one','status':'passed'}]}, time.time())
+    monkeypatch.setattr(service, '_HISTORY_SLOTS', 1)
+    with service._history_slot(db):
+        result = service.list_results('alice-id', db, username='alice')
+        assert result[0]['status'] == 'blocked' and '稍后' in result[0]['message']
+        assert 'checks' not in result[0] and 'execution_id' not in result[0]
+    assert service.list_results('alice-id', db, username='alice')[0]['status'] == 'passed'
+
+
+def test_history_slot_survives_parent_close_while_child_holds_fd(tmp_path, monkeypatch):
+    db = tmp_path / 'history-cross-process.sqlite'
+    with service._db(db):
+        pass
+    monkeypatch.setattr(service, '_HISTORY_SLOTS', 1)
+    child = None
+    try:
+        with service._history_slot(db) as slot:
+            child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], pass_fds=(slot,))
+        with pytest.raises(service.HistoryBusy):
+            with service._history_slot(db): pass
+    finally:
+        if child is not None:
+            child.terminate()
+            child.wait(timeout=3)
+    with service._history_slot(db):
+        pass
+
+
+def test_analysis_admission_stays_busy_after_parent_closes_inherited_lock(tmp_path):
+    db = tmp_path / 'analysis-cross-process.sqlite'
+    with service._db(db): pass
+    child = None
+    try:
+        with service._analysis_slot(db) as slot:
+            child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], pass_fds=(slot,))
+        # No SQLite lease exists, just as after a lease expires; the live child still owns admission.
+        with pytest.raises(service.PracticeBusy):
+            service.run('alice-id', 'alice', db)
+    finally:
+        if child is not None:
+            child.terminate()
+            child.wait(timeout=3)
+    with service._analysis_slot(db): pass
+
+
+def test_unconfirmed_process_cleanup_keeps_lease(tmp_path):
+    db = tmp_path / 'cleanup-unknown.sqlite'
+    with patch.object(service, '_invoke_worker', side_effect=service.WorkerCleanupUncertain()):
+        assert service.run('alice-id', 'alice', db)['status'] == 'blocked'
+    with pytest.raises(service.PracticeBusy):
+        service._claim(db)
+
+
+def test_timeout_kills_descendant_holding_stdout_pipe(tmp_path):
+    marker = tmp_path / 'descendant-survived'
+    child = 'import sys,time; time.sleep(.8); open(sys.argv[1],"w").write("survived")'
+    code = 'import subprocess,sys,time; subprocess.Popen([sys.executable,"-c",sys.argv[1],sys.argv[2]]); time.sleep(60)'
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        service._run_isolated([sys.executable, '-c', code, child, str(marker)], '', .3)
+    assert time.monotonic() - started < 1.5
+    time.sleep(.9)
+    assert not marker.exists()
 
 
 def test_busy_and_stale_results(tmp_path):
@@ -106,25 +287,13 @@ def test_busy_and_stale_results(tmp_path):
     assert service.list_results('alice-id', db)[0]['status'] == 'blocked'
 
 
-def test_late_worker_cannot_accumulate_or_remove_replacement_lease(tmp_path, monkeypatch):
+def test_timeout_releases_lease_and_allows_next_analysis(tmp_path, payload):
     db = tmp_path / 'timeout.sqlite'
-    release = threading.Event()
-    def slow(*_):
-        release.wait(timeout=2)
-        return None
-    with patch.object(service, '_fetch_authorized', slow), patch.object(service, '_TIMEOUT_SECONDS', .01):
+    with patch.object(service, '_invoke_worker', side_effect=subprocess.TimeoutExpired('worker', .01)):
         result = service.run('alice-id', 'alice', db)
         assert result['status'] == 'blocked'
-        # Simulate expiration while the old thread remains stuck.
-        with service._db(db) as conn:
-            conn.execute('UPDATE lease SET until_time=0 WHERE id=1')
-        with pytest.raises(service.PracticeBusy):
-            service.run('alice-id', 'alice', db)
-        replacement = service._claim(db)
-        release.set()
-        for worker in service._WORKERS: worker.join(timeout=2)
-        with pytest.raises(service.PracticeBusy): service._claim(db)
-        service._release(db, replacement)
+    with patch.object(service, '_fetch_authorized', return_value=payload):
+        assert service.run('alice-id', 'alice', db)['status'] == 'passed'
     assert service.list_results('alice-id', db)[-1]['status'] == 'blocked'
 
 
