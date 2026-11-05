@@ -14280,3 +14280,11 @@ git diff --check
 
 - 18:02 视频分析已无 queued/decoding/analyzing 任务，检查版本与健康状态后，在 693d0da7 上定向恢复第二周后端并更新前端；这是增量恢复，健康 revision 仍为 693d0da7，并非完整主线发布。真实网页重跑默认记录：原始业务断言 3/3，授权读取后的本地数据处理 17/17，业务新请求 0；刷新后最新结果仍在。并行旧版本发布可能再次覆盖，后续部署应合入主线并验证。
 - Source version 8 reached ready with 31 model candidates. Imported draft uid_b092376f15ef7c44e70ddb766c83497c; reviewing original frames found the confirmation dialog auto-loading falsely labeled as scrolling, two overlapping returns each emitted twice, and the app-icon tap would occur after compiler launch. Revision 2 removes those four source actions, supplies the recorded input expectation, adds a home guard and one inferred initial exit back; revision 3 adds stage checkpoints and an explicit long model-generation wait. The immutable source snapshot remains intact. The platform gate rejected revision 3 because cancelPrint emits compiler roles `expected_wait`/`expected_assert`, which the scorer treats as invalid and ignores all stage provenance. Pending code labels these existing generated wait/assert steps consistently as `guard`/`expected`; actual staged draft now scores without warnings locally. 400 focused tests, backend static 63, compile and diff check passed. Device shows designated printer 9888E0094F2A idle; no full Android trial has run yet. The original generation still incorrectly emits duplicated returns, requiring a separate prevention fix.
+
+## 2026-11-05 第三周与实战界面优化
+
+- 真实平台核验历史执行 0dfab6ed：文字建模聊天未收到响应，平台诊断 read operation timed out，耗时 30043ms，0 项断言；不是反馈接口超时。第三周已确定范围为真实接口契约、各 10 条正向/边界/权限状态异常、规则追溯与冒烟、同版本三轮；人工审核暂缓，不以历史回归冒充本周验收。
+- “AI 测试实战”改为按周切换、突出下一步、按需查看步骤/验收/历史和本地时间，加入第三周入口；第二周状态区分局部通过与业务规则待验。定向更新线上 HTML/JS/CSS，未重启；浏览器验证第 2/3 周切换、历史读取和既有反馈记录重新分析 17 项通过，本次不请求业务。线上部署仍是混合版本，旧包可覆盖。
+- 真实接口工作台对反馈分类发起一次 AI 用例生成，页面显示模型调用失败且无草稿，不计为成功；原因待进一步定位。发布保护候选独立审查发现恢复/回滚、普通用户权限及并发竞争问题，未上线，发布前仍需核对运行任务与完整源码版本。
+
+- 用户澄清：18 周计划仅是内部改造路线，不是同事使用平台的周次流程；撤除周次切换，界面围绕 UI 测试、API 测试和测试结果组织。测试工作台和开始测试交互曾定向更新并经真实网页检查，随后并行发布 50949df4 覆盖静态资源，须合入主线后重新部署并核验。创建缺陷草稿当前只支持确认发送飞书群消息，不能冒称已对接正式缺陷系统。

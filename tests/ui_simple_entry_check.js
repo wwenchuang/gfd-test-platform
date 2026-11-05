@@ -14,6 +14,17 @@ function fixture(t){
  w.eval(fs.readFileSync('js/ui-simple-entry.js','utf8'));
  return {w,calls};
 }
+test('practice workspace exposes real testing tasks without weekly plans or fake defect submission',async t=>{
+ const {w,calls}=fixture(t);const requests=[];w.canAccessWorkflow=()=>true;w.apiRequest=async(path,options={})=>{requests.push([path,options.method||'GET']);return {ok:true,enabled:true,results:[]};};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
+ const page=w.document.querySelector('[data-practice-workbench]');assert.ok(page);assert.match(page.textContent,/开始 UI 测试/);assert.match(page.textContent,/API 测试/);assert.match(page.textContent,/我的测试/);assert.doesNotMatch(page.textContent,/第\s*[一二三123]\s*周|W0[123]|提单|提交缺陷/);assert.equal(page.querySelector('[data-practice-week]'),null);
+ assert.equal(page.querySelector('[data-practice-api]').getAttribute('href'),'/api-test/');assert.ok(page.querySelector('[data-week2-real]'));assert.ok(page.querySelector('[data-week2-snapshot]'));assert.ok(page.querySelector('[data-week-probe]'));assert.ok(page.querySelector('[data-week-smoke]'));assert.equal(requests.filter(([path,method])=>path.startsWith('/platform/')&&method==='POST').length,0);
+ page.querySelector('[data-practice-workflow="ui_start"]').click();assert.ok(calls.includes('ui_start'));
+});
+
+test('practice workspace keeps actual task links permission scoped and blocks stale identity navigation',async t=>{
+ const {w,calls}=fixture(t);w.canAccessWorkflow=()=>false;w.hasPermission=p=>p==='platform.configure';w.activeWorkflow='ai_practice';w.showAiPractice();let page=w.document.querySelector('[data-practice-workbench]');assert.equal(page.querySelector('[data-practice-api]'),null);assert.ok(page.querySelector('[data-practice-workflow="ui_start"]').disabled);assert.ok(page.querySelector('[data-practice-workflow="ui_reports"]').disabled);
+ w.hasPermission=()=>true;w.canAccessWorkflow=()=>true;w.showAiPractice();page=w.document.querySelector('[data-practice-workbench]');const link=page.querySelector('[data-practice-api]'),button=page.querySelector('[data-practice-workflow="ui_reports"]');w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);button.click();assert.equal(calls.includes('ui_reports'),false);
+});
 test('release testing page does not contain the learning guide or probe',async t=>{
  const {w}=fixture(t);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
  assert.equal(w.document.querySelector('[data-ui-week-one]'),null);
@@ -749,19 +760,15 @@ test('a forced 401 logout is not blocked by the unsaved draft confirmation',asyn
  assert.throws(()=>w.forceLogoutWithMessage('会话失效'),error=>error.status===401);assert.equal(cleared,1);assert.equal(confirmed,0);
 });
 
-test('first-week guide exposes existing entry points and distinguishes unimplemented evidence',async t=>{
- const {w,calls}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
- const guide=w.document.querySelector('[data-ui-week-one]');assert.ok(guide);assert.equal(guide.open,false);assert.match(guide.querySelector('summary').textContent,/第.?1.?周/);
- assert.match(guide.textContent,/快速体检/);assert.match(guide.textContent,/固定图/);assert.match(guide.textContent,/人工.*耗时/);assert.match(guide.textContent,/证据/);
- assert.equal(guide.querySelector('[data-week-api]').getAttribute('href'),'/api-test/');assert.equal(guide.querySelector('[data-week-api-runs]').getAttribute('href'),'/api-test/#/runs');
- guide.querySelector('[data-week-workflow="system_config"]').click();assert.equal(calls.at(-1),'system_config');w.activeWorkflow='ai_practice';guide.querySelector('[data-week-workflow="config"]').click();assert.equal(calls.at(-1),'config');
+test('environment section preserves real model and server checks behind one disclosure',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
+ const section=w.document.querySelector('[data-ui-week-one]');assert.ok(section);assert.equal(section.open,false);assert.match(section.querySelector('summary').textContent,/环境与模型检查/);assert.ok(section.querySelector('[data-week-probe]'));assert.ok(section.querySelector('[data-week-smoke]'));assert.ok(section.querySelector('[data-week-snapshot]'));assert.match(section.textContent,/消耗/);
 });
 
-test('first-week guide explains unavailable permission without exposing inaccessible links',async t=>{
+test('environment section explains unavailable permissions',async t=>{
  const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';
- w.hasPermission=p=>p==='platform.configure';w.canAccessWorkflow=()=>false;w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-one]');
- assert.ok(guide);assert.equal(guide.querySelector('[data-week-workflow="system_config"]').disabled,true);assert.equal(guide.querySelector('[data-week-workflow="config"]').disabled,true);
- assert.equal(guide.querySelector('[data-week-api]'),null);assert.equal(guide.querySelector('[data-week-api-runs]'),null);assert.match(guide.textContent,/权限/);
+ w.currentAccessProfile={user_id:'limited',scope:{ui_apps:['app']}};w.hasPermission=p=>p==='platform.configure';w.canAccessWorkflow=()=>false;w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-one]');
+ assert.ok(guide);assert.equal(guide.querySelector('[data-probe-run]'),null);assert.equal(guide.querySelector('[data-smoke-run]'),null);assert.match(guide.textContent,/权限/);
 });
 
 test('first-week snapshot distinguishes historical evidence from pending acceptance',async t=>{
@@ -775,16 +782,12 @@ test('first-week snapshot distinguishes historical evidence from pending accepta
  assert.match(text,/历史截图.*trace.*不在网页/);assert.match(text,/新执行.*网页.*查看/);assert.match(text,/人工.*待/);assert.match(text,/账单.*待/);
 });
 
-test('first-week API links remain keyboard reachable with readable button styling',async t=>{
+test('API task link remains keyboard reachable with visible focus styling',async t=>{
  const {w}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};w.canAccessWorkflow=()=>true;
  const style=w.document.createElement('style');style.textContent=fs.readFileSync('css/ui-case-draft.css','utf8');w.document.head.append(style);
  await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
- const guide=w.document.querySelector('[data-ui-week-one]');guide.open=true;
- for(const [selector,href] of [['[data-week-api]','/api-test/'],['[data-week-api-runs]','/api-test/#/runs']]){
-  const link=guide.querySelector(selector);assert.equal(link.tagName,'A');assert.equal(link.getAttribute('href'),href);
-  assert.equal(w.getComputedStyle(link).color,'rgb(131, 235, 203)');link.focus();assert.equal(w.document.activeElement,link);
- }
- const css=style.textContent;assert.match(css,/\.ui-week-link:visited/);assert.match(css,/\.ui-week-link:focus-visible/);
+ const link=w.document.querySelector('[data-practice-api]');assert.equal(link.tagName,'A');assert.equal(link.getAttribute('href'),'/api-test/');link.focus();assert.equal(w.document.activeElement,link);
+ assert.match(style.textContent,/\.ui-practice-tasks a:focus-visible/);
 });
 
 
@@ -933,21 +936,22 @@ test('week one artifact timeout reports an actionable failure and re-enables con
  const button=panel.querySelector('[data-smoke-artifact="positive-screenshot"]');button.click();assert.equal(button.disabled,true);timer();await wait();await wait();assert.match(panel.textContent,/读取证据超时/);assert.equal(button.disabled,false);
 });
 
-test('week two explains real project workflow and links to existing API assets without changing release testing',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();assert.equal(w.document.querySelector('[data-ui-week-two]'),null);
- w.activeWorkflow='ai_practice';w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-two]');assert.ok(guide);assert.match(guide.textContent,/第 2 周/);assert.match(guide.textContent,/真实.*项目.*环境/);assert.match(guide.textContent,/副作用/);assert.match(guide.textContent,/断言/);assert.match(guide.textContent,/清理.*证据/);assert.match(guide.textContent,/人工.*待/);assert.ok(guide.querySelector('[data-week2-real-run]'));assert.equal(guide.querySelector('[data-week2-simulate-run]'),null);
- for(const [key,url] of [['assets','/api-test/#/assets'],['cases','/api-test/#/cases'],['baselines','/api-test/#/baselines'],['runs','/api-test/#/runs']])assert.equal(guide.querySelector(`[data-week2-link="${key}"]`).getAttribute('href'),url);
-});
-test('week two API links are permission gated and stop navigation after identity or permission changes',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.hasPermission=p=>p==='platform.configure';await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let guide=w.document.querySelector('[data-ui-week-two]');assert.equal(guide.querySelector('[data-week2-link]'),null);assert.match(guide.textContent,/API 测试.*权限/);
- w.hasPermission=()=>true;w.showAiPractice();guide=w.document.querySelector('[data-ui-week-two]');const link=guide.querySelector('[data-week2-link="assets"]');assert.ok(link);w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
+test('practice results use local readable time and keep detailed checks collapsed by default',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const result={id:'r',created_at:'2026-11-05T10:00:00Z',status:'passed',source:'platform_record',source_verification:'server_authorized_platform_read',execution_id:'source',execution_case_id:'case',business_requests:0,total:12,original_assertions:['status_code','json_path','schema'].map(type=>({type,passed:true})),checks:Array.from({length:12},(_,i)=>({id:'check'+i,status:'passed'}))};
+ w.apiRequest=async path=>path==='/ui-executions/availability'?{ok:true,enabled:true}:{ok:true,results:[result]};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week2-real]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();const row=panel.querySelector('[data-week2-real-history] details');assert.equal(row.open,false);assert.match(row.querySelector('summary').textContent,/12 项/);assert.doesNotMatch(row.querySelector('summary').textContent,/T10:00:00Z/);assert.match(row.textContent,/check0/);assert.match(panel.textContent,/不.*AI/);
 });
 
-test('week two tracks six verifiable real-business tasks without inventing results',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-two]');
- const tasks=guide.querySelectorAll('[data-week2-task]');assert.equal(tasks.length,6);
- for(let i=0;i<6;i++){assert.equal(tasks[i].dataset.week2Task,`W02-0${i+1}`);assert.match(tasks[i].textContent,/待验证/);}
- const text=guide.textContent;assert.match(text,/反馈分类/);assert.match(text,/Python/);assert.match(text,/客户端.*只读.*平台.*证据/);assert.match(text,/已认证.*请求.*通过/);assert.match(text,/超时.*非.?2xx.*日志关联.*待验证/);assert.match(text,/只读.*不.*证明.*清理/);assert.match(text,/12.*检查/);assert.match(text,/新.*venv.*重跑/);assert.match(text,/30 条.*审核.*口述.*暂缓/);assert.match(text,/单次历史执行/);assert.match(text,/HTTP 200.*业务码 0/);assert.match(text,/不代表.*周验收/);assert.match(text,/服务器.*一次重跑/);assert.match(text,/Python 3\.10\.12/);assert.match(text,/11\/11/);assert.match(text,/17\/17/);assert.match(text,/来源未独立认证/);assert.match(tasks[0].textContent,/本机.*服务器.*待验证/);assert.match(tasks[2].textContent,/已认证.*请求.*通过/);assert.match(tasks[2].textContent,/请求头.*已核实/);assert.match(tasks[5].textContent,/服务器.*重跑.*待验证/);assert.equal(guide.querySelector('[data-week2-snapshot] a').getAttribute('href'),'/api-test/#/runs?executionId=de803f8b-e18b-4e67-986d-b14ce737b8aa');
+test('week two historical timeout identifies its actual chat execution without claiming a feedback timeout',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
+ const snapshot=w.document.querySelector('[data-week2-snapshot]');const timeout=snapshot.querySelector('[data-week2-timeout-evidence]');assert.ok(timeout);
+ assert.match(timeout.textContent,/历史.*POST.*文字建模聊天/);assert.match(timeout.textContent,/The read operation timed out/);assert.match(timeout.textContent,/未收到响应/);assert.match(timeout.textContent,/30043\s*ms/);assert.match(timeout.textContent,/0 条断言/);assert.match(timeout.textContent,/不是反馈接口超时/);assert.match(timeout.textContent,/没有新发起/);
+ const link=timeout.querySelector('a');assert.equal(link.getAttribute('href'),'/api-test/#/runs?executionId=0dfab6ed-b597-4c56-81bf-cc8d7dcb6342');
+ w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
+ w.hasPermission=p=>p==='platform.configure';w.showAiPractice();assert.equal(w.document.querySelector('[data-week2-timeout-evidence] a'),null);
+});
+test('existing evidence requires API permission and prevents stale account record links',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.hasPermission=p=>p==='platform.configure';await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let guide=w.document.querySelector('[data-ui-week-two]');assert.equal(guide.querySelector('[data-week2-trace-link]'),null);assert.match(guide.textContent,/API 查看.*权限/);
+ w.hasPermission=()=>true;w.showAiPractice();guide=w.document.querySelector('[data-ui-week-two]');const link=guide.querySelector('[data-week2-trace-link]');assert.ok(link);w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
 });
 
 test('week two provides concrete reproducible steps and all 17 processing checks as descriptions, not fresh business executions',async t=>{
@@ -993,7 +997,7 @@ test('week two preserves real trace evidence and guards the execution link',asyn
 test('week two task progress follows latest authorized analysis and opens its exact evidence',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;let records=[];
  w.apiRequest=async path=>path==='/ui-executions/availability'?{ok:true,enabled:true}:{ok:true,results:records};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-two]'),panel=guide.querySelector('[data-week2-real]'),progress=()=>[...guide.querySelectorAll('[data-week2-progress]')];
- panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.equal(progress().length,2);assert.match(progress()[0].textContent,/暂无.*待验证/);
+ panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.equal(progress().length,1);assert.match(progress()[0].textContent,/暂无.*待验证/);
  const checkIds=Array.from({length:17},(_,i)=>({id:'check'+i,status:'passed'}));const base={id:'result1',created_at:'2026-11-05T10:00:00Z',status:'passed',source:'platform_record',source_verification:'server_authorized_platform_read',execution_id:'source-one',business_requests:0,total:17,original_assertions:['status_code','json_path','schema'].map(type=>({type,passed:true})),checks:checkIds};
  records=[base];panel.querySelector('[data-week2-real-refresh]').click();await wait();await wait();for(const p of progress()){assert.match(p.textContent,/数据处理.*通过/);assert.match(p.textContent,/2026-11-05/);assert.match(p.textContent,/业务.*审核.*待/);assert.ok(p.querySelector('button'));}panel.open=false;progress()[0].querySelector('button').click();assert.equal(panel.open,true);assert.equal(panel.querySelector('[data-week2-real-history] details').open,true);
  records=[{...base,id:'result2',status:'failed',checks:checkIds.map((v,i)=>i===0?{...v,status:'failed'}:v)}];panel.querySelector('[data-week2-real-refresh]').click();await wait();await wait();assert.match(progress()[0].textContent,/数据处理.*失败/);
