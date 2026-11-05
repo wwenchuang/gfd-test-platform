@@ -33,6 +33,18 @@ def _execution(**overrides):
     return SimpleNamespace(**values)
 
 
+def test_response_warning_in_report_does_not_change_functional_verdict():
+    child = SimpleNamespace(id='child-1', status='PASSED', case_version_id='version-1', endpoint_id='endpoint-1')
+    card = NotificationService._card(_execution(summary={'total': 1, 'passed': 1}), [child], {
+        'versions': {'version-1': SimpleNamespace(case_id='case-1')},
+        'cases': {'case-1': SimpleNamespace(name='模型查询')},
+        'response_time_warnings': {'child-1': {'status': 'slow', 'duration_ms': 1800, 'threshold_ms': 1000}},
+    })
+    text = json.dumps(card, ensure_ascii=False)
+    assert '基线回归通过' in text
+    assert '响应偏慢' in text and '模型查询' in text and '1800' in text and '1000' in text
+
+
 def test_feishu_report_card_contains_report_link_and_readable_summary(monkeypatch):
     monkeypatch.setenv("API_TESTING_REPORT_BASE_URL", "http://qa.example.test")
 
@@ -109,6 +121,7 @@ def test_sending_report_loads_only_lightweight_case_summaries(monkeypatch):
         return {"project_name": "智小白3D", "environment_name": "生产环境"}
 
     monkeypatch.setattr(ExecutionRepository, "get_execution_cases", get_cases)
+    monkeypatch.setattr(ExecutionRepository, "get_response_time_warnings", lambda *_args: {})
     monkeypatch.setattr(ExecutionRepository, "display_metadata", display_metadata)
     monkeypatch.setattr(
         NotificationRepository,

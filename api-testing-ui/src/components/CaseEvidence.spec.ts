@@ -22,6 +22,27 @@ const result: ExecutionCaseResult = {
 }
 
 describe('CaseEvidence', () => {
+  it('shows an advisory warning without replacing the functional result', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, status: 'PASSED', sanitized_result: { ...result.sanitized_result, response_time_warning: { status: 'slow', duration_ms: 1200, threshold_ms: 1000 } } } } })
+    expect(wrapper.get('[data-testid="response-time-slow"]').text()).toContain('1200 ms')
+    expect(wrapper.get('[data-testid="response-time-slow"]').text()).toContain('不受影响')
+    expect(wrapper.text()).toContain('通过')
+  })
+  it('distinguishes the main response time from the full workflow duration', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, duration_ms: 1200, sanitized_result: { ...result.sanitized_result, sanitized_response: { status_code: 200, duration_ms: 80 } } } } })
+    expect(wrapper.get('[data-testid="response-duration"]').text()).toContain('80 ms')
+    expect(wrapper.get('[data-testid="workflow-duration"]').text()).toContain('1200 ms')
+  })
+
+  it('does not invent a response duration when no response arrived', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: { ...result.sanitized_result, sanitized_response: {} } } } })
+    expect(wrapper.get('[data-testid="response-duration"]').text()).toContain('未记录')
+  })
+
+  it('does not display a failed setup response as the main response', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, failure_category: 'setup', sanitized_result: { ...result.sanitized_result, sanitized_response: { status_code: 500, duration_ms: 300 } } } } })
+    expect(wrapper.get('[data-testid="response-duration"]').text()).toContain('未记录')
+  })
   it('explains deferred evidence loading and provides a retry action after failure', async () => {
     const deferredResult = { ...result, evidence_loaded: false, sanitized_result: {} }
     const wrapper = mount(CaseEvidence, { props: { result: deferredResult, error: '证据读取超时' } })

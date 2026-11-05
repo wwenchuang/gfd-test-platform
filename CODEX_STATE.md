@@ -1,3 +1,32 @@
+## 2026-11-05 API warning pushed; server deployment pending
+
+- GitHub main 已推送耗时预警 `8bbb4f34` 与额外测试 `ead61481`。服务器现有视频提交 73581999 与 main 隔离合并无冲突，相关测试 104 项通过；后台静态断言失败在服务器原版同样复现。运行版本尚未部署。存量用例阈值未配置、趋势未实现，逐项筛选和十次全量回归均未完成。
+
+## 2026-11-05 API response warning work in progress
+
+- 用例可单独配置主体响应耗时预警阈值；仅记录提醒，不更改功能通过状态。未响应和前置失败不会用前置耗时冒充主体响应；定时报告的既有飞书通知增加慢请求摘要。
+- 本地相关测试通过；仍需部署后进行真实平台验收，未提供历史趋势、默认阈值或为存量基线配置阈值。逐项接口筛选未完成，全量十轮未执行。
+
+## 2026-11-04 API response timing distinction
+
+- 测试结果明细区分主体接口响应耗时与含前后置的用例总耗时，未收到响应时显示未记录；证据组件10项测试、前端静态检查84项和前端构建通过。
+- 尚未实现独立慢接口阈值、趋势和预警通知；尚未部署或线上验收。现有响应时间断言失败会影响用例结果，不能将其当作独立预警。
+
+## 2026-11-04 API fixture owned-record selector
+
+- 本地实现严格唯一匹配的 JSON 路径选择器和变量插值，支持按本轮字符串编号查找记录；无匹配或多条匹配时失败，不清理未确认的对象。覆盖列表顺序变更、缺失、重复和非法表达式，针对选择器、执行器和用例合同共 114 项通过；后端静态检查 63 项及 diff 检查通过。
+- 尚未部署或在线验收，STL 基线仍暂不定时，不能把本地通过等同生产通过。服务器终端已由另一个浏览器会话占用，Git 推送凭据不可用；保留本地提交及工作区，等待可用连接。
+
+## 2026-11-04 API fixture follow-up
+
+- 自备图片验证四条接口，四项组合三次全部通过；图片匹配和可行性检测加入每日任务，目前 348 条。两项参考图用例删除会话后复制图片仍可访问，暂不定时；STL 用例等待并发记录定位修复。OBJ 中文材质库原件失败，英文引用副本导入成功，但删除后详情仍可访问，清理语义待确认。
+- Git 推送因 SSH 密钥及 GitHub 应用权限不足未成功，本地提交不能视为 main 已更新。
+
+## 2026-11-04 API fixture coverage checkpoint
+
+- 用户提供花朵 STL 已上传至业务对象存储并校验哈希；导入与状态用例 5 次调试和 1 次基线回归通过，已加入启用的 347 条每日任务。详情见 docs/audits/2026-11-04-api-fixture-coverage.md。
+- 导入记录目前需要核对列表首项 SN；并发时会安全失败但可能遗留本次记录，下一步需支持按任务 SN 查找并验证并发清理。当前没有宣称 347 条全量运行通过。图片、OBJ/MTL、multipart 上传仍待素材与能力验证。
+
 ## 2026-10-29 Unified business-event prompts reviewed
 
 - Observer/audit now share business-intent/independent-boundary definitions. Same-field focus/clear/type/IME can be one aiInput with earliest visible edit evidence; genuine independent interactions/no-response retries/returns/confirmations remain. Mark reappearance alone proves no physical count. Final-state predicates use the last outcome frame, with full causal trace retained; material missing triggers still request source revisit.

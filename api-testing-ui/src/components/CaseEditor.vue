@@ -245,6 +245,13 @@ function updateAssertions(assertions: Array<Record<string, unknown>>): void {
   publish()
 }
 
+function updateResponseWarning(event: Event): void {
+  const value = (event.target as HTMLInputElement).value
+  if (!value) delete local.value.processing.response_time_warning_ms
+  else local.value.processing.response_time_warning_ms = Number(value)
+  publish()
+}
+
 function updateExtractions(extractions: Array<Record<string, unknown>>): void {
   local.value.extractions = extractions
   publish()
@@ -296,6 +303,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
     post: draft.processing?.post || [],
     setup_steps: draft.processing?.setup_steps || [],
     cleanup_steps: draft.processing?.cleanup_steps || [],
+    ...(draft.processing?.response_time_warning_ms == null ? {} : { response_time_warning_ms: draft.processing.response_time_warning_ms }),
   }
   return draft
 }
@@ -333,6 +341,8 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
       <div class="workflow-main-heading"><span>主体请求</span><small>验证目标接口的真实业务结果，并将响应变量传给清理步骤。</small></div>
 
       <RequestConfigEditor :model-value="local.request" :errors="displayValidationErrors" :warnings="validationWarnings" :variable-options="mainVariableOptions" @update:model-value="updateRequest" @validity="requestEditorValid = $event" />
+
+      <label>响应耗时预警（毫秒，可选）<input data-testid="response-time-warning" type="number" min="1" max="86400000" step="1" :value="local.processing.response_time_warning_ms ?? ''" placeholder="留空则不预警" @input="updateResponseWarning" /><small>超过阈值仅提示，不改变用例通过结果；只计算主体接口。</small></label>
 
       <details ref="dataRowsSection" data-testid="data-rows-section" class="optional-editor-section" :open="dataRowsOpen"><summary><span>测试数据</span><small>{{ local.data_rows.length ? `${local.data_rows.length} 组` : '可选' }}</small></summary><section class="editor-section"><div class="section-heading"><strong>数据行</strong><button class="mini-icon" type="button" title="添加数据行" @click="addDataRow"><Plus :size="15" /></button></div>
         <p v-if="!local.data_rows.length" class="compact-empty">当前用例只执行一次，不使用多组数据。</p>

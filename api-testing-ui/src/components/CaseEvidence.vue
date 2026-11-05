@@ -32,6 +32,11 @@ const trace = computed(() => {
 const workflowSteps = computed(() => trace.value.filter(item => item.phase === 'workflow_step'))
 const requestUrl = computed(() => String(request.value.url || request.value.resolved_url || ''))
 const responseStatus = computed(() => Number(response.value.status_code || response.value.status || 0))
+const responseDuration = computed(() => {
+  if (props.result.failure_category === 'setup') return '未记录'
+  const value = response.value.duration_ms
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? `${value} ms` : '未记录'
+})
 const requestBlock = computed(() => jsonBlock(request.value, 'request'))
 const responseBlock = computed(() => jsonBlock(response.value, 'response'))
 const traceBlock = computed(() => jsonBlock(trace.value, 'trace'))
@@ -110,8 +115,10 @@ function toggleBlock(key: string): void {
       <div><span>状态</span><strong :class="`status-${result.status.toLowerCase()}`">{{ statusLabel(result.status) }}</strong></div>
       <div><span>请求</span><strong>{{ result.method }} {{ requestUrl || result.path }}</strong></div>
       <div><span>响应</span><strong>{{ responseStatus ? `HTTP ${responseStatus}` : '未收到响应' }}</strong></div>
-      <div><span>耗时</span><strong>{{ result.duration_ms }} ms</strong></div>
+      <div data-testid="response-duration"><span>接口响应耗时</span><strong>{{ responseDuration }}</strong></div>
+      <div data-testid="workflow-duration"><span>用例总耗时（含前后置）</span><strong>{{ result.duration_ms == null ? '未记录' : `${result.duration_ms} ms` }}</strong></div>
     </div>
+    <p v-if="(detail.response_time_warning as Record<string, unknown>)?.status === 'slow'" data-testid="response-time-slow" class="field-warning" role="status">响应偏慢：{{ (detail.response_time_warning as Record<string, unknown>).duration_ms }} ms，预警阈值 {{ (detail.response_time_warning as Record<string, unknown>).threshold_ms }} ms。功能结果不受影响。</p>
     <section v-if="workflowSteps.length" data-testid="workflow-evidence" class="workflow-evidence">
       <header><strong>分阶段执行证据</strong><span>{{ workflowSteps.length }} 个步骤</span></header>
       <article v-for="({ step, key, block }, index) in workflowBlocks" :key="index" :class="`workflow-evidence-${String(step.status || '').toLowerCase()}`">

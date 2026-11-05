@@ -387,10 +387,15 @@ def _parse_processing(value):
     value = _require_mapping(value, "processing")
     _reject_unknown(
         value,
-        {"pre", "post", "setup_steps", "cleanup_steps"},
+        {"pre", "post", "setup_steps", "cleanup_steps", "response_time_warning_ms"},
         "processing",
     )
     result = {}
+    if "response_time_warning_ms" in value:
+        threshold = value["response_time_warning_ms"]
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or not 1 <= threshold <= 86400000:
+            raise CasePayloadError("processing.response_time_warning_ms must be an integer between 1 and 86400000")
+        result["response_time_warning_ms"] = threshold
     allowed = {"action", "name", "value", "source", "target"}
     for phase in ("pre", "post"):
         actions = value.get(phase, [])

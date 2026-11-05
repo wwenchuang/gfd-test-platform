@@ -180,6 +180,7 @@ class NotificationService:
                 children,
                 include_details=False,
             )
+            metadata['response_time_warnings'] = execution_repository.get_response_time_warnings(execution.id)
             webhook = _validate_api_testing_feishu_webhook(
                 decrypt_secret(notification.ciphertext)
             )
@@ -465,6 +466,21 @@ class NotificationService:
             },
             {"tag": "div", "text": {"tag": "lark_md", "content": f"**执行范围：** 共 {total} 条用例"}},
         ]
+        warnings = metadata.get('response_time_warnings') or {}
+        slow = [item for item in children if warnings.get(getattr(item, 'id', ''), {}).get('status') == 'slow']
+        if slow:
+            versions, cases, endpoints = metadata.get('versions') or {}, metadata.get('cases') or {}, metadata.get('endpoints') or {}
+            lines = []
+            for item in slow[:5]:
+                warning = warnings[item.id]
+                version = versions.get(item.case_version_id)
+                case = cases.get(version.case_id) if version else None
+                endpoint = endpoints.get(item.endpoint_id)
+                name = getattr(case, 'name', '') or getattr(endpoint, 'summary', '') or getattr(endpoint, 'path', '') or '未命名用例'
+                lines.append(f"- {name}：{warning['duration_ms']} ms（阈值 {warning['threshold_ms']} ms）")
+            if len(slow) > 5:
+                lines.append(f'- 还有 {len(slow) - 5} 条，请查看报告')
+            elements.extend([{'tag': 'hr'}, {'tag': 'div', 'text': {'tag': 'lark_md', 'content': '**响应偏慢（不影响功能结论）**\n' + '\n'.join(lines)}}])
         issues = [item for item in children if item.status != "PASSED"][:5]
         if issues:
             versions = metadata.get("versions") or {}
