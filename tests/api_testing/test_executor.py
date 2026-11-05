@@ -233,6 +233,14 @@ def _case(
     )
 
 
+def test_slow_main_request_is_advisory_and_preserves_passing_result(target_server):
+    case = _case('/slow', processing={'pre': [], 'post': [], 'response_time_warning_ms': 10})
+    result = _executor(target_server, case).execute_case('case-version-1', 'environment-revision-1', {})
+    assert result.status == 'PASSED'
+    assert result.to_dict()['response_time_warning']['status'] == 'slow'
+    assert result.to_dict()['response_time_warning']['duration_ms'] >= 200
+
+
 class _CaseService:
     def __init__(self, case):
         self.case = case

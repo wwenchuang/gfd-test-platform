@@ -439,6 +439,7 @@ export interface CaseDraft {
     post: Array<Record<string, unknown>>
     setup_steps?: InlineWorkflowStep[]
     cleanup_steps?: InlineWorkflowStep[]
+    response_time_warning_ms?: number
   }
 }
 

@@ -61,6 +61,15 @@ function workflowDraft(): CaseDraft {
 }
 
 describe('CaseEditor', () => {
+  it('preserves, edits and clears the advisory response threshold', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: { ...DRAFT, processing: { ...DRAFT.processing, response_time_warning_ms: 1500 } } } })
+    const input = wrapper.get<HTMLInputElement>('[data-testid="response-time-warning"]')
+    expect(input.element.value).toBe('1500')
+    await input.setValue('2500')
+    expect((wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft).processing.response_time_warning_ms).toBe(2500)
+    await input.setValue('')
+    expect((wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft).processing.response_time_warning_ms).toBeUndefined()
+  })
   it('shows an operation failure beside save actions even when the draft was saved', () => {
     const wrapper = mount(CaseEditor, { props: {
       modelValue: DRAFT,

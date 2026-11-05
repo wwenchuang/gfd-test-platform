@@ -38,6 +38,13 @@ class ExecutionRepository:
     def __init__(self, session):
         self.session = session
 
+    def get_response_time_warnings(self, execution_id):
+        rows = self.session.execute(
+            select(ApiExecutionCase.id, ApiExecutionCase.sanitized_result['response_time_warning'])
+            .where(ApiExecutionCase.execution_id == execution_id)
+        )
+        return {case_id: warning for case_id, warning in rows if isinstance(warning, dict)}
+
     def get_project(self, record_id):
         return self.session.get(ApiProject, record_id)
 

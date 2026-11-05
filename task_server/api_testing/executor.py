@@ -2,7 +2,7 @@
 
 import copy
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
 import http.client
 import ipaddress
 import json
@@ -25,6 +25,7 @@ from .assertions import (
 )
 from .services.case_service import CaseService
 from .services.environment_service import EnvironmentService
+from .response_time_warning import evaluate_response_time_warning
 
 
 _SENSITIVE_NAME = re.compile(
@@ -209,6 +210,7 @@ class CaseExecutionResult:
     extracted_variables: dict
     error_message: str
     trace: tuple
+    response_time_warning: Optional[dict] = None
 
     def __repr__(self):
         return "CaseExecutionResult(status=%r, failure_category=%r, duration_ms=%r)" % (
@@ -224,6 +226,7 @@ class CaseExecutionResult:
             "status": self.status,
             "failure_category": self.failure_category,
             "duration_ms": self.duration_ms,
+            "response_time_warning": copy.deepcopy(self.response_time_warning),
             "request": copy.deepcopy(self.sanitized_request),
             "response": copy.deepcopy(self.sanitized_response),
             "assertions": [asdict(item) if is_dataclass(item) else copy.deepcopy(item) for item in self.assertion_results],
@@ -480,7 +483,7 @@ class HttpExecutor:
                 status, category, error = "BROKEN", "setup", "主体请求未执行"
             if cleanup_problem is not None and status == "PASSED":
                 status, category, error = "FAILED", "cleanup", cleanup_problem.error
-            return self._result(
+            result = self._result(
                 started,
                 status,
                 category,
@@ -492,6 +495,10 @@ class HttpExecutor:
                 trace,
                 secrets,
             )
+            return replace(result, response_time_warning=evaluate_response_time_warning(
+                case.processing.get("response_time_warning_ms"),
+                main_outcome.response if main_outcome is not None else {},
+            ))
         except AssertionDefinitionError as exc:
             return self._failure_result(callback, started, "BROKEN", "assertion_definition", request_view, response_view, (), {}, str(exc), trace, secrets)
         except Exception as exc:
