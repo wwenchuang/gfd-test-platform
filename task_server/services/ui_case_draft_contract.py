@@ -229,7 +229,7 @@ def build_draft_yaml(draft, app_id, *, execution_contract=None):
             step_ids.append(step['step_id']);roles.append('business')
             if action=='cancelPrint' and step['expected']:
                 flow.extend([{'aiWaitFor':step['expected'],'timeout':SHORT_TIMEOUT_MS},{'aiAssert':step['expected']}])
-                step_ids.extend([step['step_id'],step['step_id']]);roles.extend(['expected_wait','expected_assert'])
+                step_ids.extend([step['step_id'],step['step_id']]);roles.extend(['guard','expected'])
             continue
         item = ({'aiQuery': native_back.encode(action,target,step['value'])} if action == 'navigateBack'
                 else {'aiQuery': keyboard.encode(action,target,step['value'])} if action == 'dismissKeyboard'

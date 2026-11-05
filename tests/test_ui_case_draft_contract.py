@@ -11,6 +11,21 @@ from task_server.services.ui_case_draft_contract import normalize_steps, build_d
 APP = 'com.kfb.model'
 
 
+def test_staged_print_recovery_compiler_roles_are_accepted_by_scorer():
+    from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
+    from task_server.services.ui_print_recovery import SUBMIT_EXPECTED
+    draft={'title':'打印取消','steps':[
+        {'action':'aiAssert','target':'打印预览页可见','review_state':'confirmed','stage_end':True},
+        {'action':'submitPrint','target':'确认打印','value':{},'expected':SUBMIT_EXPECTED,'review_state':'confirmed'},
+        {'action':'cancelPrint','target':'取消本次打印','value':{},'expected':'本次任务已结束','review_state':'confirmed'},
+        {'action':'aiAssert','target':'取消原因页可见','review_state':'confirmed'},
+    ]}
+    built=build_draft_yaml(draft,APP)
+    scored=score_midscene_yaml_executable(built['yaml_content'],compiler_roles=built['compiler_roles'])
+    assert scored['taskScores'][1]['startGuard']
+    assert not scored['taskScores'][1]['warnings']
+
+
 @pytest.mark.parametrize('count',[6,10,11])
 def test_compiler_checks_do_not_double_penalize_business_complexity(count):
     from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
