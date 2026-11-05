@@ -138,6 +138,13 @@ def test_negative_movement_without_conflict_is_not_positive():
     assert not has_positive_drag('用户没有拖动列表；刷新头部自动收起。')
 
 
+def test_manual_scroll_negation_does_not_hide_a_later_real_drag():
+    from task_server.services.ui_video_automatic_motion import has_positive_drag
+    assert not has_positive_drag('图片自动加载，而非用户手动滚动。未见独立用户滚动。')
+    assert has_positive_drag('图片自动加载，而非用户手动滚动；随后用户手动滚动列表。')
+    assert has_positive_drag('并非没有用户手动滚动，而是用户手动滚动。')
+
+
 def test_new_scroll_over_same_automatic_frames_requests_review_only():
     from task_server.services.ui_video_automatic_motion import disputed_scroll_refs
     old=[{'action':'aiAssert','frame_refs':['a','b','c'],'observation':'异步卡片填充'}]

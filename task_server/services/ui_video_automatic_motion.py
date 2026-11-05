@@ -49,6 +49,11 @@ _NEGATIVE_DRAG=re.compile(
 
 def has_positive_drag(note):
     """Only remove a negated movement predicate, not unrelated negations."""
+    # A double negative asserts that movement did occur. Do not erase it.
+    if re.search(r'(?:并非|不是|不)(?:没有|未见|未发生)(?:用户)?(?:手动)?(?:滚动|滑动|拖动)',note):return True
+    # This exact wording appears in model visual reviews; limit the match to
+    # its negated predicate so a later independent drag is still detected.
+    note=re.sub(r'(?<!不是)(?<!并非)而非用户手动(?:滚动|滑动|拖动)','',note)
     remaining=_NEGATIVE_DRAG.sub('',note)
     for clause in re.split(r'[，。；;,]|但是|但|然而|随后|并且|且',remaining):
         if re.search(r'(?:用户|手指|触点|重新按下|再次|又进行了).{0,24}(?:滚动|滑动|拖动)',clause):return True
