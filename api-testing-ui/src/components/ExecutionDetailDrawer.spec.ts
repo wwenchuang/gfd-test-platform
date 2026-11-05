@@ -23,6 +23,15 @@ const execution: ExecutionView = {
 describe('ExecutionDetailDrawer', () => {
   afterEach(() => { document.body.innerHTML = '' })
 
+  it('shows selectable execution and current subcase identifiers for AI practice', async () => {
+    const second = { ...execution.case_results[0], execution_case_id: 'execution-case-2', case_name: 'second' }
+    const wrapper = mount(ExecutionDetailDrawer, { props: { execution: { ...execution, case_results: [...execution.case_results, second] } } })
+    expect(wrapper.get('[data-testid=practice-execution-id]').text()).toContain('execution-1')
+    expect(wrapper.get('[data-testid=practice-case-id]').text()).toContain('execution-case-1')
+    await wrapper.findAll('.case-result-list button')[1].trigger('click')
+    expect(wrapper.get('[data-testid=practice-case-id]').text()).toContain('execution-case-2')
+  })
+
   it('emits the exact case selected for editing', async () => {
     const wrapper = mount(ExecutionDetailDrawer, { props: { execution } })
 

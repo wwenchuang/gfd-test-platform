@@ -1080,6 +1080,8 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 }
 .source-change-link { display: inline-block; margin-left: 10px; white-space: nowrap; color: var(--blue); }
 .execution-detail-drawer { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+.execution-detail-identifiers { flex-shrink: 0; }
+.execution-detail-identifiers code { user-select: all; overflow-wrap: anywhere; }
 .execution-detail-drawer > header, .execution-detail-drawer > .report-summary { flex-shrink: 0; }
 .execution-detail-grid { flex: 1; min-height: 0; overflow: hidden; }
 .execution-detail-list, .execution-detail-evidence { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }

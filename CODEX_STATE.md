@@ -14262,3 +14262,12 @@ git diff --check
 - 新增 AI 测试实战网页分析入口、本人历史与六项进度说明，服务以当前用户权限读取真实平台记录，限制目标域名和反馈分类接口；支持默认记录或授权的其他执行编号，检查与原始业务断言分开呈现。真实业务客户端完整验证、真实写入数据归属清理及人工审核等尚未完成，不能宣称第二周整周验收通过。
 - 本地授权/接口测试 16 项通过；隔离 PostgreSQL 16 与 Redis 7 的范围撤权和子用例归属测试 1 项通过；前端交互 133 项及静态检查通过。分析超时后后台读取线程不能强制终止，单进程最多一个滞留线程；其结束前后续分析受阻。代码尚待部署及真实网页端到端验证。
 - Source version 6 failed terminal eligibility for the observed task card “（姓名牌）消失” and a non-action clause “未见用户触点”. Local fix recognizes this real form and rejects a card that has not disappeared; retained v3–v6 samples each identify the appropriate terminal without selecting the later completed feedback. A temporary server-only replay using the v6 observed candidates, original images and the trial matcher selected submit 27/cancel 32/confirm 33/end 60. First Qwen outcome review returned uncertainty and failed safely; a second replay reached 29 events with 3 review questions. These diagnostics do not create a platform case and are not a successful original-video or device run. 162 focused tests, backend static 63, compile and diff check passed; this change remains undeployed.
+
+## 2026-11-05 第二周网页真实验收
+
+- 服务器运行 d27dee86 上定向部署第二周文件；health 正常，宿主与静态容器文件哈希已核对。部署期间另一并行旧版本覆盖后端，已检查队列与版本并恢复；主线已合入第二周实现。健康 revision 仍为 d27dee86，不能称整版 7610acbd 已部署。
+- 真实网页“AI 测试实战 → 第 2 周 → 分析真实反馈执行证据”以当前账号授权读取执行 de803f8b，原三项断言通过、本地检查 17/17；刷新后历史仍在。只填写 execution ID 自动识别唯一子用例，真实网页再次通过。分析未重新调用业务接口。
+- 第二周整周未完成：真实业务客户端鉴权/超时及请求 ID、真实业务写入的归属与故障恢复清理待验证；人工审核暂缓。分析超时无法强制终止后台读取线程，单进程最多一个滞留线程。
+
+- 新建独立草稿 W02 反馈查询追踪 a3b1bbf2，真实执行 6e5ae109 于 17:13:06 为 1/1 通过；实际发送的 X-Request-ID 与本轮 UUID 一致，HTTP 200、业务码 0、结构断言通过。响应未回显，请求在业务日志中关联尚未证实，真实超时与非 2xx 也待验。会话分页未证明 requestId 关联，响应丢失时无法安全自动找回和清理，未发起真实创建或删除。
+- 新增 API 执行记录选中后同步 URL 的 executionId，以及详情中的执行/子用例编号供复制；与 W02 实战入口联动，相关 21 项测试和构建通过，线上验收待完成。
