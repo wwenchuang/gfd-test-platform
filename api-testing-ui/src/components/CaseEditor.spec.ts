@@ -234,6 +234,33 @@ describe('CaseEditor', () => {
     expect(wrapper.get('[data-testid="data-rows-execution-note"]').text()).toContain('没有启用的数据组')
   })
 
+  it('explains the distinction between functional runs, load tests and existing baselines', () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.data_rows.push({ name: '第二组', values: { page: 2 }, enabled: true })
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft, editingVersion: { name: '查询我的收藏', version: 2 } } })
+    const note = wrapper.get('[data-testid="data-rows-execution-note"]').text()
+    expect(note).toContain('功能用例的调试和回归')
+    expect(note).toContain('压测使用性能场景配置的数据')
+    expect(note).toContain('重新采纳')
+    expect(wrapper.get('[data-testid="case-editing-context"]').text()).toContain('调试通过后重新采纳')
+    expect(wrapper.get('[data-testid="data-rows-footer-warning"]').text()).toContain('已有基线不会自动更新')
+  })
+
+  it('updates the data-group warning after raw JSON loses focus', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT, editingVersion: { name: '查询我的收藏', version: 2 } } })
+    await wrapper.get('[data-testid="raw-tab"]').trigger('click')
+    const raw = wrapper.get<HTMLTextAreaElement>('.raw-editor textarea')
+    const updated = JSON.parse(raw.element.value) as CaseDraft
+    updated.data_rows.push({ name: '额外数据', values: { page: 2 }, enabled: true })
+    await raw.setValue(JSON.stringify(updated))
+    await raw.trigger('blur')
+    expect(wrapper.get('[data-testid="data-rows-footer-warning"]').text()).toContain('调试和回归')
+    expect(wrapper.get('[data-testid="data-rows-footer-warning"]').text()).toContain('已有基线不会自动更新')
+    await wrapper.get('[data-testid="structured-tab"]').trigger('click')
+    const states = wrapper.findAll('[data-testid="data-row-execution-state"]').map(node => node.text())
+    expect(states).toEqual(['保存后使用', '保存后不执行'])
+  })
+
   it('keeps optional sections collapsed until populated or invalid', () => {
     const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
     draft.data_rows = []
