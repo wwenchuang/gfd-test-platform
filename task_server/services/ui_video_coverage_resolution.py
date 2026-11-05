@@ -281,8 +281,24 @@ def validate(claims,sources,reviewed,frames,*,allow_unresolved_return=False):
         if gesture:
             _validate_return_touch_span(anchors,new,ev,times)
             old_notes='。'.join(a.get('observation','') for a in anchors)
+            contextual_again=False
+            for name,source in sources.items():
+                indexes=sorted(int(a.split(':')[1]) for a in ids if a.startswith(name+':'))
+                if len(indexes)!=2 or indexes[1]!=indexes[0]+1 or indexes[0]==0:continue
+                earlier,full,suffix=source[indexes[0]-1],source[indexes[0]],source[indexes[1]]
+                note=full.get('observation','')
+                if (new['action']=='navigateBack' and earlier['action']=='navigateBack' and
+                    earlier['end_ms']<full['start_ms'] and full['frame_refs']==new['frame_refs'] and
+                    set(suffix['frame_refs'])<set(full['frame_refs']) and suffix['end_ms']==full['end_ms'] and
+                    re.search(r'再次执行返回操作',note) and re.search(r'触点',note) and
+                    re.search(r'页面[^。；，,]{0,20}(?:右滑|右移)',note)):
+                    contextual_again=True
+                    old_notes=old_notes.replace('再次执行返回操作','执行返回操作',1)
+            # The previous return explains the word "again", but the pixels
+            # and model's proposed single gesture still require review.
+            contextual_touch=contextual_again and re.search(r'触点',old_notes) and re.search(r'返回操作',old_notes)
             old_affirmative=re.sub(r'(?:未见|未观察到|没有|无)[^。；，,但]*', '', old_notes)
-            if (not has_return_gesture_evidence(old_notes) or re.search(r'(?:再次|第二次|两次|多次)[^。；，,]{0,30}(?:点击|返回|导航|按下)',old_affirmative)):_fail()
+            if (not (has_return_gesture_evidence(old_notes) or contextual_touch) or re.search(r'(?:再次|第二次|两次|多次)[^。；，,]{0,30}(?:点击|返回|导航|按下)',old_affirmative)):_fail()
             if new['action']=='aiTap' and new['target'] not in {'左上角返回箭头','左上角返回按钮','返回箭头','返回按钮'}:
                 _fail('return_target_not_supported')
             if new['action']=='navigateBack' and new['target']!='上一页面':_fail('return_target_not_supported')
@@ -328,6 +344,7 @@ def validate(claims,sources,reviewed,frames,*,allow_unresolved_return=False):
         used.update(ids);destinations.add(index);targets[touch]=new['target']
         normalized='same_interaction_with_action_correction' if any(old['action']!=new['action'] for old in anchors) else 'same_interaction'
         result.append({**copy.deepcopy(claim),'resolution':'same_return_gesture' if gesture else 'same_scroll_gesture' if drag else normalized,'reviewed_event':copy.deepcopy(new),
+                       **({'review_required':True,'resolution_status':'unresolved'} if gesture and contextual_again else {}),
                        'source_anchors':{aid:copy.deepcopy(sources[aid.split(':')[0]][int(aid.split(':')[1])]) for aid in ids}})
     return result
 

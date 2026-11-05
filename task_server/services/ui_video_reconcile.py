@@ -552,6 +552,10 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                     event=repaired['events'][resolution['reviewed_event_index']]
                     question='点击与返回识别冲突，请对照原视频核对该段操作'
                     if question not in event['uncertainties']:event['uncertainties'].append(question)
+                elif resolution.get('resolution_status')=='unresolved':
+                    event=repaired['events'][resolution['reviewed_event_index']]
+                    question='返回操作存在重叠记录，请对照原视频核对次数'
+                    if question not in event['uncertainties']:event['uncertainties'].append(question)
             from .ui_video_coverage_resolution import boundary_safe
             if any(not boundary_safe(e,boundary,resolutions,window) for e in repaired['events']):
                 raise ValueError('video_reference_invalid')

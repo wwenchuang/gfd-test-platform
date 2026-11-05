@@ -466,6 +466,27 @@ def test_return_gesture_does_not_relax_other_interaction_guards(mutation):
         cr.validate([claim],{'first_pass':old},new,frames)
 
 
+def test_return_again_may_refer_to_separate_preceding_navigation():
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,7)]
+    earlier={'action':'navigateBack','target':'上一页面','value':'','frame_refs':['f1','f2'],
+             'start_ms':100,'end_ms':200,'observation':'从预览页返回编辑页','uncertainties':[]}
+    full={**earlier,'frame_refs':['f3','f4','f5'],'start_ms':300,'end_ms':500,
+          'observation':'用户再次执行返回操作，f3可见触点，页面右滑至详情页'}
+    suffix={**earlier,'frame_refs':['f4','f5'],'start_ms':400,'end_ms':500,
+            'observation':'页面右滑转场并退回详情页'}
+    new=[copy.deepcopy(full)]
+    claim={'source_anchor_ids':['independent_review:1','independent_review:2'],
+           'resolution':'same_return_gesture','reviewed_event_index':0,
+           'evidence':{'before_frame':'f3','interaction_frame':'f4','after_frame':'f5','examined_frame_refs':['f3','f4','f5'],
+                       'before_state':'编辑页面','interaction':'同一次连续返回手势','after_state':'退回详情页',
+                       'why_not_separate_actions':'未见第二次按下或新的手势'}}
+    result=cr.validate([claim],{'independent_review':[earlier,full,suffix]},new,frames)
+    assert result[0]['review_required'] is True and result[0]['resolution_status']=='unresolved'
+    claim['source_anchor_ids']=['independent_review:0','independent_review:1']
+    with pytest.raises(ValueError):
+        cr.validate([claim],{'independent_review':[full,suffix]},new,frames)
+
+
 def test_return_gesture_single_interaction_can_be_explained_in_rationale():
     frames,old,new,claim=return_gesture_fixture()
     claim['evidence']['interaction']='原片为返回手势，映射可见返回箭头'
