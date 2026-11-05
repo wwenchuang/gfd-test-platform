@@ -749,6 +749,7 @@ function fromVersion(version: CaseVersion): CaseDraft {
       post: version.processing?.post || [],
       setup_steps: version.processing?.setup_steps || [],
       cleanup_steps: version.processing?.cleanup_steps || [],
+      ...(version.processing?.response_time_warning_ms == null ? {} : { response_time_warning_ms: version.processing.response_time_warning_ms }),
     },
   })
 }
