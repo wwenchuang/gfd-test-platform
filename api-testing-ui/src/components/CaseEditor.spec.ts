@@ -208,6 +208,32 @@ describe('CaseEditor', () => {
     expect(wrapper.emitted('debug')).toHaveLength(1)
   })
 
+  it('shows which enabled test data group will be used and updates after changes', async () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.data_rows = [
+      { name: '停用的第一组', values: { value: 'first' }, enabled: false },
+      { name: '当前使用组', values: { value: 'second' }, enabled: true },
+      { name: '后续组', values: { value: 'third' }, enabled: true },
+    ]
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+    expect(wrapper.get('[data-testid="data-rows-execution-note"]').text()).toContain('只使用第一组启用的数据')
+    expect(wrapper.get('[data-testid="data-rows-execution-note"]').text()).toContain('依赖和前置处理可能覆盖变量')
+    const states = () => wrapper.findAll('[data-testid="data-row-execution-state"]').map(node => node.text())
+    expect(states()).toEqual(['已停用', '保存后使用', '保存后不执行'])
+    expect(wrapper.get('[data-testid="data-rows-footer-warning"]').text()).toContain('仅使用第一组启用的数据')
+    await wrapper.findAll('.data-card input[type="checkbox"]')[1].setValue(false)
+    expect(states()).toEqual(['已停用', '已停用', '保存后使用'])
+    expect(wrapper.find('[data-testid="data-rows-footer-warning"]').exists()).toBe(false)
+    await wrapper.findAll('.data-card input[type="checkbox"]')[2].setValue(false)
+    expect(states()).toEqual(['已停用', '已停用', '已停用'])
+    expect(wrapper.get('[data-testid="data-rows-execution-note"]').text()).toContain('没有启用的数据组')
+    await wrapper.findAll('.data-card input[type="checkbox"]')[0].setValue(true)
+    expect(states()).toEqual(['保存后使用', '已停用', '已停用'])
+    await wrapper.findAll('.data-card button[title="删除数据"]')[0].trigger('click')
+    expect(states()).toEqual(['已停用', '已停用'])
+    expect(wrapper.get('[data-testid="data-rows-execution-note"]').text()).toContain('没有启用的数据组')
+  })
+
   it('keeps optional sections collapsed until populated or invalid', () => {
     const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
     draft.data_rows = []
