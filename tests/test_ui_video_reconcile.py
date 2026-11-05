@@ -86,6 +86,19 @@ def test_focus_context_does_not_propose_font_and_focus_as_one_click():
     assert vr._exclude_focus_context_groups(groups,changed)==groups
 
 
+def test_unnecessary_one_to_one_scroll_correction_can_be_checked_independently():
+    old={**event(1,'aiScroll'),'target':'弹窗','frame_refs':['f1','f2'],'start_ms':100,'end_ms':200,
+         'value':{'direction':'down','scrollType':'singleAction'}}
+    observed={**old,'action':'aiAssert','value':'','observation':'图片自动加载，未见独立用户滚动'}
+    sources={'first_pass':[old],'independent_review':[copy.deepcopy(old)]}
+    claim={'source_anchor_ids':['first_pass:0','independent_review:0'],
+           'resolution':'same_interaction_with_action_correction','reviewed_event_index':0,'evidence':{}}
+    kept,removed=vr._separate_redundant_assert_claims([claim],sources,[observed])
+    assert kept==[] and removed==[claim]
+    for bad in ({**observed,'observation':'用户手动滚动'}, {**observed,'frame_refs':['f1']}):
+        assert vr._separate_redundant_assert_claims([claim],sources,[bad])==([claim],[])
+
+
 def test_review_all_frames_and_shared_secrets(monkeypatch,tmp_path):
     from task_server.services import ai_skill_service as ai
     fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(90)]

@@ -357,7 +357,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         if not groups or positions[frame['frame_id']]!=positions[groups[-1][-1]['frame_id']]+1:groups.append([])
         groups[-1].append(frame)
     if len(groups)>4 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
-    result=copy.deepcopy(checked);resolutions=[];replacements=[]
+    result=copy.deepcopy(checked);resolutions=[];replacements=[];redundant_claims=[]
     all_ids={f['frame_id'] for f in window}
     replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
@@ -380,14 +380,18 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
             raise ValueError('video_required_action_missing')
         replacements.extend(repaired['events'])
+        def global_id(aid):
+            name,index=aid.split(':')
+            return f'{name}:{indexes[name][int(index)]}'
         for resolution in repaired['reconciliation_audit']['coverage_resolutions']:
             translated=copy.deepcopy(resolution)
-            def global_id(aid):
-                name,index=aid.split(':')
-                return f'{name}:{indexes[name][int(index)]}'
             translated['source_anchor_ids']=[global_id(aid) for aid in resolution['source_anchor_ids']]
             translated['source_anchors']={global_id(aid):e for aid,e in resolution['source_anchors'].items()}
             resolutions.append(translated)
+        for claim in repaired['reconciliation_audit'].get('redundant_assert_claims',[]):
+            translated=copy.deepcopy(claim)
+            translated['source_anchor_ids']=[global_id(aid) for aid in claim['source_anchor_ids']]
+            redundant_claims.append(translated)
         result['uncertainties']=list(dict.fromkeys(result['uncertainties']+repaired['uncertainties']))
         result['multiple_scenarios']=result['multiple_scenarios'] or repaired['multiple_scenarios']
     result['events']=preserved+replacements
@@ -397,8 +401,41 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     check_coverage(original,result['events'],duration,resolutions,'first_pass')
     check_coverage(checked['events'],result['events'],duration,resolutions,'independent_review')
     before=validate_analysis({'events':checked['events'],'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
-    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions},secrets)
+    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims},secrets)
     return result
+
+
+def _separate_redundant_assert_claims(claims,sources,reviewed):
+    """Identify redundant cross-pass scroll corrections, not merge actions."""
+    import copy
+    if not isinstance(claims,list):return claims,[]
+    kept=[];removed=[]
+    for claim in claims:
+        if not isinstance(claim,dict):kept.append(claim);continue
+        ids=claim.get('source_anchor_ids');index=claim.get('reviewed_event_index')
+        if (set(claim)!={'source_anchor_ids','resolution','reviewed_event_index','evidence'} or
+            not isinstance(claim['evidence'],dict) or
+            claim.get('resolution')!='same_interaction_with_action_correction' or
+            not isinstance(ids,list) or len(ids)!=2 or any(not isinstance(x,str) for x in ids) or len(set(ids))!=2 or
+            {x.split(':')[0] for x in ids}!={'first_pass','independent_review'} or
+            type(index) is not int or not 0<=index<len(reviewed) or reviewed[index]['action']!='aiAssert'):
+            kept.append(claim);continue
+        if any(other is not claim and isinstance(other,dict) and
+               (other.get('reviewed_event_index')==index or any(a in ids for a in (other.get('source_anchor_ids') if isinstance(other.get('source_anchor_ids'),list) else []) if isinstance(a,str)))
+               for other in claims):
+            kept.append(claim);continue
+        old=[]
+        for aid in ids:
+            parts=aid.split(':') if isinstance(aid,str) else []
+            if len(parts)!=2 or parts[0] not in sources or not parts[1].isdigit() or int(parts[1])>=len(sources[parts[0]]):break
+            old.append(sources[parts[0]][int(parts[1])])
+        if len(old)!=2 or any(e['action']!='aiScroll' for e in old):kept.append(claim);continue
+        try:
+            for event in old:check_coverage([event],[copy.deepcopy(reviewed[index])])
+        except ValueError:
+            kept.append(claim);continue
+        removed.append(copy.deepcopy(claim))
+    return kept,removed
 
 
 def _exclude_focus_context_groups(groups,sources):
@@ -519,7 +556,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     from .ui_video_touch_detail import append_details
     payload['detail_frames']=append_details(images,root,assets,cancelled,window_ids)
     before=copy.deepcopy(checked['events'])
-    resolutions=[]
+    resolutions=[];redundant_claims=[]
     for attempt in range(attempt_limit):
         if cancelled():raise ValueError('video_cancelled')
         try:
@@ -545,6 +582,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。navigateBack的target必须精确为上一页面、value必须为空字符串；dismissKeyboard的target必须精确为当前页面的软键盘、value必须为空字符串。仅在原帧证实相应动作时使用，不能为满足格式编造操作。'
             continue
         try:
+            claims,redundant_claims=_separate_redundant_assert_claims(claims,{'first_pass':original,'independent_review':before},repaired['events'])
             resolutions=validate_resolutions(claims,{'first_pass':original,'independent_review':before},repaired['events'],window,
                                              allow_unresolved_return=attempt+1>=attempt_limit)
             for resolution in resolutions:
@@ -618,7 +656,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             payload['validation_feedback']+=' 上次仍未完整解释这些原帧：'+','.join(sorted(missing))+ '。unresolved_hypotheses是待证伪的旧识别，绝非正确答案。请逐帧核对旧识别是否误判；纠正旧点击/滚动时，完整引用其帧并明确说明实际动作或无新交互的自动状态。若多条旧识别实际为同一次操作，保留一次真实交互，并在coverage_resolutions中完整列入对应锚点，不额外造aiAssert代替重复锚点。仅独立的自动加载阶段可用aiAssert。不要复制旧动作凑数量。'
     before=validate_analysis({'events':before,'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
     resolutions=_redact_audit(resolutions,secrets)
-    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'model_attempts':attempt+1},secrets)
+    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims,'model_attempts':attempt+1},secrets)
     return result
 
 
