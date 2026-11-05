@@ -14271,3 +14271,8 @@ git diff --check
 
 - 新建独立草稿 W02 反馈查询追踪 a3b1bbf2，真实执行 6e5ae109 于 17:13:06 为 1/1 通过；实际发送的 X-Request-ID 与本轮 UUID 一致，HTTP 200、业务码 0、结构断言通过。响应未回显，请求在业务日志中关联尚未证实，真实超时与非 2xx 也待验。会话分页未证明 requestId 关联，响应丢失时无法安全自动找回和清理，未发起真实创建或删除。
 - 新增 API 执行记录选中后同步 URL 的 executionId，以及详情中的执行/子用例编号供复制；与 W02 实战入口联动，相关 21 项测试和构建通过，线上验收待完成。
+
+## 2026-11-05 Nameplate return conflict diagnostics
+
+- QA 693d0da7 deployed (same code as main 16b5d6cd); source version 7 failed `return_gesture_not_explicit` during reconciliation. The rejected model response and exact window were not retained. Three bounded replay runs of retained first-pass/review candidates over frames 332–343 all returned four distinct returns and passed local coverage; this does not establish that this was the original failing window or that the full video passed. Source version 8 was queued for full verification; its terminal result and all Android runs remain pending.
+- Pending change stores a bounded set of actual coverage-conflict frame identifiers on the owner/app-scoped source failure record, validating all identifiers against that source media; no model prose is added to shared logs. Scoped 284 tests, backend static 63, compile and diff check passed. Do not restart the service while version 8 or another active task is running.

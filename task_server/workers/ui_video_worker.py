@@ -30,6 +30,13 @@ def _failure_code(error):
 
 def _private_target_failure(error,code,document):
     """Bounded evidence saved under the existing owner/app source permissions."""
+    if code=='video_coverage_resolution_invalid':
+        refs=getattr(error,'coverage_frame_refs',None)
+        known={f.get('frame_id') for f in document.get('media',{}).get('frames',[])}
+        if (type(refs) is set and 1<=len(refs)<=32 and
+            all(type(ref) is str and re.fullmatch(r'frame-[0-9]{3,6}',ref) and ref in known for ref in refs)):
+            return {'coverage_frame_refs':sorted(refs)}
+        return {}
     if code=='video_required_action_missing':
         refs=getattr(error,'missing_frame_refs',None)
         known={f.get('frame_id') for f in document.get('media',{}).get('frames',[])}

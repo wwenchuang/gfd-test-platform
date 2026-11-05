@@ -68,3 +68,12 @@ def test_worker_rejects_invalid_outcome_gate_classification(index,reason):
     error=ValueError('video_expected_missing')
     error.outcome_failure_evidence={'candidate_index':index,'reason':reason}
     assert worker._private_target_failure(error,'video_expected_missing',{})=={}
+
+
+def test_coverage_failure_records_only_known_frame_ids():
+    error=ValueError('video_coverage_resolution_invalid')
+    error.coverage_frame_refs={'frame-001','frame-002'}
+    doc={'media':{'frames':[{'frame_id':'frame-001'},{'frame_id':'frame-002'}]}}
+    assert worker._private_target_failure(error,'video_coverage_resolution_invalid',doc)=={'coverage_frame_refs':['frame-001','frame-002']}
+    error.coverage_frame_refs.add('frame-999')
+    assert worker._private_target_failure(error,'video_coverage_resolution_invalid',doc)=={}

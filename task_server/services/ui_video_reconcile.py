@@ -597,8 +597,11 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             from .ui_video_coverage_resolution import boundary_safe
             if any(not boundary_safe(e,boundary,resolutions,window) for e in repaired['events']):
                 raise ValueError('video_reference_invalid')
-        except ValueError:
-            if attempt+1>=attempt_limit:raise
+        except ValueError as error:
+            if attempt+1>=attempt_limit:
+                if str(error)=='video_coverage_resolution_invalid':
+                    error.coverage_frame_refs=set(missing_refs)&window_ids
+                raise
             # If the observed events already cover both sources one-to-one,
             # a merge declaration is unnecessary. Ask for a fresh observation
             # response; never accept or silently strip an invalid declaration.
