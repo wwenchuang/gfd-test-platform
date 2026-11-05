@@ -130,6 +130,17 @@ describe('cases store', () => {
     expect(draft.request.body).toEqual({ modelSn: 'm001', type: 'MODEL' })
   })
 
+  it('preserves the response warning threshold when loading and resaving a case', async () => {
+    const persisted = { ...VERSION, processing: { pre: [], post: [], response_time_warning_ms: 1500 } }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { case_version: persisted } })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_version: { ...persisted, version: 2 } } })
+    const store = useCasesStore()
+    await store.loadVersion(VERSION.id)
+    expect(store.drafts[VERSION.endpoint_id].processing.response_time_warning_ms).toBe(1500)
+    await store.save(VERSION.endpoint_id)
+    expect((post.mock.calls[0][1] as { case: { processing: { response_time_warning_ms: number } } }).case.processing.response_time_warning_ms).toBe(1500)
+  })
+
   it('sends only the public CaseDraft fields when saving a loaded AI version', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_version: { ...VERSION, version: 2 } } })
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { case_version: VERSION } })
