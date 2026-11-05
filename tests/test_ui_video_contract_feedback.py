@@ -63,6 +63,8 @@ def test_recorded_terminal_distinguishes_feedback_from_unrelated_disappearances(
     assert check('页面跳转至反馈页面，包含“取消原因”选项。此前未见针对该页面的入口点击，判断为系统自动触发。')
     assert check('页面跳转至反馈页面，包含“取消原因”选项。鉴于frame-299中未见针对该页面的入口点击，且紧接在任务取消流程结束后出现，判断为自动触发。')
     assert not check('任务进度卡片没有消失，未见用户滚动或点击操作。')
+    assert check('任务卡片“姓名牌”突然消失，页面正在同步。未见用户滚动或点击操作。任务已不在列表中。')
+    assert not check('此前页面停留在取消原因反馈页，提交反馈后显示反馈成功，页面跳转回设备详情页。')
 
 
 @pytest.mark.parametrize('opening_target', ['确认按钮','确认打印按钮'])

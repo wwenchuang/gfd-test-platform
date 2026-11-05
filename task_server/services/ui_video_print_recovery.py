@@ -16,8 +16,9 @@ def eligible_terminal(terminal):
     # Toast persistence is independent of whether the print task has ended.
     observation=re.sub(r'(?:Toast|提示)(?:提示)?未消失', '提示仍显示', observation, flags=re.I)
     return not (terminal['action'] not in ('aiAssert','aiWaitFor') or
+        re.search(r'反馈(?:提交)?成功|提交反馈[^，。；,;\n]{0,30}成功',observation) or
         re.search(r'未|没有|无法|不能|可能|不确定',observation) or
-        not re.search(r'取消原因|反馈(?:表单)?(?:页|界面)|任务(?:进度)?(?:卡片)?(?:区域)?(?:已|自动|刷新|并|被|区域)*(?:移除|消失)|无任务卡片',observation))
+        not re.search(r'取消原因|反馈(?:表单)?(?:页|界面)|任务(?:进度)?(?:卡片)?(?:区域)?(?:“[^“”]{1,40}”)?(?:已|突然|自动|刷新|并|被|区域)*(?:移除|消失)|无任务卡片',observation))
 
 
 def prepare_group(plan,candidates,required):
