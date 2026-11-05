@@ -51,6 +51,16 @@ def test_terminal_observation_still_rejects_uncertain_or_negated_result(observat
         prepare_group({'events':[], 'print_recovery':{'submit':0,'cancel':1,'confirm':2,'end':3}},candidates,[0,1,2])
 
 
+def test_recorded_terminal_distinguishes_feedback_from_unrelated_disappearances():
+    from task_server.services.ui_video_print_recovery import eligible_terminal
+    def check(text):
+        return eligible_terminal({'action':'aiAssert','observation':text})
+    assert check('Toast提示未消失时，页面自动同步。页面恢复为设备空闲状态（无任务卡片）。页面自动跳转至“取消原因”反馈表单页。全过程未见用户新的点击触点，属于系统自动流转。')
+    assert not check('显示打印任务卡片，任务状态为模型处理中，暂停打印按钮消失，仅保留取消打印按钮。')
+    assert not check('点击提交反馈按钮，随后页面中央出现反馈成功提示，表明提交操作已完成。')
+    assert not check('Toast提示未消失时，任务卡片没有消失，尚未进入取消原因页。')
+
+
 @pytest.mark.parametrize('opening_target', ['确认按钮','确认打印按钮'])
 def test_wrong_submit_boundary_returns_specific_safe_feedback(opening_target):
     from task_server.services.ui_video_print_recovery import bind_group

@@ -14,8 +14,9 @@ def test_print_recovery_states_and_hard_bounds(tmp_path):
 
 def test_observer_retains_recovery_for_all_tasks(tmp_path):
     tree=ast.parse(Path('mac-midscene-runner.py').read_text())
-    constants={n.targets[0].id:ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name) and n.targets[0].id in ('RUNNER_PRINT_RECOVERY_ADAPTER','RUNNER_DYNAMIC_OBJECT_ADAPTER','RUNNER_PROGRESS_OBSERVER')}
-    observer=tmp_path/'observer.cjs';observer.write_text(''.join(constants[k] for k in ('RUNNER_PRINT_RECOVERY_ADAPTER','RUNNER_DYNAMIC_OBJECT_ADAPTER','RUNNER_PROGRESS_OBSERVER')))
+    parts=('RUNNER_KEYBOARD_DISMISS_ADAPTER','RUNNER_PRINT_RECOVERY_ADAPTER','RUNNER_DYNAMIC_OBJECT_ADAPTER','RUNNER_PROGRESS_OBSERVER')
+    constants={n.targets[0].id:ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name) and n.targets[0].id in parts}
+    observer=tmp_path/'observer.cjs';observer.write_text(''.join(constants[k] for k in parts))
     package=tmp_path/'node_modules/@midscene/cli';package.mkdir(parents=True);(package/'package.json').write_text('{"version":"1.13.0"}')
     core=tmp_path/'node_modules/@midscene/core';core.mkdir(parents=True)
     (core/'yaml.js').write_text('''
