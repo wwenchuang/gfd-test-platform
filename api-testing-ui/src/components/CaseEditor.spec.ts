@@ -61,6 +61,91 @@ function workflowDraft(): CaseDraft {
 }
 
 describe('CaseEditor', () => {
+  it('generates a new run identifier and never applies the preview to sensitive variables', async () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.data_rows[0].values = { apiKey: '', accessToken: '', password: '', userId: '', idCard: '', label: '' }
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+    await wrapper.get('[data-testid="test-data-new-run"]').trigger('click')
+    expect((wrapper.get('[data-testid="test-data-run-id"]').element as HTMLInputElement).value).toMatch(/^[0-9a-f]{32}$/)
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    const buttons = wrapper.findAll('[data-testid="test-data-apply"]')
+    expect(buttons.slice(0, 5).every(button => button.attributes('disabled') !== undefined)).toBe(true)
+    expect(buttons[5].attributes('disabled')).toBeUndefined()
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('discards the previous preview when a different case is opened', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+    await wrapper.get('[data-testid="test-data-run-id"]').setValue('0123456789abcdef0123456789abcdef')
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="test-data-preview"]').exists()).toBe(true)
+    await wrapper.setProps({ modelValue: { ...DRAFT, name: '另一个接口用例' } })
+    expect(wrapper.find('[data-testid="test-data-preview"]').exists()).toBe(false)
+    expect((wrapper.get('[data-testid="test-data-run-id"]').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('discards preview on switching case identity even when the payload is identical', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT, draftIdentity: 'endpoint-a:version-1' } })
+    await wrapper.get('[data-testid="test-data-run-id"]').setValue('0123456789abcdef0123456789abcdef')
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="test-data-preview"]').exists()).toBe(true)
+    await wrapper.setProps({ draftIdentity: 'endpoint-b:version-1' })
+    expect(wrapper.find('[data-testid="test-data-preview"]').exists()).toBe(false)
+  })
+
+  it('previews reproducible text without changing or executing the draft', async () => {
+    const network = vi.spyOn(globalThis, 'fetch')
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+    expect(wrapper.find('[data-testid="test-data-generator"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="test-data-seed"]').setValue('42')
+    await wrapper.get('[data-testid="test-data-run-id"]').setValue('0123456789abcdef0123456789abcdef')
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    expect(wrapper.get('[data-testid="test-data-preview"]').text()).toBe('test_0123456789abcdef0123456789abcdef_s42')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(wrapper.emitted('debug')).toBeUndefined()
+    expect(network).not.toHaveBeenCalled()
+    network.mockRestore()
+  })
+
+  it('requires a safe seed and full run identifier and isolates changed run identifiers', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+    expect(wrapper.find('[data-testid="test-data-generator"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="test-data-seed"]').setValue('42')
+    await wrapper.get('[data-testid="test-data-run-id"]').setValue('bad')
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="test-data-preview"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="test-data-run-id"]').setValue('0123456789abcdef0123456789abcdef')
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    const first = wrapper.get('[data-testid="test-data-preview"]').text()
+    await wrapper.get('[data-testid="test-data-run-id"]').setValue('1123456789abcdef0123456789abcdef')
+    expect(wrapper.find('[data-testid="test-data-preview"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    expect(wrapper.get('[data-testid="test-data-preview"]').text()).not.toBe(first)
+    await wrapper.get('[data-testid="test-data-seed"]').setValue('secret')
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="test-data-preview"]').exists()).toBe(false)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('fills only the selected string variable on explicit action and never saves', async () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.data_rows[0].values = { title: '', page: 1, previous: 'keep' }
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+    expect(wrapper.find('[data-testid="test-data-generator"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="test-data-seed"]').setValue('8')
+    await wrapper.get('[data-testid="test-data-run-id"]').setValue('0123456789abcdef0123456789abcdef')
+    await wrapper.get('[data-testid="test-data-preview-button"]').trigger('click')
+    const buttons = wrapper.findAll('[data-testid="test-data-apply"]')
+    expect(buttons).toHaveLength(3)
+    expect(buttons[1].attributes('disabled')).toBeDefined()
+    expect(buttons[2].attributes('disabled')).toBeDefined()
+    await buttons[0].trigger('click')
+    const value = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(value.data_rows[0].values).toEqual({ title: 'test_0123456789abcdef0123456789abcdef_s8', page: 1, previous: 'keep' })
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(wrapper.emitted('debug')).toBeUndefined()
+  })
   it('explains the saved case version and how to create an independent case', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT, editingVersion: { name: '原用例', version: 3 } } })
     expect(wrapper.get('[data-testid="case-editing-context"]').text()).toContain('原用例')

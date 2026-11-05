@@ -16,8 +16,8 @@ import CaseValidationSummary from './CaseValidationSummary.vue'
 
 type ProcessingPhase = 'pre' | 'post'
 
-const props = withDefaults(defineProps<{ modelValue: CaseDraft; editingVersion?: { name: string; version: number } | null; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; operationError?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[]; environmentRevisionId?: string; environmentName?: string }>(), {
-  editingVersion: null, validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', operationError: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
+const props = withDefaults(defineProps<{ modelValue: CaseDraft; draftIdentity?: string; editingVersion?: { name: string; version: number } | null; validationErrors?: Record<string, string>; validationWarnings?: Record<string, string>; saving?: boolean; debugging?: boolean; savedMessage?: string; operationError?: string; dependencyOptions?: CaseDependencyOption[]; endpointOptions?: ApiEndpoint[]; environmentVariableNames?: string[]; environmentRevisionId?: string; environmentName?: string }>(), {
+  draftIdentity: '', editingVersion: null, validationErrors: () => ({}), validationWarnings: () => ({}), saving: false, debugging: false, savedMessage: '', operationError: '', dependencyOptions: () => [], endpointOptions: () => [], environmentVariableNames: () => [], environmentRevisionId: '', environmentName: '',
 })
 const emit = defineEmits<{ 'update:modelValue': [draft: CaseDraft]; save: []; debug: [] }>()
 const { active: testApplications } = useTestApplications()
@@ -31,6 +31,41 @@ const editorRoot = ref<HTMLElement | null>(null)
 const setupEditor = ref<{ openStep(index: number): void } | null>(null)
 const cleanupEditor = ref<{ openStep(index: number): void } | null>(null)
 const dataRowsSection = ref<HTMLDetailsElement | null>(null)
+const testDataSeed = ref('0')
+const testDataRunId = ref('')
+const testDataPreview = ref('')
+const testDataError = ref('')
+watch([testDataSeed, testDataRunId], () => { testDataPreview.value = ''; testDataError.value = '' }, { flush: 'sync' })
+watch(() => props.draftIdentity, () => { testDataRunId.value = ''; testDataPreview.value = ''; testDataError.value = '' }, { flush: 'sync' })
+function newTestDataRunId(): void {
+  testDataRunId.value = ''
+  try {
+    const bytes = new Uint8Array(16)
+    globalThis.crypto.getRandomValues(bytes)
+    testDataRunId.value = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+  } catch {
+    testDataError.value = '无法生成数据编号，请输入 32 位十六进制编号。'
+  }
+}
+function previewTestData(): void {
+  testDataPreview.value = ''
+  if (!/^\d{1,12}$/.test(testDataSeed.value) || !/^[0-9a-f]{32}$/.test(testDataRunId.value)) {
+    testDataError.value = '种子请输入 1 至 12 位数字；数据编号请输入 32 位小写十六进制字符。'
+    return
+  }
+  testDataError.value = ''
+  testDataPreview.value = `test_${testDataRunId.value}_s${testDataSeed.value}`
+}
+function canApplyTestData(name: string, value: unknown): boolean {
+  return Boolean(testDataPreview.value) && value === ''
+    && !/pass(word)?|secret|token|key|auth|cookie|credential|phone|mobile|email|(?:^|_)tel(?:$|_)|id.?card|id.?number|user.?id|device.?sn|身份证|手机号|邮箱|密码|密钥|令牌/i.test(name)
+}
+function applyTestData(rowIndex: number, name: string): void {
+  const row = local.value.data_rows[rowIndex]
+  if (!row || !canApplyTestData(name, row.values[name])) return
+  row.values[name] = testDataPreview.value
+  publish()
+}
 const extractionsSection = ref<HTMLDetailsElement | null>(null)
 const advancedSection = ref<HTMLDetailsElement | null>(null)
 const localValidationErrors = computed(() => validateCaseDraftLocally(local.value))
@@ -133,6 +168,7 @@ defineExpose({ editStep })
 
 watch(() => props.modelValue, value => {
   if (JSON.stringify(value) !== JSON.stringify(local.value)) {
+    testDataRunId.value = ''
     local.value = normalizeDraft(value)
     raw.value = JSON.stringify(value, null, 2)
     requestEditorValid.value = true
@@ -354,8 +390,21 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
 
       <details ref="dataRowsSection" data-testid="data-rows-section" class="optional-editor-section" :open="dataRowsOpen"><summary><span>测试数据</span><small>{{ local.data_rows.length ? `${local.data_rows.length} 组` : '可选' }}</small></summary><section class="editor-section"><div class="section-heading"><strong>数据行</strong><button class="mini-icon" type="button" title="添加数据行" @click="addDataRow"><Plus :size="15" /></button></div>
         <p data-testid="data-rows-execution-note">功能用例的调试和回归每次只使用第一组启用的数据作为输入，其他数据组不会执行。依赖和前置处理可能覆盖变量。需要逐组运行时，请分别启用并执行。已有基线不会自动更新，请调试通过后重新采纳。压测使用性能场景配置的数据。<span v-if="firstEnabledDataRow === -1">当前没有启用的数据组，将不使用数据组变量。</span></p>
+        <details data-testid="test-data-generator" class="advanced-editor test-data-generator">
+          <summary>生成可重复的测试文本</summary>
+          <div class="test-data-generator-body">
+            <p>先确认目标字段允许此文本的格式和长度；不同编号生成不同文本，但不能证明业务字段唯一、资源隔离或清理成功。不要用于密钥、令牌或个人信息，系统无法识别所有敏感字段。</p>
+            <label>种子（1 至 12 位数字）<input v-model="testDataSeed" data-testid="test-data-seed" inputmode="numeric" maxlength="12" /></label>
+            <label>数据编号（32 位小写十六进制）<input v-model="testDataRunId" data-testid="test-data-run-id" maxlength="32" autocomplete="off" /></label>
+            <button type="button" data-testid="test-data-new-run" @click="newTestDataRunId">生成数据编号</button>
+            <button type="button" data-testid="test-data-preview-button" @click="previewTestData">生成预览</button>
+            <p v-if="testDataError" role="alert">{{ testDataError }}</p>
+            <p v-if="testDataPreview">预览：<code data-testid="test-data-preview">{{ testDataPreview }}</code></p>
+            <small>相同种子和编号可重现。数据编号与平台执行编号无自动关联，请自行留存。先添加数据行和空字符串变量，再选择填入；不会覆盖已有值。预览不会修改用例，填入后需自行保存。单次执行使用第一条启用的数据行。</small>
+          </div>
+        </details>
         <article v-for="(row, rowIndex) in local.data_rows" :key="rowIndex" class="data-card"><div class="data-card-head"><input v-model="row.name" aria-label="数据名称" @input="publish" /><label class="toggle-line"><input v-model="row.enabled" type="checkbox" @change="publish" />启用</label><span data-testid="data-row-execution-state">{{ !row.enabled ? '已停用' : rowIndex === firstEnabledDataRow ? '保存后使用' : '保存后不执行' }}</span><button class="mini-icon danger" type="button" title="删除数据" @click="local.data_rows.splice(rowIndex, 1); publish()"><Trash2 :size="14" /></button></div>
-          <div v-for="([name, value], valueIndex) in entries(row.values)" :key="`${name}-${valueIndex}`" class="key-value-row"><input :value="name" aria-label="变量名" @change="renameDataValue(rowIndex, name, ($event.target as HTMLInputElement).value)" /><input :value="renderValue(value)" aria-label="变量值" @input="updateDataValue(rowIndex, name, ($event.target as HTMLInputElement).value)" /><button class="mini-icon danger" type="button" title="删除变量" @click="delete row.values[name]; publish()"><Trash2 :size="14" /></button></div>
+          <div v-for="([name, value], valueIndex) in entries(row.values)" :key="`${name}-${valueIndex}`" class="key-value-row" :class="{ 'has-test-data-preview': testDataPreview }"><input :value="name" aria-label="变量名" @change="renameDataValue(rowIndex, name, ($event.target as HTMLInputElement).value)" /><input :value="renderValue(value)" aria-label="变量值" @input="updateDataValue(rowIndex, name, ($event.target as HTMLInputElement).value)" /><button v-if="testDataPreview" type="button" data-testid="test-data-apply" :disabled="!canApplyTestData(name, value)" title="填入预览文本；请先确认字段约束" @click="applyTestData(rowIndex, name)">填入预览</button><button class="mini-icon danger" type="button" title="删除变量" @click="delete row.values[name]; publish()"><Trash2 :size="14" /></button></div>
           <button class="row-add" type="button" @click="addDataValue(rowIndex)"><Plus :size="14" />添加变量</button>
           <small v-for="([field, message]) in validationMessages(`data_rows[${rowIndex}]`, validationErrors)" :key="field" :data-error-for="field" class="field-error">{{ message }}</small>
           <small v-for="([field, message]) in validationMessages(`data_rows[${rowIndex}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning">{{ message }}</small>

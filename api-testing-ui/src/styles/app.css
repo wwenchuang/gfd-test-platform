@@ -1195,3 +1195,10 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
   .baseline-classification-copy,
   .baseline-row > .baseline-row-actions { grid-column: 2; }
 }
+
+.test-data-generator-body { display: grid; gap: 8px; padding: 0 10px 10px; }
+.test-data-generator-body p { margin: 0; }
+.test-data-generator-body code { overflow-wrap: anywhere; }
+.key-value-row.has-test-data-preview { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr) auto 30px; }
+.key-value-row.has-test-data-preview > button[data-testid="test-data-apply"] { white-space: nowrap; }
+@media (max-width: 620px) { .key-value-row.has-test-data-preview { grid-template-columns: minmax(0, 1fr) auto 30px; }.key-value-row.has-test-data-preview > input:nth-child(2) { grid-column: 1 / -1; grid-row: 2; } }

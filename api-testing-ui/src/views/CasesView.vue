@@ -661,6 +661,7 @@ function defaultTaskName(): string {
           <CaseEditor
             v-if="activeDraft"
             :model-value="activeDraft"
+            :draft-identity="`${activeEndpoint?.id || ''}:${activeVersionId}:${cases.activeGeneratedPreviewId || ''}`"
             :editing-version="cases.versions[activeVersionId] || null"
             :dependency-options="dependencyOptions"
             :endpoint-options="assets.endpoints"
