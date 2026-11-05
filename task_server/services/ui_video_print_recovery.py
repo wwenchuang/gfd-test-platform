@@ -10,7 +10,7 @@ def eligible_terminal(terminal):
     # Remove only complete, narrowly recognized clauses; keep task negation and
     # uncertainty intact, and preserve the original candidate for audit.
     observation='，'.join(clause for clause in re.split(r'[，。；,;\n]',terminal['observation'])
-        if not re.fullmatch(r'(?:(?:期间|此过程|全过程)?未(?:见|观察到)用户(?:手动|新的)?(?:点击(?:(?:导航)?入口|操作|触点)?|滚动或点击操作|操作)|(?:此前|鉴于frame-\d+中)?未见针对该页面的入口点击)',clause.strip()))
+        if not re.fullmatch(r'(?:(?:期间|此过程|全过程)?未(?:见|观察到)用户(?:手动|新的)?(?:点击(?:(?:导航)?入口|操作|触点)?|滚动或点击操作|操作|触点)|(?:此前|鉴于frame-\d+中)?未见针对该页面的入口点击)',clause.strip()))
     # Unselected feedback options describe form state, not an unfinished task.
     observation=re.sub(r'(?<=为)未选中状态', '待选择状态', observation)
     # Toast persistence is independent of whether the print task has ended.
@@ -18,7 +18,7 @@ def eligible_terminal(terminal):
     return not (terminal['action'] not in ('aiAssert','aiWaitFor') or
         re.search(r'反馈(?:提交)?成功|提交反馈[^，。；,;\n]{0,30}成功',observation) or
         re.search(r'未|没有|无法|不能|可能|不确定',observation) or
-        not re.search(r'取消原因|反馈(?:表单)?(?:页|界面)|任务(?:进度)?(?:卡片)?(?:区域)?(?:“[^“”]{1,40}”)?(?:已|突然|自动|刷新|并|被|区域)*(?:移除|消失)|无任务卡片',observation))
+        not re.search(r'取消原因|反馈(?:表单)?(?:页|界面)|任务(?:进度)?(?:卡片)?(?:区域)?(?:“[^“”]{1,40}”|（[^（）]{1,40}）)?(?:已|突然|自动|刷新|并|被|区域)*(?:移除|消失)|无任务卡片',observation))
 
 
 def prepare_group(plan,candidates,required):
