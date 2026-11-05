@@ -5,7 +5,7 @@ const {JSDOM}=require('../api-testing-ui/node_modules/jsdom');
 const wait=()=>new Promise(setImmediate);
 function fixture(t){
  const dom=new JSDOM('<div id="app"><details data-ui-advanced open></details><main id="editor-area"></main></div>',{url:'http://localhost/task-manager.html',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());
- const w=dom.window,calls=[];w.currentAccessProfile={user_id:'u1'};w.activeWorkflow='dashboard';w.currentFile=null;
+ const w=dom.window,calls=[];w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.activeWorkflow='dashboard';w.currentFile=null;
  w.apiRequest=async()=>({ok:true,enabled:true});w.hasPermission=()=>true;w.applyAccessNavigation=()=>{};w.toggleLibrary=()=>{};
  w.activateWorkflow=key=>{w.activeWorkflow=key;calls.push(key);};w.nativeFetch=async()=>({ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['png'],{type:'image/png'})});w.Headers=Headers;w.sessionStorage.setItem('sessionToken','fixture-session-token');
  const utils=fs.readFileSync('js/utils.js','utf8');w.eval(utils.slice(utils.indexOf('function sessionToken()'),utils.indexOf('const WORKFLOW_SECTIONS')));
@@ -717,7 +717,7 @@ test('a forced 401 logout is not blocked by the unsaved draft confirmation',asyn
 test('first-week guide exposes existing entry points and distinguishes unimplemented evidence',async t=>{
  const {w,calls}=fixture(t);w.UiCaseDraft={mount:()=>({dispose(){}})};w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
  const guide=w.document.querySelector('[data-ui-week-one]');assert.ok(guide);assert.equal(guide.open,false);assert.match(guide.querySelector('summary').textContent,/第.?1.?周/);
- assert.match(guide.textContent,/快速体检/);assert.match(guide.textContent,/固定图.*尚未接入网页/);assert.match(guide.textContent,/人工.*耗时/);assert.match(guide.textContent,/证据/);
+ assert.match(guide.textContent,/快速体检/);assert.match(guide.textContent,/固定图/);assert.match(guide.textContent,/人工.*耗时/);assert.match(guide.textContent,/证据/);
  assert.equal(guide.querySelector('[data-week-api]').getAttribute('href'),'/api-test/');assert.equal(guide.querySelector('[data-week-api-runs]').getAttribute('href'),'/api-test/#/runs');
  guide.querySelector('[data-week-workflow="system_config"]').click();assert.equal(calls.at(-1),'system_config');w.activeWorkflow='ui_start';guide.querySelector('[data-week-workflow="config"]').click();assert.equal(calls.at(-1),'config');
 });
@@ -739,4 +739,69 @@ test('first-week API links remain keyboard reachable with readable button stylin
   assert.equal(w.getComputedStyle(link).color,'rgb(131, 235, 203)');link.focus();assert.equal(w.document.activeElement,link);
  }
  const css=style.textContent;assert.match(css,/\.ui-week-link:visited/);assert.match(css,/\.ui-week-link:focus-visible/);
+});
+
+
+test('week one model probe loads persisted evidence and keeps vision review separate from request success',async t=>{
+ const {w}=fixture(t);const calls=[];let reviewed=false;w.canAccessWorkflow=()=>true;
+ w.apiRequest=async(path,options={})=>{calls.push([path,options]);if(path==='/ui-executions/availability')return {ok:true,enabled:true};
+ if(path==='/platform/week1-probes'&&!options.method)return {ok:true,results:[{id:'probe_1',mode:'vision',created_at:'2026-11-05',model:'vision-model',source:'platform_direct',status:'success',answer:'左红矩形，右蓝圆',manual_check:reviewed?'passed':'pending'}]};
+ if(path==='/platform/week1-probes/confirm'){reviewed=true;return {ok:true};}return {ok:true,result:{id:'text_1',mode:'text',status:'success',source:'platform_direct',model:'text-model'}};};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
+ const guide=w.document.querySelector('[data-ui-week-one]');const panel=guide.querySelector('[data-week-probe]');assert.ok(panel);assert.match(panel.textContent,/消耗/);
+ panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();
+ assert.match(panel.textContent,/vision-model/);assert.match(panel.textContent,/待人工核对/);assert.match(panel.textContent,/左.*红.*矩形.*右.*蓝.*圆/);
+ panel.querySelector('[data-probe-review="true"]').click();await wait();await wait();
+ assert.equal(calls.find(([path])=>path==='/platform/week1-probes/confirm')[1].body.correct,true);assert.match(panel.textContent,/人工核对通过/);
+});
+
+test('week one probe denies unprivileged execution and ignores stale responses',async t=>{
+ const {w}=fixture(t);let resolve,gets=0;w.canAccessWorkflow=()=>true;w.hasPermission=p=>p==='ui.view';
+ w.apiRequest=async(path)=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};gets++;return new Promise(r=>resolve=r);};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();let panel=w.document.querySelector('[data-week-probe]');assert.match(panel.textContent,/权限/);assert.equal(panel.querySelector('[data-probe-run]'),null);assert.equal(gets,0);
+ w.hasPermission=()=>true;w.showUiSimpleWorkflow();panel=w.document.querySelector('[data-week-probe]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();
+ w.currentAccessProfile={user_id:'u2'};resolve({ok:true,results:[{id:'x',mode:'text',status:'success',answer:'previous-account-secret'}]});await wait();assert.doesNotMatch(panel.textContent,/previous-account-secret/);
+});
+
+test('model probe starts only one real request while busy and displays saved failure evidence',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;let resolve,runCount=0,failed=false;
+ w.apiRequest=async(path,options={})=>{
+  if(path==='/ui-executions/availability')return {ok:true,enabled:true};
+  if(path==='/platform/week1-probes'&&options.method==='POST'){runCount++;return new Promise(r=>resolve=r);}
+  if(path==='/platform/week1-probes')return {ok:true,results:failed?[{id:'failure',mode:'text',status:'failed',model:'qwen-plus',source:'platform_direct',error_code:'missing_config'}]:[]};
+  throw Error('unexpected');
+ };
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const panel=w.document.querySelector('[data-week-probe]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();
+ const button=panel.querySelector('[data-probe-run="text"]');button.click();button.click();assert.equal(runCount,1);assert.equal(button.disabled,true);
+ failed=true;resolve({ok:true});await wait();await wait();assert.match(panel.textContent,/调用失败/);assert.match(panel.textContent,/配置/);assert.equal(button.disabled,false);
+});
+
+test('fixed probe picture uses authenticated same-origin request and does not attach after account change',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;let resolve,request;
+ w.nativeFetch=(path,options)=>{request={path,options};return new Promise(r=>resolve=r);};
+ w.apiRequest=async(path)=>path==='/ui-executions/availability'?{ok:true,enabled:true}:{ok:true,results:[]};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const panel=w.document.querySelector('[data-week-probe]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();
+ assert.equal(request.path,'/api/platform/week1-probes/fixture');assert.ok(request.options.headers.has('Authorization'));
+ w.currentAccessProfile={user_id:'other'};resolve({ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['image'],{type:'image/png'})});await wait();assert.equal(panel.querySelector('[data-probe-fixture]').hasAttribute('src'),false);
+});
+
+test('text probe distinguishes a received answer from matching CONNECTED and explains missing key',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;
+ w.apiRequest=async(path)=>path==='/ui-executions/availability'?{ok:true,enabled:true}:{ok:true,results:[{id:'t',mode:'text',status:'success',model:'qwen-plus',source:'platform_direct',answer:'hello',text_check:'failed'},{id:'f',mode:'vision',status:'failed',error_code:'missing_key'}]};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const panel=w.document.querySelector('[data-week-probe]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();
+ assert.match(panel.textContent,/文本 · 调用成功/);assert.match(panel.textContent,/文本结果.*不匹配/);assert.match(panel.textContent,/未配置.*Key/);assert.match(panel.textContent,/missing_key/);
+});
+
+test('model probe requires complete app scope even with platform configure permission',async t=>{
+ const {w}=fixture(t);w.currentAccessProfile={user_id:'restricted',scope:{ui_apps:['app-one']}};w.canAccessWorkflow=()=>true;w.hasPermission=()=>true;let calls=0;
+ w.apiRequest=async(path)=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};calls++;return {ok:true,results:[]};};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const panel=w.document.querySelector('[data-week-probe]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();
+ assert.match(panel.textContent,/完整.*应用.*范围/);assert.equal(panel.querySelector('[data-probe-run]'),null);assert.equal(calls,0);
+});
+
+test('reviewed vision result can be corrected and displays the confirmation time',async t=>{
+ const {w}=fixture(t);w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.canAccessWorkflow=()=>true;let state='passed',confirmed;
+ w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(path.endsWith('/confirm')){confirmed=options.body;state='failed';return {ok:true};}return {ok:true,results:[{id:'vision',mode:'vision',status:'success',model:'qwen',source:'platform_direct',answer:'红矩形，蓝圆',manual_check:state,confirmed_at:'2026-11-05T03:00:00Z'}]};};
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const panel=w.document.querySelector('[data-week-probe]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();
+ assert.match(panel.textContent,/核对时间/);assert.match(panel.textContent,/2026/);panel.querySelector('[data-probe-review="false"]').click();await wait();await wait();assert.equal(confirmed.correct,false);assert.match(panel.textContent,/人工核对不通过/);
 });
