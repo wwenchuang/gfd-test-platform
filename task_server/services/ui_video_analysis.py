@@ -466,6 +466,18 @@ def _exit_prompt_review(events):
     return []
 
 
+def _overlapping_return_review(events):
+    """Keep overlapping returns visible and require review; never infer a merge."""
+    questions=[]
+    for left,right in zip(events,events[1:]):
+        if left.get('action')!='navigateBack' or right.get('action')!='navigateBack':continue
+        first,second=set(left.get('frame_refs',[])),set(right.get('frame_refs',[]))
+        if len(first & second)>=2 and (first<=second or second<=first):
+            refs='、'.join(sorted(first & second))
+            questions.append(f'返回操作共享原视频帧 {refs}，请核对是否为同一次返回，避免重复执行。')
+    return questions
+
+
 def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None, *, skill_runner=None, bounded_business_planning=False, planning_preflight=None):
     """Compile observed evidence through the shared planning and draft gates."""
     from . import ai_skill_service as ai
@@ -587,7 +599,7 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
             # analysis path, not just the optional trajectory path. The model
             # cannot erase them by omitting them from its planning response.
             from .ui_video_business_inputs import _MANUAL
-            blockers=list(observed['uncertainties'])+_exit_prompt_review(candidates+first_pass)
+            blockers=list(observed['uncertainties'])+_exit_prompt_review(candidates+first_pass)+_overlapping_return_review(checked['events'])
             for event in candidates:
                 # The manual-input placeholder can be resolved by later input
                 # recovery; keep it event-local instead of making it permanent.
