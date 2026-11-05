@@ -39,12 +39,16 @@ def probe(frames, details, assets, duration, cancelled):
         if cancelled():
             raise ValueError('video_cancelled')
         checked = validate_analysis(_bind_whole_evidence(result, selected), selected, duration)
-        if any(e['action']=='aiTap' and parent['frame_id'] in e['frame_refs'] and
-               (e['uncertainties'] or checked['uncertainties'] or checked['multiple_scenarios'])
-               for e in checked['events']):
-            # A known click with an uncertain target must not disappear from
-            # the probe and leave the later full-window observation unguarded.
-            raise ValueError('video_model_invalid')
+        uncertain=[e for e in checked['events'] if e['action']=='aiTap' and parent['frame_id'] in e['frame_refs'] and
+                   (e['uncertainties'] or checked['uncertainties'] or checked['multiple_scenarios'])]
+        if uncertain:
+            # Preserve an uncertain click as a review blocker, never as a
+            # silently trusted target. Ambiguous multi-action probes fail closed.
+            if len(checked['events'])!=1 or len(uncertain)!=1:raise ValueError('video_model_invalid')
+            event=uncertain[0]
+            hints.append({'frame_id':parent['frame_id'],'target':event['target'],
+                          'observation':event['observation'],'requires_review':True})
+            continue
         if checked['uncertainties'] or checked['multiple_scenarios'] or len(checked['events']) != 1:
             continue
         event = checked['events'][0]
@@ -52,6 +56,19 @@ def probe(frames, details, assets, duration, cancelled):
                 parent['frame_id'] in event['frame_refs'] and event['target']):
             hints.append({'frame_id':parent['frame_id'], 'target':event['target'],'observation':event['observation']})
     return hints
+
+
+def bind_uncertain_hints(events,hints):
+    """Attach the platform-owned blocker to exactly one same-frame tap."""
+    question='触点目标或页面变化存在疑问，请对照原视频核对'
+    found=False
+    for hint in hints:
+        if not hint.get('requires_review'):continue
+        matches=[e for e in events if e.get('action')=='aiTap' and hint['frame_id'] in e.get('frame_refs',[])]
+        if len(matches)!=1 or len(matches[0].get('uncertainties',[]))>=10:raise ValueError('video_model_invalid')
+        if question not in matches[0]['uncertainties']:matches[0]['uncertainties'].append(question)
+        found=True
+    return question if found else ''
 
 
 def _unquote(value):

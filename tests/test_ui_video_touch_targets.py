@@ -30,8 +30,8 @@ def test_detail_probe_requires_parent_reference_and_single_certain_tap(monkeypat
     monkeypatch.setattr(targets.ai,'run_ai_skill',call)
     assert targets.probe(frames,[detail],assets,1000,lambda:False)==[{'frame_id':'frame-002','target':'查看生成记录','observation':'记录页可见'}]
     response['events'][0]['uncertainties']=['触点不清楚']
-    with pytest.raises(ValueError,match='video_model_invalid'):
-        targets.probe(frames,[detail],assets,1000,lambda:False)
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    assert hints[0]['requires_review'] is True
     response['events'][0]['uncertainties']=[];response['events'][0]['frame_refs']=['frame-003']
     assert targets.probe(frames,[detail],assets,1000,lambda:False)==[]
 
@@ -249,8 +249,34 @@ def test_probe_does_not_discard_uncertain_tap_target(monkeypatch,uncertainty_pat
               'uncertainties':[],'multiple_scenarios':False}
     (response['events'][0] if uncertainty_path=='event' else response)['uncertainties']=['无法确认是哪条记录']
     monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:response)
-    with pytest.raises(ValueError,match='video_model_invalid'):
-        targets.probe(frames,[detail],assets,1000,lambda:False)
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    assert hints[0]['requires_review'] is True
+    events=[{'action':'aiTap','target':'删除','frame_refs':['f1','f2'],'uncertainties':[]}]
+    assert targets.conflict(events,hints,frames)==''
+    targets.bind_uncertain_hints(events,hints)
+    assert any('核对' in q for q in events[0]['uncertainties'])
+
+
+def test_uncertain_probe_cannot_disappear_or_bind_to_nearby_event():
+    hints=[{'frame_id':'f1','target':'删除','requires_review':True}]
+    for events in ([],[{'action':'aiTap','target':'删除','frame_refs':['f2'],'uncertainties':[]}],
+                   [{'action':'aiTap','target':'删除','frame_refs':['f1'],'uncertainties':[]},
+                    {'action':'aiTap','target':'删除','frame_refs':['f1'],'uncertainties':[]}]):
+        with pytest.raises(ValueError,match='video_model_invalid'):targets.bind_uncertain_hints(events,hints)
+
+
+def test_observe_window_retains_uncertain_probe_as_review_blocker(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[{'frame_id':'frame-001','target':'应用入口','requires_review':True}])
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:{'events':[{'action':'aiTap','target':'应用入口',
+        'value':'','frame_refs':['frame-001','frame-002'],'observation':'页面发生变化','uncertainties':[]}],
+        'uncertainties':[],'multiple_scenarios':False})
+    result,_=windows.observe_windows(frames,1000,tmp_path,lambda:False)
+    assert any('触点' in question for question in result['uncertainties'])
+    assert any('触点' in question for question in result['events'][0]['uncertainties'])
 
 
 @pytest.mark.parametrize('qualified',['第二条记录的删除按钮','第二条打印记录的删除按钮','第二条生成记录的删除按钮'])

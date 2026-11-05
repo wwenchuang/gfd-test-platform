@@ -99,7 +99,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         assets=load_assets(images,root,cancelled)
         from .ui_video_touch_detail import append_details
         payload['detail_frames']=append_details(images,root,assets,cancelled,current_ids)
-        from .ui_video_touch_targets import probe,conflict
+        from .ui_video_touch_targets import probe,conflict,bind_uncertain_hints
         payload['touch_targets']=probe(images,payload['detail_frames'],assets,duration,cancelled)
         for attempt in range(2):
             if cancelled():raise ValueError('video_cancelled')
@@ -123,6 +123,10 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                             if secret:target_evidence[key]=target_evidence[key].replace(secret,'[输入内容未保存]')
                     error.target_failure_evidence=target_evidence
                     raise error
+                question=bind_uncertain_hints(checked['events'],payload['touch_targets'])
+                if question and question not in checked['uncertainties']:
+                    if len(checked['uncertainties'])>=30:raise ValueError('video_model_invalid')
+                    checked['uncertainties'].append(question)
                 break
             except ValueError as error:
                 if cancelled() or attempt or getattr(error,'target_diagnostic',{}).get('ambiguous_bare_probe'):raise
