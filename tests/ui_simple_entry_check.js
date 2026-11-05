@@ -902,6 +902,7 @@ test('week one UI artifact uses authenticated fixed endpoints for image preview 
  await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week-smoke]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();
  panel.querySelector('[data-smoke-artifact="positive-screenshot"]').click();await wait();await wait();const img=panel.querySelector('[data-smoke-preview]');assert.ok(img);assert.equal(img.src,'blob:test');assert.equal(requests[0][0],'/api/platform/week1-smoke/artifact?id='+id+'&item=positive-screenshot');assert.ok(requests[0][1].headers.has('Authorization'));assert.equal(requests[0][1].redirect,'error');
  panel.querySelector('[data-smoke-artifact="negative-trace"]').click();await wait();await wait();assert.deepEqual(downloads,['第1周-故意失败-trace.zip']);assert.match(requests[1][0],/negative-trace/);
+ assert.match(panel.textContent,/截图可预览/);assert.match(panel.textContent,/HTTP.*浏览器.*拦截/);assert.match(panel.textContent,/HTTPS.*联系管理员/);assert.match(panel.textContent,/已发起.*查看浏览器下载记录/);assert.doesNotMatch(panel.textContent,/下载成功/);
 });
 
 test('week one private artifacts reject invalid IDs and stale account responses',async t=>{

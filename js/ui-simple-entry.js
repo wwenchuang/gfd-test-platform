@@ -205,7 +205,7 @@ function attachUiWeekOneSmoke(slot,current){
         row.querySelector('[data-smoke-preview]')?.remove();row.append(img);notice.textContent='截图已加载；这是本次服务器运行的证据。';
       }else{
         const link=document.createElement('a');link.href=src;link.download='第1周-'+(item.startsWith('positive')?'正常断言':'故意失败')+'-trace.zip';document.body.append(link);link.click();link.remove();
-        setTimeout(()=>{if(uiSimplePictures.get(key)===src){URL.revokeObjectURL(src);uiSimplePictures.delete(key);}},60000);notice.textContent='trace 下载已发起。';
+        setTimeout(()=>{if(uiSimplePictures.get(key)===src){URL.revokeObjectURL(src);uiSimplePictures.delete(key);}},60000);notice.textContent='trace 下载已发起，请查看浏览器下载记录确认结果。';
       }
     }catch(error){if(valid()&&row.isConnected&&(timedOut||!controller.signal.aborted))notice.textContent=timedOut?'读取证据超时，请稍后重试。':error?.status===401?'登录已失效，请重新登录。':error?.status===403?'当前账号没有查看证据的权限。':error?.status===404?'证据不存在或当前账号无法查看。':'读取证据失败，请检查网络或稍后重试。';}
     finally{clearTimeout(timeout);uiSimpleDownloads.delete(controller);if(valid())setBusy(false);}
@@ -222,7 +222,7 @@ function attachUiWeekOneSmoke(slot,current){
         const line=document.createElement('p');line.textContent=field(check.name)+'：'+status(check.status)+'；预期：'+field(check.expected)+'；实际：'+field(check.actual)+'；退出码：'+field(check.exit_code);row.append(line);
       }
       if(item.kind==='ui'&&item.artifacts){
-        const evidence=document.createElement('p');evidence.textContent='截图与 trace：'+(({saved:'已保存在服务器受控目录，可在此查看或下载',partial:'部分保存；缺失项无法查看或下载',unavailable:'未保存'})[item.artifacts]||'状态未知');row.append(evidence);
+        const evidence=document.createElement('p');evidence.textContent='截图与 trace：'+(({saved:'已保存在服务器受控目录，截图可预览；HTTP 站点的 trace 下载可能被浏览器拦截，请使用 HTTPS 或联系管理员。',partial:'部分保存；截图可预览，缺失项无法查看或下载。HTTP 站点的 trace 下载可能被浏览器拦截，请使用 HTTPS 或联系管理员。',unavailable:'未保存'})[item.artifacts]||'状态未知');row.append(evidence);
         if(['saved','partial'].includes(item.artifacts)&&/^[a-f0-9]{32}$/.test(item.id||'')){
           for(const [name,label] of [['positive-screenshot','查看正常截图'],['negative-screenshot','查看故意失败截图'],['positive-trace','下载正常 trace'],['negative-trace','下载故意失败 trace']]){
             const button=document.createElement('button');button.type='button';button.disabled=busy;button.dataset.smokeArtifact=name;button.textContent=label;button.onclick=()=>void openArtifact(row,item.id,name);row.append(button);
