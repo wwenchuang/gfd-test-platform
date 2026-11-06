@@ -82,6 +82,15 @@ def test_v3_full_repair_preserves_separate_keyboard_action(monkeypatch, tmp_path
                                         {'frame-047', 'frame-048', 'frame-049'})
     assert len(calls) == 2
     assert calls[1]['boundary_conflicts'] == [{'action': 'aiInput', 'frame_refs': ['frame-066']}]
+    assert calls[1]['boundary_retry_context'] == {
+        'all_boundary_frame_refs': ['frame-065', 'frame-066'],
+        'preserved_interactions': [{'action': 'dismissKeyboard',
+                                    'frame_refs': ['frame-065', 'frame-066', 'frame-067']}],
+    }
+    assert '旧锚点' in calls[1]['validation_feedback']
+    assert 'boundary_retry_context' not in calls[0]
+    assert 'target' not in str(calls[1]['boundary_retry_context'])
+    assert 'value' not in str(calls[1]['boundary_retry_context'])
     assert [e['action'] for e in result['events']] == ['aiTap', 'aiTap', 'aiInput', 'dismissKeyboard']
     assert result['events'][-1]['frame_refs'] == ['frame-065', 'frame-066', 'frame-067']
     assert result['events'][2]['frame_refs'] == reviewed[1]['frame_refs']
@@ -125,3 +134,4 @@ def test_boundary_does_not_extend_blind_or_return_only_budget(monkeypatch, tmp_p
     with pytest.raises(ValueError, match='video_reference_invalid'):
         run_window(tmp_path, first, reviewed, frames, **options)
     assert len(calls) == 1
+    assert 'boundary_retry_context' not in calls[0]

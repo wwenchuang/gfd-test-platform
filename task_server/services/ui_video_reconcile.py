@@ -378,7 +378,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         # Reserve one call for each later gap; extra attempts share the same
         # bounded ceiling; five gaps share one return-specific extra attempt.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
-        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only)
+        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only,preserved_interactions=preserved)
         calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
@@ -464,7 +464,7 @@ def _exclude_focus_context_groups(groups,sources):
     return [g for g in groups if not is_focus_group(g)]
 
 
-def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=(),retry_return_gesture_only=False):
+def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=(),retry_return_gesture_only=False,preserved_interactions=()):
     """Revisit one bounded gap without accepting omission or copying old semantics."""
     import copy
     from . import ai_skill_service as ai
@@ -637,7 +637,12 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 raise
             if getattr(error,'boundary_conflicts',None):
                 payload['boundary_conflicts']=error.boundary_conflicts
-                payload['validation_feedback']+=' 上次事件与已保留交互存在边界冲突，boundary_conflicts仅列被拒事件的动作类别和冲突原帧。重新观察原图，独立解释所有旧锚点及相邻真实操作，只引用原图确证属于该事件的帧，不得为通过校验机械删帧或编造交互。仅严格验证的点击或返回映射可共享一个操作前状态帧；其他交互不能引用已保留的边界帧。无法确认时如实保留疑问。'
+                image_ids={f['frame_id'] for f in images}
+                payload['boundary_retry_context']={'all_boundary_frame_refs':sorted(boundary),
+                    'preserved_interactions':[{'action':e['action'],'frame_refs':[r for r in e['frame_refs'] if r in image_ids]}
+                        for e in preserved_interactions if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
+                        and set(e['frame_refs'])&set(boundary)]}
+                payload['validation_feedback']+=' 上次事件与已保留交互存在边界冲突，boundary_conflicts仅列被拒事件的动作类别和冲突原帧。boundary_retry_context列出全部已保留边界帧及相关旧识别的已附原帧，旧识别只是待核对假设，不是事实；不得只避开上次报错的一帧而使用其他边界帧。重新观察原图，独立解释所有旧锚点及相邻真实操作，只引用原图确证属于该事件的帧，不得为通过校验机械删帧或编造交互。若原图确证先独立点击输入框聚焦、再输入，应分别保留该焦点点击和输入，不得为减少步骤漏掉焦点；无法确认时保留疑问。仅严格验证的点击或返回映射可共享一个操作前状态帧；其他交互不能引用已保留的边界帧。'
                 continue
             if reason=='return_gesture_not_explicit':
                 from .ui_video_coverage_resolution import diagnose
