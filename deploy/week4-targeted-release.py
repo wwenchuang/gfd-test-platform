@@ -34,6 +34,22 @@ FILES = tuple(NEW)
 SERVICES = {'main': 'midscene-task.service', 'worker': 'midscene-api-worker.service'}
 UI_ACTIVE_SQL = "SELECT count(*) FROM case_attempts WHERE COALESCE(status,'') NOT IN ('passed','failed','cancelled') AND NOT (COALESCE(status,'')='interrupted' AND COALESCE(stop_confirmed,0)=1)"
 LOAD_ACTIVE_SQL = "SELECT count(*) FROM api_load_runs WHERE COALESCE(state,'') NOT IN ('draft','finished','failed','cancelled') AND NOT (COALESCE(state,'')='queued' AND COALESCE(id,'')='1d2af319-f6c9-4cd1-9667-5ae3424a55c2' AND started_at IS NULL AND COALESCE(created_at < '2026-09-12'::date, false))"
+# Only an untouched assigned shard of the exact old queued run is an idle
+# allocation. Unknown or claimed shards still stop the release. This is a
+# snapshot; the parent run can be started concurrently by another actor.
+HISTORIC_SHARD_ACTIVE_SQL = """SELECT count(*) FROM api_load_run_shards s
+WHERE s.run_id='1d2af319-f6c9-4cd1-9667-5ae3424a55c2'
+  AND COALESCE(s.state,'') NOT IN ('finished','failed','cancelled','lost')
+  AND NOT (
+    COALESCE(s.state,'')='assigned'
+    AND s.last_heartbeat_at IS NULL
+    AND COALESCE(s.process_info='{}', false)
+    AND NOT EXISTS (SELECT 1 FROM api_load_metric_buckets b WHERE b.shard_id=s.id)
+    AND NOT EXISTS (SELECT 1 FROM api_load_samples t WHERE t.shard_id=s.id)
+    AND EXISTS (SELECT 1 FROM api_load_runs r WHERE r.id=s.run_id
+      AND r.state='queued' AND r.started_at IS NULL
+      AND r.created_at < '2026-09-12')
+  )"""
 
 
 def sha(path):
@@ -116,7 +132,7 @@ class LiveOps:
             raise ValueError('load task active or unknown')
         if postgres_scalar("SELECT count(*) FROM api_load_schedules WHERE active_run_id='1d2af319-f6c9-4cd1-9667-5ae3424a55c2'"):
             raise ValueError('historic load is now associated with a schedule')
-        if postgres_scalar("SELECT count(*) FROM api_load_run_shards WHERE run_id='1d2af319-f6c9-4cd1-9667-5ae3424a55c2' AND COALESCE(state,'') NOT IN ('finished','failed','cancelled','lost')"):
+        if postgres_scalar(HISTORIC_SHARD_ACTIVE_SQL):
             raise ValueError('historic load has a nonterminal shard')
         self.check_worker_queues()
         print('LISTED CHECKS CLEAR ONLY: other tasks and Redis messages may exist; this is not an admission gate', flush=True)
