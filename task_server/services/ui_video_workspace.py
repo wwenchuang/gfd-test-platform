@@ -6,6 +6,7 @@ import re
 MARKER='analysis_workspace_version'
 PRIVATE_FIELDS=frozenset({MARKER,'execution_contract','video_runtime_selection','video_runtime_private',
                           'video_runtime_summary','trajectory_audit','trajectory_records','trajectory_record_index',
+                          'frame_role_audit',
                           'analysis_workspace_path','trajectory_record_root','trajectory_record_path',
                           'analysis_record_path','workspace_path','source_path'})
 

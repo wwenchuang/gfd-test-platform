@@ -360,7 +360,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         if not groups or positions[frame['frame_id']]!=positions[groups[-1][-1]['frame_id']]+1:groups.append([])
         groups[-1].append(frame)
     if len(groups)>5 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
-    result=copy.deepcopy(checked);resolutions=[];replacements=[];redundant_claims=[]
+    result=copy.deepcopy(checked);resolutions=[];replacements=[];redundant_claims=[];frame_role_audit=[]
     all_ids={f['frame_id'] for f in window}
     replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
@@ -379,6 +379,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         # bounded ceiling; five gaps share one return-specific extra attempt.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
         repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only,preserved_interactions=preserved)
+        frame_role_audit.extend(repaired.get('frame_role_audit',[]))
         calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
@@ -406,6 +407,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     check_coverage(checked['events'],result['events'],duration,resolutions,'independent_review')
     before=validate_analysis({'events':checked['events'],'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
     result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims},secrets)
+    if frame_role_audit:result['frame_role_audit']=frame_role_audit
     return result
 
 
@@ -462,6 +464,43 @@ def _exclude_focus_context_groups(groups,sources):
                    and sum(a.startswith(name+':') for a in ids)==2
                    for name,i,j,ref in blocked)
     return [g for g in groups if not is_focus_group(g)]
+
+
+def _extract_boundary_role_claims(raw, events, preserved, boundary, image_frames, context_frames=None):
+    """Keep bounded, explicitly unverified context claims outside action evidence."""
+    claims=raw.pop('boundary_frame_roles',[])
+    if not isinstance(claims,list) or len(claims)>16:raise ValueError('video_reference_invalid')
+    times={f['frame_id']:f['timestamp_ms'] for f in image_frames}
+    all_times={f['frame_id']:f['timestamp_ms'] for f in (context_frames if context_frames is not None else image_frames)}
+    result=[];used=set()
+    for claim in claims:
+        if not isinstance(claim,dict) or set(claim)!={'event_index','context_frame_refs'}:raise ValueError('video_reference_invalid')
+        index=claim['event_index'];refs=claim['context_frame_refs']
+        if type(index) is not int or not 0<=index<len(events) or index in used:raise ValueError('video_reference_invalid')
+        if not isinstance(refs,list) or len(refs)!=1 or any(not isinstance(r,str) or r not in times for r in refs):raise ValueError('video_reference_invalid')
+        if len(set(refs))!=len(refs) or [times[r] for r in refs]!=sorted(times[r] for r in refs):raise ValueError('video_reference_invalid')
+        event=events[index]
+        if not isinstance(event,dict):raise ValueError('video_reference_invalid')
+        action_refs=event.get('frame_refs',[])
+        if (not action_refs or any(r not in times for r in action_refs) or
+            set(refs)&set(action_refs) or not set(refs)<=set(boundary)):raise ValueError('video_reference_invalid')
+        # A context claim is allowed only for the first frame of the immediately
+        # following retained interaction, whose later evidence also exists.
+        for ref in refs:
+            following=[e for e in preserved if e.get('frame_refs') and e['frame_refs'][0]==ref and
+                       len(e['frame_refs'])>=2 and all(r in times for r in e['frame_refs']) and
+                       times[e['frame_refs'][-1]]>times[ref]]
+            if (len(following)!=1 or times[ref]<max(times[r] for r in action_refs) or
+                any(e.get('frame_refs') and e['frame_refs'][0] in all_times and
+                    max(times[r] for r in action_refs)<all_times[e['frame_refs'][0]]<times[ref]
+                    for e in preserved) or
+                any(i!=index and e.get('frame_refs') and e['frame_refs'][0] in times and
+                    max(times[r] for r in action_refs)<times[e['frame_refs'][0]]<times[ref]
+                    for i,e in enumerate(events))):raise ValueError('video_reference_invalid')
+        used.add(index)
+        result.append({'action':event['action'],'frame_refs':list(action_refs),'context_frame_refs':list(refs),
+                       'status':'unverified_model_claim'})
+    return result
 
 
 def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=(),retry_return_gesture_only=False,preserved_interactions=()):
@@ -586,6 +625,9 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         if isinstance(raw,dict) and isinstance(raw.get('events'),list):
             secrets.extend(e['value'] for e in raw['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
         from .ui_video_coverage_resolution import validate as validate_resolutions
+        if isinstance(raw,dict) and 'boundary_frame_roles' in raw and 'boundary_retry_context' not in payload:
+            raise ValueError('video_reference_invalid')
+        role_claims=_extract_boundary_role_claims(raw,raw.get('events',[]),preserved_interactions,boundary,images,context_frames) if isinstance(raw,dict) else []
         claims=raw.get('coverage_resolutions',[]) if isinstance(raw,dict) else []
         observation={k:v for k,v in raw.items() if k!='coverage_resolutions'} if isinstance(raw,dict) else raw
         try:
@@ -708,6 +750,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     before=validate_analysis({'events':before,'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
     resolutions=_redact_audit(resolutions,secrets)
     result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims,'model_attempts':attempt+1},secrets)
+    if role_claims:result['frame_role_audit']=role_claims
     return result
 
 

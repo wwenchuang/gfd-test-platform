@@ -213,6 +213,19 @@
     "multiple_scenarios": {
       "type": "boolean"
     },
+    "boundary_frame_roles": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_index", "context_frame_refs"],
+        "properties": {
+          "event_index": {"type": "integer", "minimum": 0},
+          "context_frame_refs": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "string"}}
+        }
+      }
+    },
     "coverage_resolutions": {
       "type": "array",
       "maxItems": 8,

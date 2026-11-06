@@ -628,7 +628,7 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                 error.result_check_candidate_indexes=missing_indexes
                 raise error
             first_pass=validate_analysis({'events':first_pass,'uncertainties':[],'multiple_scenarios':False},frames,duration,known_secrets,max_events=120)['events']
-            return {**checked,**trajectory_audit,'multiple_scenarios':multi,'first_pass_events':first_pass,'reconciliation_audit':observed.get('reconciliation_audit'),'response_review':observed.get('response_review',[]),'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
+            return {**checked,**trajectory_audit,'multiple_scenarios':multi,'first_pass_events':first_pass,'reconciliation_audit':observed.get('reconciliation_audit'),**({'frame_role_audit':copy.deepcopy(observed['frame_role_audit'])} if observed.get('frame_role_audit') else {}),'response_review':observed.get('response_review',[]),'raw_events':candidates,'raw_uncertainties':observed['uncertainties'],'omitted_retries':recovery,'print_recovery':print_group}
         except ValueError as error:
             if bounded_business_planning:
                 # Only platform validation reaches this block. Keep a closed
