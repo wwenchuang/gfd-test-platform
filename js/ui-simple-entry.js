@@ -176,6 +176,13 @@ function attachTaskWorkbench(page){
   const snapshot=previousEvidence.querySelector('[data-week2-snapshot]');snapshot.querySelector('summary').textContent='查看历史执行证据';
   const walker=document.createTreeWalker(snapshot,NodeFilter.SHOW_TEXT);while(walker.nextNode())walker.currentNode.nodeValue=walker.currentNode.nodeValue.replace(/W02\s*/g,'').replace('本记录不代表整周验收或所有业务已通过','本记录不代表所有业务已通过');
   panel.append(snapshot,previousEvidence.querySelector('[data-week2-howto]'));evidence.append(panel);previousEvidence.remove();page.append(evidence);
+  const acceptance=document.createElement('details');acceptance.dataset.practiceAcceptance='';acceptance.className='ui-practice-details';
+  acceptance.innerHTML='<summary>查看接口数据与清理实战记录</summary><p>以下是 2026-11-06 的历史执行记录（北京时间），不代表当前实时状态。打开原记录需要对应项目和环境的查看权限。</p><ul><li>09:39:48：生产环境单次创建会话后按本次返回的编号标记删除，随后接口查询不可见。<span data-practice-run="cleanup"></span></li><li>17:12:20：既有接口基线只读执行通过，HTTP&#32;200、业务码 0、3 条断言通过。<span data-practice-run="baseline"></span></li><li>17:02:55：因缺少临时变量 week2_request_id 在发请求前中断，未收到响应；该次执行失败。<span data-practice-run="failure"></span></li></ul><p>本次标记删除和不可见不证明关联资源已清除或物理删除；并发、异常恢复与 Mock 验证仍未完成。以上记录不代表全部业务或整个计划已通过。</p>';
+  const allowed=()=>current()&&hasPermission('platform.configure')&&hasPermission('api.view')&&(currentAccessProfile?.is_superuser===true||currentAccessProfile?.scope?.ui_apps==='*');
+  for(const [kind,id] of [['cleanup','0157b386-1475-4946-aae8-1664498ecc69'],['baseline','1eb0c640-d78a-41f9-b441-02785fd87e1c'],['failure','43b09e5e-d879-47a2-bde5-2d462d48e988']]){
+    const link=document.createElement('a');link.className='ui-week-link';link.href='/api-test/#/runs?executionId='+id;link.textContent='查看执行记录';link.onclick=event=>{if(!allowed())event.preventDefault();};acceptance.querySelector('[data-practice-run="'+kind+'"]').append(' ',link);
+  }
+  panel.append(acceptance);
 }
 function attachUiFirstWeekGuide(page){
   const identity=uiSimpleIdentity(),epoch=uiSimpleEpoch;
