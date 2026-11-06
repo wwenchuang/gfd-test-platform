@@ -38,6 +38,11 @@ test('practice evidence is hidden from limited users and stale links cannot be u
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:['one']}};w.showAiPractice();assert.equal(w.document.querySelector('[data-practice-acceptance]'),null);
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.hasPermission=p=>p==='api.view';w.showAiPractice();assert.equal(w.document.querySelector('[data-practice-acceptance]'),null);
 });
+test('feedback analysis describes the limited write cleanup verification consistently',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.apiRequest=async path=>path==='/platform/week2-real'?{ok:true,results:[{id:'sample',status:'blocked',created_at:'2026-11-06',source:'platform_record',source_verification:'server_authorized_platform_read',business_requests:0}]}:{ok:true,enabled:true};
+ w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week2-real]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();
+ assert.equal((panel.textContent.match(/写入及清理仅完成单次验证，异常恢复和关联资源清理仍待验证/g)||[]).length,2);assert.doesNotMatch(panel.textContent,/真实写入及清理仍待验证/);
+});
 test('release testing page does not contain the learning guide or probe',async t=>{
  const {w}=fixture(t);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
  assert.equal(w.document.querySelector('[data-ui-week-one]'),null);

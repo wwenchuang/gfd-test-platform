@@ -261,7 +261,7 @@ function attachUiWeekTwoReal(guide,page,identity,epoch){
   const canRun=()=>hasPermission('platform.configure')&&hasPermission('api.view')&&(currentAccessProfile?.is_superuser===true||currentAccessProfile?.scope?.ui_apps==='*');
   const valid=()=>page.isConnected&&activeWorkflow==='ai_practice'&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch&&canRun();
   const panel=document.createElement('details');panel.dataset.week2Real='';panel.className='ui-week-probe';
-  panel.innerHTML='<summary>查看和分析已有反馈记录</summary><p>对真实反馈分类的已有记录进行确定性数据检查；不调用 AI，不重新调用业务接口，也不创建业务数据。原始断言和本次检查分开展示，真实写入及清理仍待验证。</p>';
+  panel.innerHTML='<summary>查看和分析已有反馈记录</summary><p>对真实反馈分类的已有记录进行确定性数据检查；不调用 AI，不重新调用业务接口，也不创建业务数据。原始断言和本次检查分开展示，写入及清理仅完成单次验证，异常恢复和关联资源清理仍待验证。</p>';
   const progress=['W02-01','W02-05'].map(id=>{const line=document.createElement('p');line.dataset.week2Progress='';line.textContent='本人分析结果待核验。';guide.querySelector('[data-week2-task="'+id+'"]').append(line);return line;});
   const scope=document.createElement('p');scope.textContent='默认分析执行记录 de803f8b-e18b-4e67-986d-b14ce737b8aa；也可以指定其他真实反馈执行记录。';panel.append(scope);
   guide.insertBefore(panel,guide.querySelector('.ui-practice-details'));
@@ -283,7 +283,7 @@ function attachUiWeekTwoReal(guide,page,identity,epoch){
       const row=document.createElement('details');row.className='ui-week-probe-row';
       const title=document.createElement('summary');title.textContent='服务器本次分析 · '+(item.status==='passed'&&!good?'结果待核实':status(item.status))+' · '+field(item.total)+' 项 · '+uiPracticeTime(item.created_at);row.append(title);
       const meta=document.createElement('p');meta.textContent='原业务执行编号：'+field(item.execution_id)+'；子用例编号：'+field(item.execution_case_id)+'；分析代码指纹：'+field(item.code_sha256);row.append(meta);
-      const source=document.createElement('p');source.textContent='来源：'+(item.source==='platform_record'?'服务器读取已保存的平台执行记录':'未知')+'；来源核验：'+(item.source_verification==='server_authorized_platform_read'?'服务器授权读取':'未核实')+'；本次分析业务请求：'+field(item.business_requests)+'。真实写入及清理仍待验证。';row.append(source);
+      const source=document.createElement('p');source.textContent='来源：'+(item.source==='platform_record'?'服务器读取已保存的平台执行记录':'未知')+'；来源核验：'+(item.source_verification==='server_authorized_platform_read'?'服务器授权读取':'未核实')+'；本次分析业务请求：'+field(item.business_requests)+'。写入及清理仅完成单次验证，异常恢复和关联资源清理仍待验证。';row.append(source);
       const original=document.createElement('p');original.textContent='原始平台断言：'+(assertions.length?assertions.map(a=>field(a.type)+' '+(a.passed===true?'通过':a.passed===false?'失败':'未知')).join('；'):'未记录');row.append(original);
       const summary=document.createElement('p');summary.textContent='本次数据处理检查：'+field(item.total)+' 项。';row.append(summary);
       const list=document.createElement('ol');for(const check of checks){const line=document.createElement('li');line.textContent=(labels[check?.id]||field(check?.id))+'：'+status(check?.status);list.append(line);}if(list.childElementCount)row.append(list);
