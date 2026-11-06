@@ -199,17 +199,17 @@ def analyze_video_source(store,identifier):
             stage='decode'
             media=decode_video(store.root/identifier/'source.mp4',store.root/identifier/'frames',cancelled)
             if media['black'] or media['static']:
-                store.transition(identifier,{'decoding'},'review_needed',expected_version=version,media=media,error='黑屏或静止视频没有可靠操作证据，请选择包含完整操作和结束结果的片段')
+                store.transition(identifier,{'decoding'},'review_needed',expected_version=version,expected_owner=owner,expected_app=app,media=media,error='黑屏或静止视频没有可靠操作证据，请选择包含完整操作和结束结果的片段')
                 return
             stage='persist'
-            document=store.transition(identifier,{'decoding'},'analyzing',expected_version=version,media=media)
+            document=store.transition(identifier,{'decoding'},'analyzing',expected_version=version,expected_owner=owner,expected_app=app,media=media)
             if not document:return
             stage='baseline'
             document['baseline_examples']=_top3_examples(app,document['goal'] or '录屏操作步骤')
             stage='analysis'
             def progress(phase,completed,total,events):
                 if cancelled():raise ValueError('video_cancelled')
-                store.transition(identifier,{'analyzing'},'analyzing',expected_version=version,
+                store.transition(identifier,{'analyzing'},'analyzing',expected_version=version,expected_owner=owner,expected_app=app,
                     analysis_progress={'phase':phase,'completed':completed,'total':total},raw_events=events,
                     **({'first_pass_events':events} if phase=='reconciling' else {}))
             def persist_frame_role_audit(audit):
@@ -231,7 +231,7 @@ def analyze_video_source(store,identifier):
             message='包含多个独立场景或缺少可靠动作，请分段后重新上传' if status=='review_needed' else ''
             segments=[{'source_id':identifier,'segment_id':str(i),'start_ms':e['start_ms'],'end_ms':e['end_ms'],'frame_refs':e['frame_refs']} for i,e in enumerate(result['events'])]
             stage='persist'
-            store.transition(identifier,{'analyzing'},status,expected_version=version,**result,segments=segments,candidate_steps=result['events'],error=message)
+            store.transition(identifier,{'analyzing'},status,expected_version=version,expected_owner=owner,expected_app=app,**result,segments=segments,candidate_steps=result['events'],error=message)
     except Exception as error:
         code=_failure_code(error)
         _log_failure(identifier,stage,error,code)

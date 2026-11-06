@@ -205,3 +205,71 @@ def test_audit_does_not_attach_to_replaced_source_version(env, monkeypatch, tmp_
     final=store.get(doc['source_id'],A['user_id'],APP)
     assert final['analysis_version']==doc['analysis_version']+1
     assert 'frame_role_audit' not in final
+
+
+@pytest.mark.parametrize('field,new_value',[('owner_user_id','u-reassigned'),('app_id','com.reassigned')])
+@pytest.mark.parametrize('outcome',['ready','review_needed'])
+def test_final_publication_requires_same_owner_and_app(env,monkeypatch,tmp_path,field,new_value,outcome):
+    import io,json
+    from test_ui_case_draft_service import A, APP
+    from task_server.services import ui_video_source_service as source, ui_video_analysis as analysis
+    from task_server.services import ui_video_business_inputs as inputs
+    from task_server.workers import ui_video_worker as worker
+    store=source.VideoStore(tmp_path/'videos')
+    doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
+    frame={'frame_id':'frame-001','timestamp_ms':0}
+    monkeypatch.setattr(worker,'decode_video',lambda *a:{'black':False,'static':False,'frames':[frame],'duration_ms':100})
+    event={'action':'aiTap','target':'按钮','value':'','start_ms':0,'end_ms':0,'frame_refs':['frame-001'],
+           'observation':'按钮','evidence_kind':'inferred','uncertainties':[]}
+    audit=[{'action':'aiInput','frame_refs':['frame-001'],'context_frame_refs':['frame-001'],'status':'unverified_model_claim'}]
+    result={'events':[event] if outcome=='ready' else [],'uncertainties':[],
+            'multiple_scenarios':False,'frame_role_audit':audit}
+    monkeypatch.setattr(analysis,'analyze_whole_frames',lambda *a:copy.deepcopy(result))
+    monkeypatch.setattr(inputs,'recover_business_inputs',lambda r,*a:r)
+    monkeypatch.setattr(analysis,'draft_proposal',lambda *a:None)
+    original=store.transition
+    def race(identifier,allowed,status,*args,**kwargs):
+        if status==outcome and 'candidate_steps' in kwargs:
+            original(identifier,{'analyzing'},'analyzing',**{field:new_value})
+        return original(identifier,allowed,status,*args,**kwargs)
+    monkeypatch.setattr(store,'transition',race)
+    worker.analyze_video_source(store,doc['source_id'])
+    with store.db() as db:
+        current=json.loads(db.execute('SELECT document FROM sources WHERE id=?',(doc['source_id'],)).fetchone()[0])
+    assert current[field]==new_value and current['status']=='analyzing'
+    assert 'frame_role_audit' not in current
+    assert current.get('candidate_steps',[])==[]
+
+
+@pytest.mark.parametrize('field,new_value',[('owner_user_id','u-reassigned'),('app_id','com.reassigned')])
+@pytest.mark.parametrize('stage',['decode_review','start_analysis','progress'])
+def test_legacy_intermediate_transitions_require_same_owner_and_app(env,monkeypatch,tmp_path,field,new_value,stage):
+    import io,json
+    from test_ui_case_draft_service import A, APP
+    from task_server.services import ui_video_source_service as source, ui_video_analysis as analysis
+    from task_server.workers import ui_video_worker as worker
+    store=source.VideoStore(tmp_path/'videos')
+    doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
+    frame={'frame_id':'frame-001','timestamp_ms':0}
+    monkeypatch.setattr(worker,'decode_video',lambda *a:{'black':stage=='decode_review','static':False,'frames':[frame],'duration_ms':100})
+    def model(document,root,cancelled,progress):
+        progress('observing',1,1,[{'secret':'must not attach'}])
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(analysis,'analyze_whole_frames',model)
+    original=store.transition
+    def race(identifier,allowed,status,*args,**kwargs):
+        target=((stage=='decode_review' and status=='review_needed') or
+                (stage=='start_analysis' and allowed=={'decoding'} and status=='analyzing') or
+                (stage=='progress' and 'raw_events' in kwargs))
+        if target:
+            current='analyzing' if stage=='progress' else 'decoding'
+            original(identifier,{current},current,**{field:new_value})
+        return original(identifier,allowed,status,*args,**kwargs)
+    monkeypatch.setattr(store,'transition',race)
+    worker.analyze_video_source(store,doc['source_id'])
+    with store.db() as db:
+        current=json.loads(db.execute('SELECT document FROM sources WHERE id=?',(doc['source_id'],)).fetchone()[0])
+    assert current[field]==new_value
+    assert current['status']==('analyzing' if stage=='progress' else 'decoding')
+    assert current.get('raw_events',[])==[]
+    if stage!='progress':assert 'media' not in current
