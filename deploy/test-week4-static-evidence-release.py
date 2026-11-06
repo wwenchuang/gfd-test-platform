@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location('release', Path(__file__).with_name('release.py'))
+spec = importlib.util.spec_from_file_location('release', Path(__file__).with_name('week4-static-evidence-release.py'))
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
