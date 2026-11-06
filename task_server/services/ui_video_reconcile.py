@@ -637,7 +637,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 raise
             if getattr(error,'boundary_conflicts',None):
                 payload['boundary_conflicts']=error.boundary_conflicts
-                payload['validation_feedback']+=' 上次事件与已保留交互存在边界冲突，boundary_conflicts仅列被拒事件的动作类别和冲突原帧。重新观察原图，独立解释所有旧锚点及相邻真实操作，不得裁剪证据或编造交互。仅严格验证的点击或返回映射可共享一个操作前状态帧；其他交互不能引用已保留的边界帧。无法确认时如实保留疑问。'
+                payload['validation_feedback']+=' 上次事件与已保留交互存在边界冲突，boundary_conflicts仅列被拒事件的动作类别和冲突原帧。重新观察原图，独立解释所有旧锚点及相邻真实操作，只引用原图确证属于该事件的帧，不得为通过校验机械删帧或编造交互。仅严格验证的点击或返回映射可共享一个操作前状态帧；其他交互不能引用已保留的边界帧。无法确认时如实保留疑问。'
                 continue
             if reason=='return_gesture_not_explicit':
                 from .ui_video_coverage_resolution import diagnose
