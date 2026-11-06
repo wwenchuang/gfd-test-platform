@@ -819,7 +819,8 @@ def test_nonshared_press_frame_returns_shared_candidates_without_authorizing_mer
     assert cr.validate([claim],{'first_pass':old},new,frames)
 
 
-def test_failed_return_merge_keeps_categorical_candidates_without_model_text(monkeypatch,tmp_path):
+@pytest.mark.parametrize('motion_review',[False,True])
+def test_failed_return_merge_keeps_categorical_candidates_without_model_text(monkeypatch,tmp_path,motion_review):
     from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
     frames,old,new,claim=return_gesture_fixture()
     for e in old+new:
@@ -828,12 +829,16 @@ def test_failed_return_merge_keeps_categorical_candidates_without_model_text(mon
     claim['evidence']['before_state']='模型详情页可见'
     claim['evidence']['interaction']='同一次导航回到上页'
     monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
-    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{
-        'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
-        'coverage_resolutions':[copy.deepcopy(claim)],'uncertainties':[],'multiple_scenarios':False})
+    def model(skill,payload,**kw):
+        if motion_review:
+            assert all('action' not in item for group in payload['coverage_checks'].values() for item in group)
+        return {'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[copy.deepcopy(claim)],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
     with pytest.raises(ValueError,match='video_coverage_resolution_invalid') as caught:
         vr._repair_window(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},
-            frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'},attempt_limit=1)
+            frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'},attempt_limit=1,
+            motion_review_refs={'f1'} if motion_review else ())
     assert caught.value.coverage_reason=='return_gesture_not_explicit'
     evidence=caught.value.coverage_candidates
     assert set(evidence)=={'first_pass','independent_review'}

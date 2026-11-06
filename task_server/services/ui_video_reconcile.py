@@ -496,6 +496,10 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 if e['action'] in ('aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard') and set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs]
                 for name,source in [('first_pass',original),('independent_review',checked['events'])]},
              'validation_feedback':'coverage_checks分首轮与独立复核两组，每组内部每个交互锚点都需要独立解释；同一解释可同时对应两组中的同一次操作，不要因此重复生成；同来源多个锚点若由一次真实交互重复识别而来，按coverage_resolutions合并并完整列出重复锚点。首轮可能把等待当重复点击，若本段只有自动变化，用aiAssert及完整原帧说明静止事实；不要为一次真实交互额外造aiAssert凑数量。完整性复核发现本段遗漏或合并操作。逐帧区分每一次返回、同页滚动和自动转场；每一次导航独立记录，不将两次返回合成一次。锚点只指示证据位置，不代表预定动作。'}
+    # Keep backend-only hypotheses independent of the model-facing payload,
+    # which intentionally removes actions during blind motion review.
+    failure_candidates={name:[{'action':e['action'],'frame_refs':list(e['frame_refs'])}
+        for e in entries] for name,entries in payload['coverage_checks'].items()}
     payload['gesture_hypotheses']=[{'source':name,'frame_refs':e['frame_refs'],'observation':e.get('observation','')}
         for name,source in [('first_pass',original),('independent_review',checked['events'])] for e in source
         if set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs and has_return_gesture_evidence(e.get('observation',''))]
@@ -610,8 +614,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                     }:
                         # Preserve categorical hypotheses only; never persist model prose,
                         # targets, values, or the rejected proposed merge as truth.
-                        error.coverage_candidates={name:[{'action':e['action'], 'frame_refs':list(e['frame_refs'])}
-                            for e in entries] for name,entries in payload['coverage_checks'].items()}
+                        error.coverage_candidates=failure_candidates
                 raise
             # If the observed events already cover both sources one-to-one,
             # a merge declaration is unnecessary. Ask for a fresh observation
