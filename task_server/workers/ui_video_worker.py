@@ -35,7 +35,19 @@ def _private_target_failure(error,code,document):
         known={f.get('frame_id') for f in document.get('media',{}).get('frames',[])}
         if (type(refs) is set and 1<=len(refs)<=32 and
             all(type(ref) is str and re.fullmatch(r'frame-[0-9]{3,6}',ref) and ref in known for ref in refs)):
-            return {'coverage_frame_refs':sorted(refs)}
+            result={'coverage_frame_refs':sorted(refs)}
+            candidates=getattr(error,'coverage_candidates',None)
+            actions={'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
+            if (type(candidates) is dict and set(candidates)=={'first_pass','independent_review'} and
+                all(type(group) is list and len(group)<=32 for group in candidates.values()) and
+                all(type(item) is dict and set(item)=={'action','frame_refs'} and
+                    type(item['action']) is str and item['action'] in actions and
+                    type(item['frame_refs']) is list and 1<=len(item['frame_refs'])<=8 and
+                    all(type(ref) is str and re.fullmatch(r'frame-[0-9]{3,6}',ref) and ref in known
+                        for ref in item['frame_refs'])
+                    for group in candidates.values() for item in group)):
+                result['coverage_candidates']=candidates
+            return result
         return {}
     if code=='video_required_action_missing':
         refs=getattr(error,'missing_frame_refs',None)

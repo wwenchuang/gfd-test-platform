@@ -604,6 +604,14 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             if attempt+1>=attempt_limit:
                 if str(error)=='video_coverage_resolution_invalid':
                     error.coverage_frame_refs=set(missing_refs)&window_ids
+                    if getattr(error,'coverage_reason',None) in {
+                        'return_single_gesture_not_explicit','return_gesture_not_explicit',
+                        'return_second_press_not_excluded','return_repeat_contradiction',
+                    }:
+                        # Preserve categorical hypotheses only; never persist model prose,
+                        # targets, values, or the rejected proposed merge as truth.
+                        error.coverage_candidates={name:[{'action':e['action'], 'frame_refs':list(e['frame_refs'])}
+                            for e in entries] for name,entries in payload['coverage_checks'].items()}
                 raise
             # If the observed events already cover both sources one-to-one,
             # a merge declaration is unnecessary. Ask for a fresh observation

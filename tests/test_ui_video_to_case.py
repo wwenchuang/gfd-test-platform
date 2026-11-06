@@ -1005,3 +1005,21 @@ def test_target_failure_evidence_stays_owner_scoped_and_clears_on_retry(env,tmp_
     with pytest.raises(KeyError):store.get(doc['source_id'],'other-user',APP)
     retried=store.retry(doc['source_id'],A['user_id'],APP)
     assert 'failure_diagnostic' not in retried
+
+
+def test_failed_return_candidates_are_owner_app_scoped_and_cannot_import(env,tmp_path,monkeypatch):
+    from task_server.services import ui_video_source_service as video, ui_case_draft_service as drafts
+    store=video.VideoStore(tmp_path/'videos');monkeypatch.setattr(video,'service_store',lambda:store)
+    doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'mp4'),3,actor=A)
+    candidates={'first_pass':[{'action':'navigateBack','frame_refs':['frame-001']}],
+                'independent_review':[{'action':'aiTap','frame_refs':['frame-001']}]}
+    store.transition(doc['source_id'],{'queued'},'failed',expected_version=1,
+        failure_diagnostic={'coverage_frame_refs':['frame-001'],'coverage_candidates':candidates})
+    with actor_context(A):
+        _,_,found=video.owned_source(A,doc['source_id'],APP,'ui.edit')
+        assert video.public_source(found)['failure_diagnostic']['coverage_candidates']==candidates
+        with pytest.raises(ValueError,match='video_not_ready'):video.import_video_draft(A,doc['source_id'],APP)
+        assert drafts.list_drafts(A,APP)['items']==[]
+    with actor_context(B):
+        with pytest.raises(KeyError):video.owned_source(B,doc['source_id'],APP)
+    with pytest.raises(KeyError):store.get(doc['source_id'],A['user_id'],'foreign.app')

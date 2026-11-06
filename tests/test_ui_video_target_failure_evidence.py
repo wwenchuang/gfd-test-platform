@@ -77,3 +77,27 @@ def test_coverage_failure_records_only_known_frame_ids():
     assert worker._private_target_failure(error,'video_coverage_resolution_invalid',doc)=={'coverage_frame_refs':['frame-001','frame-002']}
     error.coverage_frame_refs.add('frame-999')
     assert worker._private_target_failure(error,'video_coverage_resolution_invalid',doc)=={}
+
+
+def test_coverage_failure_keeps_only_bounded_actions_and_original_refs():
+    error=ValueError('video_coverage_resolution_invalid')
+    error.coverage_frame_refs={'frame-001','frame-002'}
+    error.coverage_candidates={
+        'first_pass':[{'action':'navigateBack','frame_refs':['frame-001','frame-002']}],
+        'independent_review':[{'action':'aiTap','frame_refs':['frame-001']}]}
+    doc={'media':{'frames':[{'frame_id':'frame-001'},{'frame_id':'frame-002'}]}}
+    result=worker._private_target_failure(error,'video_coverage_resolution_invalid',doc)
+    assert result=={'coverage_frame_refs':['frame-001','frame-002'], 'coverage_candidates':error.coverage_candidates}
+    error.coverage_candidates['first_pass'][0]['observation']='secret model text'
+    assert 'secret model text' not in str(worker._private_target_failure(error,'video_coverage_resolution_invalid',doc))
+
+
+@pytest.mark.parametrize('bad',[
+    {'first_pass':[{'action':'untrusted-action','frame_refs':['frame-001']}], 'independent_review':[]},
+    {'first_pass':[{'action':'navigateBack','frame_refs':['frame-999']}], 'independent_review':[]},
+    {'first_pass':[{'action':'navigateBack','frame_refs':['frame-001'],'value':'secret'}], 'independent_review':[]},
+])
+def test_coverage_failure_rejects_untrusted_candidate_payload(bad):
+    error=ValueError('video_coverage_resolution_invalid');error.coverage_frame_refs={'frame-001'};error.coverage_candidates=bad
+    doc={'media':{'frames':[{'frame_id':'frame-001'}]}}
+    assert worker._private_target_failure(error,'video_coverage_resolution_invalid',doc)=={'coverage_frame_refs':['frame-001']}

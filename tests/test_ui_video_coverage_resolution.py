@@ -817,3 +817,26 @@ def test_nonshared_press_frame_returns_shared_candidates_without_authorizing_mer
     # explicitly rechecks it and includes it in the actual result evidence.
     claim['evidence']['interaction_frame']='f3';new[0]['frame_refs']=['f1','f3','f4']
     assert cr.validate([claim],{'first_pass':old},new,frames)
+
+
+def test_failed_return_merge_keeps_categorical_candidates_without_model_text(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,old,new,claim=return_gesture_fixture()
+    for e in old+new:
+        e.update(action='navigateBack',target='上一页面')
+        e['observation']='连续返回手势，触点位移 secret-model-observation'
+    claim['evidence']['before_state']='模型详情页可见'
+    claim['evidence']['interaction']='同一次导航回到上页'
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{
+        'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+        'coverage_resolutions':[copy.deepcopy(claim)],'uncertainties':[],'multiple_scenarios':False})
+    with pytest.raises(ValueError,match='video_coverage_resolution_invalid') as caught:
+        vr._repair_window(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},
+            frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'},attempt_limit=1)
+    assert caught.value.coverage_reason=='return_gesture_not_explicit'
+    evidence=caught.value.coverage_candidates
+    assert set(evidence)=={'first_pass','independent_review'}
+    assert all(set(item)=={'action','frame_refs'} for group in evidence.values() for item in group)
+    assert 'secret-model-observation' not in str(evidence)
+    assert len(evidence['first_pass'])==len(old)
