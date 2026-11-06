@@ -384,6 +384,8 @@ def _bind_whole_evidence(result, frames):
     if not isinstance(result, dict) or not isinstance(result.get('events'), list):
         raise ValueError('video_model_invalid')
     bound=copy.deepcopy(result)
+    # Optional model metadata has no bearing on ordinary event validation.
+    bound.pop('boundary_frame_roles',None)
     times={frame['frame_id']:frame['timestamp_ms'] for frame in frames}
     last=-1
     for event in bound['events']:
@@ -429,6 +431,12 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         if drag_refs:
             if progress:progress('reconciling',0,1,first_pass)
             observed=_repair_coverage(first_pass,observed,frames,duration,root,cancelled,known_secrets,drag_refs)
+    # The optional audit is never used as action evidence. Persist it only
+    # after the complete repair gates have passed, before later stages can fail.
+    audit_sink=getattr(progress,'frame_role_audit_sink',None)
+    if callable(audit_sink) and observed.get('frame_role_audit'):
+        try:audit_sink(observed['frame_role_audit'])
+        except Exception:pass  # Audit persistence cannot alter generation outcome.
     from .ui_video_delayed_response import review_pending_responses
     observed=review_pending_responses(observed,document,root,cancelled,known_secrets)
     # Persist the actual post-repair/post-response candidates even when planning

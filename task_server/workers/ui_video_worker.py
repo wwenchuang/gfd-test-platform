@@ -212,6 +212,10 @@ def analyze_video_source(store,identifier):
                 store.transition(identifier,{'analyzing'},'analyzing',expected_version=version,
                     analysis_progress={'phase':phase,'completed':completed,'total':total},raw_events=events,
                     **({'first_pass_events':events} if phase=='reconciling' else {}))
+            def persist_frame_role_audit(audit):
+                store.transition(identifier,{'analyzing'},'analyzing',expected_version=version,
+                    expected_owner=owner,expected_app=app,frame_role_audit=audit)
+            progress.frame_role_audit_sink=persist_frame_role_audit
             result=analyze_whole_frames(document,store.root/identifier,cancelled,progress)
             if cancelled():raise ValueError('video_cancelled')
             from task_server.services.ui_video_business_inputs import recover_business_inputs

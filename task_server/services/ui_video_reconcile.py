@@ -469,6 +469,11 @@ def _exclude_focus_context_groups(groups,sources):
 def _extract_boundary_role_claims(raw, events, preserved, boundary, image_frames, context_frames=None):
     """Keep bounded, explicitly unverified context claims outside action evidence."""
     claims=raw.pop('boundary_frame_roles',[])
+    try:return _validate_boundary_role_claims(claims,events,preserved,boundary,image_frames,context_frames)
+    except (ValueError,TypeError,KeyError,IndexError):return []
+
+
+def _validate_boundary_role_claims(claims,events,preserved,boundary,image_frames,context_frames=None):
     if not isinstance(claims,list) or len(claims)>16:raise ValueError('video_reference_invalid')
     times={f['frame_id']:f['timestamp_ms'] for f in image_frames}
     all_times={f['frame_id']:f['timestamp_ms'] for f in (context_frames if context_frames is not None else image_frames)}
@@ -488,8 +493,7 @@ def _extract_boundary_role_claims(raw, events, preserved, boundary, image_frames
         # following retained interaction, whose later evidence also exists.
         for ref in refs:
             following=[e for e in preserved if e.get('frame_refs') and e['frame_refs'][0]==ref and
-                       len(e['frame_refs'])>=2 and all(r in times for r in e['frame_refs']) and
-                       times[e['frame_refs'][-1]]>times[ref]]
+                       any(r in times and times[r]>times[ref] for r in e['frame_refs'][1:])]
             if (len(following)!=1 or times[ref]<max(times[r] for r in action_refs) or
                 any(e.get('frame_refs') and e['frame_refs'][0] in all_times and
                     max(times[r] for r in action_refs)<all_times[e['frame_refs'][0]]<times[ref]
@@ -625,9 +629,11 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         if isinstance(raw,dict) and isinstance(raw.get('events'),list):
             secrets.extend(e['value'] for e in raw['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
         from .ui_video_coverage_resolution import validate as validate_resolutions
-        if isinstance(raw,dict) and 'boundary_frame_roles' in raw and 'boundary_retry_context' not in payload:
-            raise ValueError('video_reference_invalid')
-        role_claims=_extract_boundary_role_claims(raw,raw.get('events',[]),preserved_interactions,boundary,images,context_frames) if isinstance(raw,dict) else []
+        role_claims=[]
+        if isinstance(raw,dict):
+            if 'boundary_retry_context' in payload:
+                role_claims=_extract_boundary_role_claims(raw,raw.get('events',[]),preserved_interactions,boundary,images,context_frames)
+            else:raw.pop('boundary_frame_roles',None)
         claims=raw.get('coverage_resolutions',[]) if isinstance(raw,dict) else []
         observation={k:v for k,v in raw.items() if k!='coverage_resolutions'} if isinstance(raw,dict) else raw
         try:
