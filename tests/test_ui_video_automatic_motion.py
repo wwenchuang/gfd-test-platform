@@ -185,3 +185,39 @@ def test_disputed_scroll_enters_shared_review_with_unbiased_context(monkeypatch,
         raise StopProbe()
     monkeypatch.setattr(ai,'run_ai_skill',model)
     with pytest.raises(StopProbe):rec.reconcile([old],frames,1000,tmp_path,lambda:False,[])
+
+
+def test_fresh_dialog_inferred_motion_gets_unprimed_pixel_review():
+    # Real nameplate v8: a newly opened dialog fills in its images. Two passes
+    # both called its visual change a scroll without describing a drag.
+    tap={'action':'aiTap','frame_refs':['frame-124','frame-125','frame-126','frame-127'],
+         'start_ms':52900,'end_ms':54233,'observation':'随后页面弹出确认打印对话框'}
+    scroll={'action':'aiScroll','target':'确认打印弹窗内容区域','frame_refs':['frame-128','frame-130'],
+            'start_ms':54467,'end_ms':55900,'evidence_kind':'inferred',
+            'observation':'弹窗内容发生向上位移，判定为向下滚动操作。'}
+    assert review_refs([tap,scroll])=={'frame-128','frame-130'}
+    assert scroll['action']=='aiScroll'
+
+
+def test_fresh_dialog_actual_drag_does_not_require_extra_motion_review():
+    tap={'action':'aiTap','start_ms':52900,'end_ms':54233,'observation':'弹出确认打印对话框'}
+    scroll={'action':'aiScroll','target':'弹窗内容','frame_refs':['a','b'],
+            'start_ms':54467,'end_ms':55900,'evidence_kind':'inferred',
+            'observation':'触点按下并连续向上移动，弹窗内容跟随位移。'}
+    assert review_refs([tap,scroll])==set()
+
+
+def test_later_dialog_scroll_not_assumed_to_be_initial_layout():
+    tap={'action':'aiTap','start_ms':0,'end_ms':100,'observation':'弹出对话框'}
+    scroll={'action':'aiScroll','target':'弹窗','frame_refs':['a','b'],
+            'start_ms':20000,'end_ms':21000,'evidence_kind':'inferred',
+            'observation':'内容向上移动'}
+    assert review_refs([tap,scroll])==set()
+
+
+def test_fresh_dialog_negated_drag_is_not_treated_as_evidence():
+    tap={'action':'aiTap','start_ms':0,'end_ms':100,'observation':'弹出对话框'}
+    scroll={'action':'aiScroll','target':'弹窗','frame_refs':['a','b'],
+            'start_ms':200,'end_ms':300,'evidence_kind':'inferred',
+            'observation':'未见触点持续移动，内容发生位移，推断滚动。'}
+    assert review_refs([tap,scroll])=={'a','b'}

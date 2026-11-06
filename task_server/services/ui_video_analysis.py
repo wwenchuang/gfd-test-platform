@@ -599,7 +599,8 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
             # analysis path, not just the optional trajectory path. The model
             # cannot erase them by omitting them from its planning response.
             from .ui_video_business_inputs import _MANUAL
-            blockers=list(observed['uncertainties'])+_exit_prompt_review(candidates+first_pass)+_overlapping_return_review(checked['events'])
+            from .ui_video_automatic_motion import fresh_dialog_review_questions
+            blockers=list(observed['uncertainties'])+_exit_prompt_review(candidates+first_pass)+_overlapping_return_review(checked['events'])+fresh_dialog_review_questions(candidates)
             for event in candidates:
                 # The manual-input placeholder can be resolved by later input
                 # recovery; keep it event-local instead of making it permanent.
