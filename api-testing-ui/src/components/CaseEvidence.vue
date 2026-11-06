@@ -31,7 +31,9 @@ const trace = computed(() => {
 })
 const workflowSteps = computed(() => trace.value.filter(item => item.phase === 'workflow_step'))
 const cleanupEvidence = computed(() => {
-  const steps = workflowSteps.value.filter(item => item.stage === 'cleanup')
+  const steps = evidenceReady.value ? workflowSteps.value.filter(item => item.stage === 'cleanup') : []
+  if (props.result.status === 'BROKEN' && props.result.failure_category === 'worker') return 'interrupted'
+  if (props.result.status === 'CANCELLED' && !steps.length) return 'cancelled'
   if (!steps.length) return props.result.failure_category === 'cleanup' ? 'missing' : ''
   // A cleanup step may be polled more than once. Count its final attempt,
   // while preserving distinct steps and treating unidentifiable entries separately.
@@ -121,17 +123,20 @@ function toggleBlock(key: string): void {
         <button v-if="['FAILED','BROKEN'].includes(result.status)" data-testid="rerun-case" class="secondary-command" type="button" @click="emit('rerun', result)"><RotateCw :size="14" />仅重跑当前失败项</button>
       </div>
     </header>
+    <p v-if="!loading && cleanupEvidence === 'interrupted'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">执行中断，当前记录无法确认是否需要清理或清理是否完成；请同时查看主体与清理证据。</p>
+    <p v-else-if="!loading && cleanupEvidence === 'cancelled'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">执行已取消，当前记录无法确认是否需要清理或清理是否完成；请同时查看主体与清理证据。</p>
+    <p v-else-if="!loading && cleanupEvidence === 'failed'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">清理步骤未通过，请同时查看主体与清理步骤，核对本次数据。</p>
+    <p v-else-if="!loading && cleanupEvidence === 'skipped'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">清理步骤被跳过，不能据此确认数据已清理，请核对跳过原因及本次数据。</p>
+    <p v-else-if="!loading && cleanupEvidence === 'missing'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">没有完整的清理步骤证据，请核对本次数据的实际状态。</p>
+    <p v-else-if="!loading && cleanupEvidence === 'passed'" data-testid="cleanup-evidence-passed" role="status">清理步骤已记录为通过；其他步骤及实际资源状态仍需核对。</p>
     <div v-if="error" class="evidence-load-state inline-error" role="alert">
       <span>{{ error }}</span>
       <button data-testid="retry-case-evidence" class="secondary-command" type="button" @click="emit('retry', result)">重新读取证据</button>
     </div>
     <p v-else-if="loading" class="evidence-load-state state-message">正在读取当前用例的请求、响应和断言，请稍候…</p>
+    <p v-else-if="!evidenceReady && result.status === 'CANCELLED'" class="evidence-load-state state-message">未读取到当前用例的请求、响应、断言和执行轨迹。</p>
     <p v-else-if="!evidenceReady" class="evidence-load-state state-message">选择用例后读取请求、响应、断言和执行轨迹。</p>
     <template v-else>
-    <p v-if="cleanupEvidence === 'failed'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">清理步骤未通过，请核对本次产生或修改的数据。此提示不改变主体测试结果。</p>
-    <p v-else-if="cleanupEvidence === 'skipped'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">清理步骤被跳过，不能据此确认数据已清理，请核对跳过原因及本次数据。</p>
-    <p v-else-if="cleanupEvidence === 'missing'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">没有完整的清理步骤证据，请核对本次数据的实际状态。</p>
-    <p v-else-if="cleanupEvidence === 'passed'" data-testid="cleanup-evidence-passed" role="status">清理步骤已记录为通过；其他步骤及实际资源状态仍需核对。</p>
     <FailureAnalysis :result="result" />
     <div class="evidence-summary">
       <div><span>状态</span><strong :class="`status-${result.status.toLowerCase()}`">{{ statusLabel(result.status) }}</strong></div>

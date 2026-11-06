@@ -22,6 +22,40 @@ const result: ExecutionCaseResult = {
 }
 
 describe('CaseEvidence', () => {
+  it('shows unconfirmed cleanup for the persisted interrupted worker result', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: {
+      ...result, status: 'BROKEN', failure_category: 'worker', evidence_loaded: true,
+      sanitized_result: { status: 'BROKEN', failure_category: 'worker', error_message: '执行 Worker 中断；已完成结果已保留，未完成用例未自动重放', trace: [{ phase: 'failure', status: 'BROKEN', failure_category: 'worker' }] },
+    } } })
+    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toContain('无法确认是否需要清理或清理是否完成')
+    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).not.toContain('已产生数据')
+  })
+
+  it('shows an unknown cleanup state for cancellation recovery without evidence', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: {
+      ...result, status: 'CANCELLED', failure_category: 'cancelled', evidence_loaded: false, sanitized_result: {},
+    } } })
+    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toContain('无法确认是否需要清理或清理是否完成')
+    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).not.toContain('已产生数据')
+    expect(wrapper.text()).toContain('未读取到当前用例')
+  })
+
+  it('does not announce missing evidence while a cancellation detail is loading', () => {
+    const wrapper = mount(CaseEvidence, { props: { loading: true, result: {
+      ...result, status: 'CANCELLED', failure_category: 'cancelled', evidence_loaded: false, sanitized_result: {},
+    } } })
+    expect(wrapper.find('[data-testid="cleanup-evidence-warning"]').exists()).toBe(false)
+  })
+
+  it('uses cleanup step evidence when a cancelled case actually has it', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: {
+      ...result, status: 'CANCELLED', failure_category: 'cancelled', evidence_loaded: true,
+      sanitized_result: { trace: [{ phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'PASSED' }] },
+    } } })
+    expect(wrapper.find('[data-testid="cleanup-evidence-warning"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="cleanup-evidence-passed"]').text()).toContain('实际资源状态仍需核对')
+  })
+
   it('highlights a cleanup failure independently of the main failure', () => {
     const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: {
       ...result.sanitized_result, trace: [
