@@ -47,6 +47,15 @@ class ReleaseTests(unittest.TestCase):
                     release.host_install('x', 'old_hash', release.digest(stage/'x'), backup)
             self.assertEqual((host/'x').read_text(), 'other')
 
+    def test_container_install_uses_busybox_compatible_numeric_metadata(self):
+        calls = []
+        with patch.object(release, 'docker', side_effect=lambda *args: calls.append(args) or ''):
+            release.container_install('/var/www/html', 'js/ui-simple-entry.js', 'old', 'new', 'tag')
+        code = calls[1][4]
+        self.assertIn('stat -c %a', code)
+        self.assertIn('stat -c %u:%g', code)
+        self.assertNotIn('--reference', code)
+
 
 if __name__ == '__main__':
     unittest.main()

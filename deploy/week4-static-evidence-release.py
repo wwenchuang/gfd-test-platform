@@ -82,8 +82,10 @@ target="$1"; temp="$2"; backup="$3"; old="$4"; new="$5"
 [ "$(sha256sum "$temp" | cut -d' ' -f1)" = "$new" ]
 cp -p "$target" "$backup"
 [ "$(sha256sum "$backup" | cut -d' ' -f1)" = "$old" ]
-chmod --reference="$target" "$temp"
-chown --reference="$target" "$temp"
+mode="$(stat -c %a "$target")"
+owner="$(stat -c %u:%g "$target")"
+chmod "$mode" "$temp"
+chown "$owner" "$temp"
 [ "$(sha256sum "$target" | cut -d' ' -f1)" = "$old" ]
 mv -f "$temp" "$target"
 '''
