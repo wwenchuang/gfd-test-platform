@@ -33,6 +33,7 @@ class SourceChange:
     method: str
     path: str
     changed_fields: Tuple[str, ...] = ()
+    response_contract_diff: Optional[Mapping[str, Any]] = None
 
 
 @dataclass(frozen=True)

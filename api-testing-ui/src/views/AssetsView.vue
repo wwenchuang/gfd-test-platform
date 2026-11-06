@@ -91,11 +91,29 @@ const visibleChanges = computed(() => (displayedPreview.value?.changes || []).fi
 ))
 const changeLabels: Record<string, string> = { added: '新增', changed: '变更', removed: '删除' }
 const fieldLabels: Record<string, string> = {
-  responses: '响应定义', parameters: '请求参数', requestBody: '请求体', summary: '接口名称',
+  responses: '响应定义', resolved_dependencies: '引用定义', parameters: '请求参数', requestBody: '请求体', summary: '接口名称',
   description: '说明', tags: '分组', security: '鉴权', method: '请求方式', path: '路径', operationId: '接口标识', operation_id: '接口标识',
 }
 function changedFields(change: Record<string, unknown>): string {
   return Array.isArray(change.changed_fields) ? change.changed_fields.map(key => fieldLabels[String(key)] || String(key)).join('、') : ''
+}
+const responseChangeLabels: Record<string, string> = {
+  status_added: '新增响应状态声明', status_removed: '移除响应状态声明',
+  required_added: '此处新增必填声明', required_removed: '此处移除必填声明',
+  property_added: '新增字段声明', property_removed: '移除字段声明', enum_changed: '枚举声明变化',
+}
+function responseContractDiff(change: Record<string, unknown>) {
+  const value = change.response_contract_diff
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const result = value as Record<string, unknown>
+  if (typeof result.complete !== 'boolean' || !Array.isArray(result.items)) return null
+  const items = result.items.flatMap((item: unknown) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const record = item as Record<string, unknown>
+    if (typeof record.kind !== 'string' || !responseChangeLabels[record.kind] || typeof record.status !== 'string' || typeof record.path !== 'string') return []
+    return [{ label: responseChangeLabels[record.kind], status: record.status, path: record.path }]
+  })
+  return { complete: result.complete && items.length === result.items.length, items }
 }
 function apifoxBranchLabel(item: { id: string; name: string; is_default: boolean }): string {
   return item.is_default && !item.id ? `${item.name} · 项目默认入口` : item.name
@@ -532,7 +550,14 @@ function dateText(value?: string | null): string {
         <label v-if="displayedPreview.changes.length">查找本次变更<input v-model="changeSearch" data-testid="source-change-search" placeholder="输入接口路径或请求方式" /></label>
         <div class="source-change-list" data-testid="source-changes">
           <table v-if="visibleChanges.length"><thead><tr><th>变更</th><th>接口</th><th>变更内容</th></tr></thead><tbody>
-            <tr v-for="(change, index) in visibleChanges" :key="index"><td>{{ changeLabels[String(change.change_type)] || change.change_type }}</td><td><strong>{{ change.method }}</strong> <code>{{ change.path }}</code><RouterLink v-if="savedEndpointLink(change)" class="source-change-link" :to="savedEndpointLink(change)!">查看接口</RouterLink></td><td>{{ changedFields(change) || (change.change_type === 'added' ? '新增接口，可在新版本工作台搜索' : change.change_type === 'removed' ? '旧用例保留，需核对是否仍适用' : '接口定义更新') }}</td></tr>
+            <tr v-for="(change, index) in visibleChanges" :key="index"><td>{{ changeLabels[String(change.change_type)] || change.change_type }}</td><td><strong>{{ change.method }}</strong> <code>{{ change.path }}</code><RouterLink v-if="savedEndpointLink(change)" class="source-change-link" :to="savedEndpointLink(change)!">查看接口</RouterLink></td><td>{{ changedFields(change) || (change.change_type === 'added' ? '新增接口，可在新版本工作台搜索' : change.change_type === 'removed' ? '旧用例保留，需核对是否仍适用' : '接口定义更新') }}
+              <details v-if="responseContractDiff(change)" class="response-contract-diff" data-testid="response-contract-diff">
+                <summary>查看响应定义差异{{ responseContractDiff(change)?.complete ? '' : '（比较不完整）' }}</summary>
+                <p>仅对比当前版本与候选版本中的状态、必填、字段和枚举，不代表真实服务、完整兼容性或 Mock 验证。</p>
+                <p v-if="!responseContractDiff(change)?.complete">部分状态、字段或引用未覆盖，或超出比较范围；请结合原始接口定义核对。</p>
+                <ul v-if="responseContractDiff(change)?.items.length"><li v-for="(item, detailIndex) in responseContractDiff(change)?.items" :key="detailIndex">HTTP {{ item.status }} · {{ item.label }}<template v-if="item.path"> · {{ item.path }}</template></li></ul>
+                <p v-else>以上已检查范围内未发现可展示的声明变化。</p>
+              </details></td></tr>
           </tbody></table>
           <p v-else>{{ changeSearch ? '没有匹配的变更接口' : '接口定义没有变更；仍可保存本次环境更新。' }}</p>
         </div>
