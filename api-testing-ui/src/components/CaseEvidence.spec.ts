@@ -22,6 +22,21 @@ const result: ExecutionCaseResult = {
 }
 
 describe('CaseEvidence', () => {
+  it('offers a collapsed cleanup verification guide only when cleanup needs review', async () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: {
+      ...result.sanitized_result, trace: [{ phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'FAILED' }],
+    } } } })
+    const guide = wrapper.get('[data-testid="cleanup-verification-guide"]')
+    expect(guide.attributes('open')).toBeUndefined()
+    expect(guide.text()).toContain('核对本次清理')
+    expect(guide.text()).toContain('唯一资源标识')
+    expect(guide.text()).toContain('不要按最新记录或批量删除')
+    expect(guide.text()).toContain('不代表物理删除或关联资源已清理')
+
+    await wrapper.setProps({ result })
+    expect(wrapper.find('[data-testid="cleanup-verification-guide"]').exists()).toBe(false)
+  })
+
   it('shows unconfirmed cleanup for the persisted interrupted worker result', () => {
     const wrapper = mount(CaseEvidence, { props: { result: {
       ...result, status: 'BROKEN', failure_category: 'worker', evidence_loaded: true,

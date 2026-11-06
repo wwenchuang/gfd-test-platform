@@ -399,6 +399,48 @@ describe('AssetsView Apifox actions', () => {
     } })
     expect(buttonText(wrapper)).not.toContain('保存并切换到新版本')
   })
+
+  it('renders bounded response definition details and clearly reports incomplete comparisons', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    useSetupStore().preview = {
+      id: 'preview-a', project_id: 'project-1', source_id: 'source-1', previous_revision_id: 'v1', candidate_revision_id: 'v2',
+      added_count: 0, changed_count: 1, removed_count: 0,
+      changes: [{ change_type: 'changed', method: 'GET', path: '/feedback', changed_fields: ['resolved_dependencies'],
+        response_contract_diff: { complete: false, items: [
+          { kind: 'required_removed', status: '200', path: '/code' },
+          { kind: 'status_added', status: '201', path: '' },
+          { kind: 'enum_changed', status: '200', path: '/data/status' },
+        ] } }],
+    }
+    await nextTick()
+    const details = wrapper.get('[data-testid="response-contract-diff"]').text()
+    expect(details).toContain('HTTP 200')
+    expect(details).toContain('/code')
+    expect(details).toContain('必填')
+    expect(details).toContain('201')
+    expect(details).toContain('枚举')
+    expect(details).toContain('不完整')
+    expect(details).toContain('不代表真实服务')
+    expect(details).not.toContain('兼容通过')
+  })
+
+  it('marks unknown future response changes incomplete instead of hiding them as a clean comparison', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    useSetupStore().preview = { id: 'future', project_id: 'project-1', source_id: 'source-1', previous_revision_id: 'v1', candidate_revision_id: 'v2', added_count: 0, changed_count: 1, removed_count: 0, changes: [{ change_type: 'changed', method: 'GET', path: '/future', changed_fields: ['responses'], response_contract_diff: { complete: true, items: [{ kind: 'future_kind', status: '200', path: '/secret' }] } }] }
+    await nextTick()
+    expect(wrapper.get('[data-testid="response-contract-diff"]').text()).toContain('不完整')
+  })
+
+  it('keeps legacy previews without response comparison details usable', async () => {
+    const wrapper = mount(AssetsView, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    useSetupStore().preview = { id: 'old', project_id: 'project-1', source_id: 'source-1', previous_revision_id: 'v1', candidate_revision_id: 'v2', added_count: 0, changed_count: 1, removed_count: 0, changes: [{ change_type: 'changed', method: 'GET', path: '/old', changed_fields: ['responses'] }] }
+    await nextTick()
+    expect(wrapper.get('[data-testid="source-changes"]').text()).toContain('/old')
+    expect(wrapper.find('[data-testid="response-contract-diff"]').exists()).toBe(false)
+  })
 })
 
 function buttonText(wrapper: ReturnType<typeof mount>): string {

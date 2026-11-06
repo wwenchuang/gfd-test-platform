@@ -87,6 +87,8 @@ class _TargetHandler(BaseHTTPRequestHandler):
             self._send(200, {"code": False, "message": "业务处理失败"})
         elif self.path.startswith("/status-500"):
             self._send(500, {"message": "server error"})
+        elif self.path.startswith("/status-400"):
+            self._send(400, {"code": 4001, "message": "invalid request"})
         elif self.path.startswith("/text"):
             self._send(200, b"plain response", "text/plain")
         elif self.path.startswith("/large"):
@@ -981,6 +983,45 @@ def test_success_and_truthful_product_statuses(target_server):
     assert assertion_failed.failure_category == "business_response"
     assert server_failed.status == "FAILED"
     assert server_failed.failure_category == "product_response"
+
+
+def test_expected_http_400_requires_and_records_the_exact_business_code(target_server):
+    expected = _case("/status-400", assertions=[
+        _assertion("status_code", "equals", 400),
+        _assertion("json_path", "equals", 4001, "$.code"),
+    ])
+    result = _executor(target_server, expected).execute_case("v", "env", {}).to_dict()
+
+    assert result["status"] == "PASSED"
+    assert result["response"]["status_code"] == 400
+    assert [(item["actual"], item["passed"]) for item in result["assertions"]] == [
+        (400, True), (4001, True),
+    ]
+
+
+def test_unexpected_business_code_on_http_400_is_not_reported_as_http_success(target_server):
+    case = _case("/status-400", assertions=[_assertion("status_code", "equals", 400)])
+    result = _executor(target_server, case).execute_case("v", "env", {}).to_dict()
+
+    assert result["status"] == "FAILED"
+    assert result["failure_category"] == "business_response"
+    assert result["response"]["status_code"] == 400
+    assert result["assertions"][0]["passed"] is True
+    assert result["assertions"][1]["actual"] == 4001
+    assert result["assertions"][1]["passed"] is False
+    assert "HTTP 400" in result["error_message"]
+    assert "HTTP 请求成功" not in result["error_message"]
+
+
+def test_explicit_business_code_alone_does_not_accept_http_400(target_server):
+    case = _case("/status-400", assertions=[_assertion("json_path", "equals", 4001, "$.code")])
+    result = _executor(target_server, case).execute_case("v", "env", {}).to_dict()
+
+    assert result["status"] == "FAILED"
+    assert result["failure_category"] == "product_response"
+    assert result["response"]["status_code"] == 400
+    assert result["assertions"][0]["passed"] is True
+    assert "HTTP 400" in result["error_message"]
 
 
 def test_business_failure_cannot_pass_with_broad_negative_assertion(target_server):

@@ -13,6 +13,7 @@ from ..contracts.source import (
     SourceRevisionView,
 )
 from ..repositories.source_repository import SourceRepository
+from .response_contract_diff import compare_response_contracts
 
 
 class SourceNotFoundError(LookupError):
@@ -76,6 +77,7 @@ def _change_payload(change):
         "method": change.method,
         "path": change.path,
         "changed_fields": list(change.changed_fields),
+        "response_contract_diff": change.response_contract_diff,
     }
 
 
@@ -87,6 +89,7 @@ def _change_from_payload(payload):
         method=payload["method"],
         path=payload["path"],
         changed_fields=tuple(payload.get("changed_fields") or ()),
+        response_contract_diff=payload.get("response_contract_diff"),
     )
 
 
@@ -94,6 +97,7 @@ def _compute_diff(previous_endpoints, candidate_endpoints):
     previous_by_key = {item.stable_key: item for item in previous_endpoints}
     candidate_by_key = {item.stable_key: item for item in candidate_endpoints}
     changes = []
+    contract_budget = {'nodes': 0, 'items': 0}
     for key in sorted(candidate_by_key.keys() - previous_by_key.keys()):
         endpoint = candidate_by_key[key]
         changes.append(
@@ -112,6 +116,8 @@ def _compute_diff(previous_endpoints, candidate_endpoints):
                     candidate.method,
                     candidate.path,
                     fields,
+                    compare_response_contracts(previous.operation, candidate.operation, contract_budget)
+                    if {'responses', 'resolved_dependencies'} & set(fields) else None,
                 )
             )
     for key in sorted(previous_by_key.keys() - candidate_by_key.keys()):
