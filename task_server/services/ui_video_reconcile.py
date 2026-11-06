@@ -292,6 +292,8 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     """Keep distant conflicts separate, with a fixed four-call total ceiling."""
     import copy
     from .ui_video_analysis import validate_analysis
+    from .ui_video_automatic_motion import review_refs,disputed_scroll_refs
+    motion_refs=review_refs(original) | review_refs(checked['events']) | disputed_scroll_refs(original,checked['events'])
     # A loading observation can span many seconds and share its final frame
     # with a tap. Preserve that observation outside the replacement instead
     # of pulling its entire static interval into the interaction repair.
@@ -375,7 +377,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         # Reserve one call for each later gap; extra attempts share the same
         # four-call ceiling instead of imposing a two-gap ceiling.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
-        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit)
+        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids)
         calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
@@ -461,7 +463,7 @@ def _exclude_focus_context_groups(groups,sources):
     return [g for g in groups if not is_focus_group(g)]
 
 
-def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2):
+def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=()):
     """Revisit one bounded gap without accepting omission or copying old semantics."""
     import copy
     from . import ai_skill_service as ai
@@ -477,7 +479,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     neighbors={positions[f['frame_id']]+offset for f in window for offset in (-2,-1,1,2) if 0<=positions[f['frame_id']]+offset<len(context_frames)}
     refs=[context_frames[i]['frame_id'] for i in sorted(neighbors) if context_frames[i]['frame_id'] not in window_ids][:16]
     from .ui_video_automatic_motion import review_refs,disputed_scroll_refs,REVIEW_QUESTION
-    motion_review=bool((review_refs(original) | review_refs(checked['events']) | disputed_scroll_refs(original,checked['events'])) & missing_refs)
+    motion_review=bool((review_refs(original) | review_refs(checked['events']) | disputed_scroll_refs(original,checked['events']) | set(motion_review_refs)) & missing_refs)
     from .ui_video_delayed_response import review_refs as delayed_refs,REVIEW_QUESTION as DELAYED_QUESTION
     delayed_review=bool(delayed_refs(original,checked['events']) & missing_refs)
     if motion_review or delayed_review:

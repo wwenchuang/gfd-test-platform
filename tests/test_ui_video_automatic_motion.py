@@ -248,3 +248,41 @@ def test_independent_scroll_concern_survives_automatic_state_repair(monkeypatch,
     monkeypatch.setattr(reconcile,'check_coverage',lambda *a:None)
     result=reconcile.reconcile(original,[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}],1000,tmp_path,lambda:False,[])
     assert any('弹窗' in q and '滚动' in q and 'f2' in q for q in result['uncertainties'])
+
+
+def test_dialog_motion_context_survives_split_into_local_repair(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as reconcile
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(10)]
+    tap={'action':'aiTap','target':'确认','value':'','frame_refs':['f0'],'start_ms':0,'end_ms':0,
+         'evidence_kind':'inferred','observation':'弹出对话框','uncertainties':[]}
+    scroll={'action':'aiScroll','target':'弹窗','value':{'direction':'down','scrollType':'singleAction'},
+            'frame_refs':['f6','f7'],'start_ms':600,'end_ms':700,'evidence_kind':'inferred',
+            'observation':'内容位移推断滚动','uncertainties':[]}
+    checked={'events':[tap,scroll],'uncertainties':[],'multiple_scenarios':False}
+    def repair(original,local,window,*args,**kwargs):
+        assert all(e['action']!='aiTap' for e in original)
+        assert kwargs['motion_review_refs']=={'f6','f7'}
+        return {**local,'reconciliation_audit':{'coverage_resolutions':[],'model_attempts':1}}
+    monkeypatch.setattr(reconcile,'_repair_window',repair)
+    result=reconcile._repair_coverage([tap,scroll],checked,frames,1000,tmp_path,lambda:False,[],{'f6','f7'})
+    assert len(result['events'])==2
+
+
+def test_carried_motion_refs_request_unprimed_local_review(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as reconcile,ui_video_windows as windows,ai_skill_service as ai
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(10)]
+    scroll={'action':'aiScroll','target':'弹窗','value':{'direction':'down','scrollType':'singleAction'},
+            'frame_refs':['f6','f7'],'start_ms':600,'end_ms':700,'evidence_kind':'inferred',
+            'observation':'内容位移推断滚动','uncertainties':[]}
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    class StopProbe(Exception):pass
+    def inspect(*args,**kw):
+        payload=args[1]
+        assert 'motion_review_question' in payload
+        assert all('action' not in anchor for anchors in payload['coverage_checks'].values() for anchor in anchors)
+        assert '不能仅以内容' in payload['validation_feedback']
+        raise StopProbe()
+    monkeypatch.setattr(ai,'run_ai_skill',inspect)
+    with pytest.raises(StopProbe):
+        reconcile._repair_window([scroll],{'events':[scroll],'uncertainties':[],'multiple_scenarios':False},
+            frames[6:8],1000,tmp_path,lambda:False,[],{'f6','f7'},context_frames=frames,motion_review_refs={'f6','f7'})
