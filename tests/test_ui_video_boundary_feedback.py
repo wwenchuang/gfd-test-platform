@@ -88,6 +88,9 @@ def test_v3_full_repair_preserves_separate_keyboard_action(monkeypatch, tmp_path
                                     'frame_refs': ['frame-065', 'frame-066', 'frame-067']}],
     }
     assert '旧锚点' in calls[1]['validation_feedback']
+    assert '审查并解释所有旧锚点原帧' in calls[1]['validation_feedback']
+    assert '事件frame_refs只引用原图确证属于该事件的帧' in calls[1]['validation_feedback']
+    assert '不能机械删帧' in calls[1]['validation_feedback']
     assert 'boundary_retry_context' not in calls[0]
     assert 'target' not in str(calls[1]['boundary_retry_context'])
     assert 'value' not in str(calls[1]['boundary_retry_context'])

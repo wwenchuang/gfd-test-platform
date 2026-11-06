@@ -643,6 +643,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                         for e in preserved_interactions if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
                         and set(e['frame_refs'])&set(boundary)]}
                 payload['validation_feedback']+=' 上次事件与已保留交互存在边界冲突，boundary_conflicts仅列被拒事件的动作类别和冲突原帧。boundary_retry_context列出全部已保留边界帧及相关旧识别的已附原帧，旧识别只是待核对假设，不是事实；不得只避开上次报错的一帧而使用其他边界帧。重新观察原图，独立解释所有旧锚点及相邻真实操作，只引用原图确证属于该事件的帧，不得为通过校验机械删帧或编造交互。若原图确证先独立点击输入框聚焦、再输入，应分别保留该焦点点击和输入，不得为减少步骤漏掉焦点；无法确认时保留疑问。仅严格验证的点击或返回映射可共享一个操作前状态帧；其他交互不能引用已保留的边界帧。'
+                payload['validation_feedback']+=' 区分审查证据与引用证据：必须审查并解释所有旧锚点原帧，事件frame_refs只引用原图确证属于该事件的帧；被保留交互的边界原帧仍须查看和解释，不因此重放该交互或引用到其他事件。不能机械删帧；原图无法确认动作归属、交互次数或证据边界时如实报告疑问。'
                 continue
             if reason=='return_gesture_not_explicit':
                 from .ui_video_coverage_resolution import diagnose
