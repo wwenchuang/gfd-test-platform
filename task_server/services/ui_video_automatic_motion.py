@@ -19,7 +19,7 @@ def review_refs(events):
 
 def _fresh_dialog_motion(previous,event):
     """Review inferred motion immediately after a dialog opens, without deciding it."""
-    if previous.get('action')!='aiTap' or event.get('evidence_kind')!='inferred':return False
+    if previous.get('action')!='aiTap' or event.get('action')!='aiScroll' or event.get('evidence_kind')!='inferred':return False
     start,end=event.get('start_ms'),previous.get('end_ms')
     if not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or not 0<=start-end<=3000:return False
     previous_note=previous.get('observation','')

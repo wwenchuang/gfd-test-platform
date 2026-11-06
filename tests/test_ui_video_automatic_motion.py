@@ -221,3 +221,30 @@ def test_fresh_dialog_negated_drag_is_not_treated_as_evidence():
             'start_ms':200,'end_ms':300,'evidence_kind':'inferred',
             'observation':'未见触点持续移动，内容发生位移，推断滚动。'}
     assert review_refs([tap,scroll])=={'a','b'}
+
+
+def test_dialog_assertion_is_not_itself_a_suspicious_scroll():
+    tap={'action':'aiTap','start_ms':0,'end_ms':100,'observation':'弹出对话框'}
+    assertion={'action':'aiAssert','target':'弹窗','frame_refs':['a','b'],
+               'start_ms':200,'end_ms':300,'evidence_kind':'inferred',
+               'observation':'图片加载完成。'}
+    from task_server.services.ui_video_automatic_motion import fresh_dialog_review_questions
+    assert not fresh_dialog_review_questions([tap,assertion])
+
+
+def test_independent_scroll_concern_survives_automatic_state_repair(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as reconcile,ui_video_windows as windows
+    tap={'action':'aiTap','target':'确认','value':'','frame_refs':['f1'],
+         'start_ms':100,'end_ms':100,'evidence_kind':'inferred','observation':'弹出对话框','uncertainties':[]}
+    assertion={'action':'aiAssert','target':'弹窗','value':'','frame_refs':['f2'],
+         'start_ms':200,'end_ms':200,'evidence_kind':'inferred','observation':'图片加载完成','uncertainties':[]}
+    scroll={**assertion,'action':'aiScroll','value':{'direction':'down','scrollType':'singleAction'},
+            'observation':'弹窗内容上移，推断滚动'}
+    original=[tap,assertion]
+    checked={'events':[tap,scroll],'uncertainties':[],'multiple_scenarios':False}
+    repaired={'events':[tap,assertion],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(windows,'observe_windows',lambda *a,**kw:(checked,[]))
+    monkeypatch.setattr(reconcile,'_repair_coverage',lambda *a:repaired)
+    monkeypatch.setattr(reconcile,'check_coverage',lambda *a:None)
+    result=reconcile.reconcile(original,[{'frame_id':'f1','timestamp_ms':100},{'frame_id':'f2','timestamp_ms':200}],1000,tmp_path,lambda:False,[])
+    assert any('弹窗' in q and '滚动' in q and 'f2' in q for q in result['uncertainties'])

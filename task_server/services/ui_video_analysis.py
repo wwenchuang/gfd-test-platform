@@ -600,7 +600,7 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
             # cannot erase them by omitting them from its planning response.
             from .ui_video_business_inputs import _MANUAL
             from .ui_video_automatic_motion import fresh_dialog_review_questions
-            blockers=list(observed['uncertainties'])+_exit_prompt_review(candidates+first_pass)+_overlapping_return_review(checked['events'])+fresh_dialog_review_questions(candidates)
+            blockers=list(observed['uncertainties'])+_exit_prompt_review(candidates+first_pass)+_overlapping_return_review(checked['events'])+fresh_dialog_review_questions(candidates)+fresh_dialog_review_questions(first_pass)
             for event in candidates:
                 # The manual-input placeholder can be resolved by later input
                 # recovery; keep it event-local instead of making it permanent.

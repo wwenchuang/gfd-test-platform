@@ -207,3 +207,25 @@ def test_unconfirmed_fresh_dialog_motion_survives_planner_omission(monkeypatch,c
     proposal,_=va.draft_proposal({**document,**result,'source_id':'uvs_'+'0'*32,'analysis_version':1})
     from task_server.services.ui_case_draft_contract import build_draft_yaml
     assert not build_draft_yaml(proposal,document['app_id'])['ready']
+
+
+def test_original_dialog_scroll_concern_survives_model_assert_correction(monkeypatch,consolidation):
+    from task_server.services import ui_video_analysis as va,ai_skill_service as ai
+    document,root,observed=consolidation
+    observed['events'][0].update(action='aiTap',target='确认',observation='点击后弹出确认打印对话框')
+    observed['events'][1].update(action='aiAssert',target='确认打印弹窗内容',value='',
+        observation='图片加载完成，未见独立滚动')
+    first_pass=copy.deepcopy(observed['events'])
+    first_pass[1].update(action='aiScroll',value={'direction':'down','scrollType':'singleAction'},
+        observation='弹窗内容向上位移，判定滚动')
+    def model(skill,payload,**kwargs):
+        return {'title':'检查弹窗','events':[{'candidate_index':0,'action':'aiTap','target':'确认',
+                'value':'','observation':'点击后弹出确认打印对话框','uncertainties':[]}],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    monkeypatch.setattr(va,'_result_review_needs',lambda *args:(set(),[]))
+    result=va.consolidate_observed_frames(document,root,lambda:False,observed,first_pass,[])
+    assert any('弹窗' in q and '滚动' in q and 'frame-004' in q for q in result['uncertainties'])
+    proposal,_=va.draft_proposal({**document,**result,'source_id':'uvs_'+'0'*32,'analysis_version':1})
+    from task_server.services.ui_case_draft_contract import build_draft_yaml
+    assert not build_draft_yaml(proposal,document['app_id'])['ready']

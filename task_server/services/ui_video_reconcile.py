@@ -246,7 +246,8 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     checked,new_secrets=observe_windows(frames,duration,root,cancelled,progress,
                                        review_events=events,prior_secrets=secrets)
     secrets.extend(new_secrets)
-    from .ui_video_automatic_motion import review_refs,disputed_scroll_refs
+    from .ui_video_automatic_motion import review_refs,disputed_scroll_refs,fresh_dialog_review_questions
+    motion_questions=fresh_dialog_review_questions(events)+fresh_dialog_review_questions(checked['events'])
     repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events']) | _tap_scroll_refs(events) | _tap_scroll_refs(checked['events'])
     repair_refs.update(_overlapping_tap_refs(events) | _overlapping_tap_refs(checked['events']))
     repair_refs.update(_overlapping_input_refs(checked['events']))
@@ -262,7 +263,7 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
         checked=_repair_coverage(events,checked,frames,duration,root,cancelled,secrets,repair_refs)
         check_coverage(events,checked['events'],duration,checked.get('reconciliation_audit',{}).get('coverage_resolutions'),'first_pass')
     warnings=[q for e in checked['events'] for q in e['uncertainties'] if q.startswith(('首轮点击','首轮滚动','点击与返回'))]
-    checked['uncertainties']=list(dict.fromkeys(checked['uncertainties']+warnings))
+    checked['uncertainties']=list(dict.fromkeys(checked['uncertainties']+warnings+motion_questions))
     return checked
 
 
