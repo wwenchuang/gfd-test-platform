@@ -606,6 +606,27 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     if input_groups and all(e['action']=='aiInput' for e in original+checked['events']):
         repair_version='input-round'
         payload['input_round_candidates']=[{'field':group[0]['target'],'fragments':[{'frame_refs':e['frame_refs']} for e in group]} for group in input_groups]
+    # Before the first non-blind call, expose the same bounded boundary role
+    # information that would otherwise arrive only after a failed attempt.
+    # Old focus/input pairs are hypotheses, never accepted as pixel evidence.
+    if boundary and not (motion_review or delayed_review or retry_return_gesture_only):
+        image_ids={f['frame_id'] for f in images}
+        retained=[{'action':e['action'],'frame_refs':[r for r in e['frame_refs'] if r in image_ids]}
+                  for e in preserved_interactions if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
+                  and set(e['frame_refs'])&set(boundary)]
+        focus_hypotheses=[]
+        for name,source in [('first_pass',original),('independent_review',checked['events'])]:
+            interactions=[e for e in source if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}]
+            for focus,typed in zip(interactions,interactions[1:]):
+                if (focus['action']=='aiTap' and typed['action']=='aiInput' and focus['target'] and
+                    focus['target']==typed['target'] and set(focus['frame_refs'])&set(typed['frame_refs']) and
+                    set(focus['frame_refs'])<=window_ids and set(typed['frame_refs'])<=window_ids):
+                    focus_hypotheses.append({'source':name,'focus_frame_refs':list(focus['frame_refs']),
+                                             'input_frame_refs':list(typed['frame_refs'])})
+        if retained:
+            payload['boundary_evidence_context']={'all_boundary_frame_refs':sorted(boundary),
+                'preserved_interactions':retained,'focus_input_hypotheses':focus_hypotheses}
+            payload['validation_feedback']+=' boundary_evidence_context里的相邻操作及focus_input_hypotheses均是旧识别假设，不是事实。逐帧核对是否存在独立的输入框聚焦点击及后续文字修改；若原图确证两次真实操作且输入不覆盖聚焦，分别保留；无法确认如实保留疑问，不得仅凭旧假设新增点击。完整查看旧锚点与边界帧，事件帧只引用确证属于该事件的交互证据，不能为满足检查机械删帧或编造动作。'
     # Reuse bounded same-frame detail during conflict review as in initial observation.
     # Crops aid perception only; validate_analysis still accepts original frame IDs only.
     assets=load_assets(images,root,cancelled)
@@ -631,7 +652,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         from .ui_video_coverage_resolution import validate as validate_resolutions
         role_claims=[]
         if isinstance(raw,dict):
-            if 'boundary_retry_context' in payload:
+            if 'boundary_retry_context' in payload or 'boundary_evidence_context' in payload:
                 role_claims=_extract_boundary_role_claims(raw,raw.get('events',[]),preserved_interactions,boundary,images,context_frames)
             else:raw.pop('boundary_frame_roles',None)
         claims=raw.get('coverage_resolutions',[]) if isinstance(raw,dict) else []

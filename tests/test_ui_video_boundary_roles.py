@@ -88,17 +88,19 @@ def test_context_claim_cannot_skip_intervening_preserved_action():
     assert _extract_boundary_role_claims(raw, events, preserved, {'frame-003', 'frame-004'}, frames) == []
 
 
-def test_context_role_contract_is_present_only_for_conflict_retry():
+def test_context_role_contract_is_only_present_with_boundary_context():
     from task_server.services.ai_skill_service import render_ai_skill_prompt, load_ai_skill_schema
     baseline = render_ai_skill_prompt('ui_video_observe', {}, version='coverage-observe')
     retry = render_ai_skill_prompt('ui_video_observe', {'boundary_retry_context': {}}, version='coverage-observe')
+    initial = render_ai_skill_prompt('ui_video_observe', {'boundary_evidence_context': {}}, version='coverage-observe')
     assert 'boundary_frame_roles' not in baseline
     assert 'boundary_frame_roles' in retry
+    assert 'boundary_frame_roles' in initial
     assert '不自动成为事件证据或结论' in retry
     assert 'boundary_frame_roles' in load_ai_skill_schema('ui_video_observe')['properties']
 
 
-def test_unsolicited_role_claim_is_ignored_without_losing_valid_events(monkeypatch, tmp_path):
+def test_first_boundary_observation_can_record_unverified_role_claim(monkeypatch, tmp_path):
     from test_ui_video_boundary_feedback import evidence, setup, reply
     from task_server.services import ui_video_reconcile as reconcile
     frames, first, reviewed = evidence()
@@ -107,7 +109,9 @@ def test_unsolicited_role_claim_is_ignored_without_losing_valid_events(monkeypat
     setup(monkeypatch, [initial])
     result = reconcile._repair_coverage(first, {'events': reviewed, 'uncertainties': [], 'multiple_scenarios': False},
                                        frames, 195698, tmp_path, lambda: False, [], {'frame-047', 'frame-048', 'frame-049'})
-    assert 'frame_role_audit' not in result
+    assert result['frame_role_audit'][0]['status'] == 'unverified_model_claim'
+    assert result['frame_role_audit'][0]['context_frame_refs'] == ['frame-065']
+    assert 'frame-065' not in result['events'][2]['frame_refs']
     assert [e['action'] for e in result['events']] == ['aiTap', 'aiTap', 'aiInput', 'dismissKeyboard']
 
 

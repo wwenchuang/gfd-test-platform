@@ -262,7 +262,7 @@ def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prom
                     "selection可跨请求复用，保留原问题和单用例完整业务顺序，不增加阶段或独立用例。\n" + template)
     payload_text = json.dumps(payload or {}, ensure_ascii=False, indent=2)
     rendered = template.replace("{{payload}}", payload_text)
-    if skill_name == 'ui_video_observe' and isinstance(payload,dict) and 'boundary_retry_context' in payload:
+    if skill_name == 'ui_video_observe' and isinstance(payload,dict) and ('boundary_retry_context' in payload or 'boundary_evidence_context' in payload):
         rendered += ('\n【冲突边界的证据角色】复核全部附图，逐项区分本次交互帧与随后独立操作的结果上下文。'
                      'events.frame_refs只列原图确证属于该操作的帧，不得引用保留边界帧，也不能为通过校验机械删除。'
                      '若原图确证同一画面同时是本动作的结果状态和下一保留操作的开始，可在根对象额外给出'

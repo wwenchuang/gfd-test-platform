@@ -81,6 +81,15 @@ def test_v3_full_repair_preserves_separate_keyboard_action(monkeypatch, tmp_path
     result = reconcile._repair_coverage(first, checked, frames, 195698, tmp_path, lambda: False, [],
                                         {'frame-047', 'frame-048', 'frame-049'})
     assert len(calls) == 2
+    assert calls[0]['boundary_evidence_context'] == {
+        'all_boundary_frame_refs': ['frame-065', 'frame-066'],
+        'preserved_interactions': [{'action': 'dismissKeyboard',
+                                    'frame_refs': ['frame-065', 'frame-066', 'frame-067']}],
+        'focus_input_hypotheses': [{'source': 'first_pass',
+                                    'focus_frame_refs': ['frame-047', 'frame-048', 'frame-049'],
+                                    'input_frame_refs': first[2]['frame_refs']}],
+    }
+    assert '假设' in calls[0]['validation_feedback']
     assert calls[1]['boundary_conflicts'] == [{'action': 'aiInput', 'frame_refs': ['frame-066']}]
     assert calls[1]['boundary_retry_context'] == {
         'all_boundary_frame_refs': ['frame-065', 'frame-066'],
@@ -99,6 +108,33 @@ def test_v3_full_repair_preserves_separate_keyboard_action(monkeypatch, tmp_path
     assert result['events'][2]['frame_refs'] == reviewed[1]['frame_refs']
     reconcile.check_coverage(first, copy.deepcopy(result['events']), 195698)
     reconcile.check_coverage(reviewed, copy.deepcopy(result['events']), 195698)
+
+
+def test_first_boundary_conflict_then_correct_boundary_with_omitted_focus_still_fails(monkeypatch, tmp_path):
+    frames, first, reviewed = evidence()
+    # Reproduce the real third trial's shape: the retry removes the conflicting
+    # boundary reference but still does not include the independent focus.
+    tap = copy.deepcopy(first[0]); tap['frame_refs'] = ['frame-046', 'frame-047']
+    first_input = copy.deepcopy(first[2])
+    first_input['frame_refs'] = ['frame-048', 'frame-053', 'frame-056', 'frame-059', 'frame-062', 'frame-064', 'frame-066']
+    second_input = copy.deepcopy(reviewed[1])
+    second_input['frame_refs'] = ['frame-048', 'frame-053', 'frame-056', 'frame-057', 'frame-060', 'frame-062', 'frame-064']
+    calls = setup(monkeypatch, [reply([tap, first_input]), reply([tap, second_input])])
+    with pytest.raises(ValueError, match='video_required_action_missing'):
+        reconcile._repair_coverage(first, {'events': reviewed, 'uncertainties': [], 'multiple_scenarios': False},
+                                   frames, 195698, tmp_path, lambda: False, [], {'frame-047', 'frame-048', 'frame-049'})
+    assert len(calls) == 2
+    assert calls[0]['boundary_evidence_context']['focus_input_hypotheses']
+
+
+def test_focus_hint_does_not_treat_different_targets_as_same_field(monkeypatch, tmp_path):
+    frames, first, reviewed = evidence()
+    first[1]['target'] = '另一个控件'
+    calls = setup(monkeypatch, [reply([first[0], first[2]])])
+    with pytest.raises(ValueError):
+        reconcile._repair_coverage(first, {'events': reviewed, 'uncertainties': [], 'multiple_scenarios': False},
+                                   frames, 195698, tmp_path, lambda: False, [], {'frame-047', 'frame-048', 'frame-049'})
+    assert calls[0]['boundary_evidence_context']['focus_input_hypotheses'] == []
 
 
 def test_second_reply_still_cannot_skip_focus_or_escape_boundary(monkeypatch, tmp_path):
@@ -135,6 +171,7 @@ def test_boundary_does_not_extend_blind_or_return_only_budget(monkeypatch, tmp_p
     options = {'motion_review_refs': {'frame-047'}} if mode == 'motion' else {}
     if mode == 'return_only': options['retry_return_gesture_only'] = True
     with pytest.raises(ValueError, match='video_reference_invalid'):
-        run_window(tmp_path, first, reviewed, frames, **options)
+        run_window(tmp_path, first, reviewed, frames, preserved_interactions=[reviewed[2]], **options)
     assert len(calls) == 1
     assert 'boundary_retry_context' not in calls[0]
+    assert 'boundary_evidence_context' not in calls[0]
