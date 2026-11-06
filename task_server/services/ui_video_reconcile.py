@@ -550,6 +550,11 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         payload['coverage_checks']={name:[{'anchor_id':a['anchor_id'],'frame_refs':a['frame_refs']} for a in anchors] for name,anchors in payload['coverage_checks'].items()}
         payload['gesture_hypotheses']=[]
         payload['validation_feedback']=(REVIEW_QUESTION if motion_review else '')+DELAYED_QUESTION
+    if (motion_review or delayed_review) and 'eligible_resolution_groups' in payload:
+        # Structural groups remain available, but their source action labels
+        # cannot leak into the independent, pixel-first review.
+        payload['eligible_resolution_groups']=[{k:v for k,v in group.items() if k!='kind'}
+            for group in payload.get('eligible_resolution_groups',[])]
     if _overlapping_input_refs(original) or _overlapping_input_refs(checked['events']):
         payload['validation_feedback']+=' 点击输入框与后续输入的原证据区间重叠：逐帧区分点击聚焦、键盘弹出与实际文字修改。若聚焦点击独立保留，输入证据从实际删改文字开始。前一控件的点击必须独立保留；如输入框的起始帧只是前一控件的结果，且下一帧确为点击输入框、再下一帧显示键盘，可在同一aiInput中保留实际点击和键盘原帧，并明确描述点击输入框及唤起键盘，不把前一控件的点击合并进输入，也不要提交覆盖映射。无法确认焦点点击时保留疑问。同一字段删除旧字后连续输入新字、切换输入法及选择候选词属于一次完整文字替换，保留删改到最终文字的证据，不把中间暂时清空拆成空值输入；不能跨提交、换字段或其他独立业务操作合并。不得按时间直接裁剪或补造边界，不得删除不同控件操作；无法从原图确认则保留疑问。'
     if list(_input_rounds(original)) or list(_input_rounds(checked['events'])):
@@ -606,7 +611,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             if any(not boundary_safe(e,boundary,resolutions,window) for e in repaired['events']):
                 raise ValueError('video_reference_invalid')
         except ValueError as error:
-            if attempt+1>=attempt_limit:
+            reason=getattr(error,'coverage_reason',None)
+            if attempt+1>=attempt_limit or motion_review or delayed_review or (retry_return_gesture_only and reason!='return_gesture_not_explicit'):
                 if str(error)=='video_coverage_resolution_invalid':
                     error.coverage_frame_refs=set(missing_refs)&window_ids
                     if getattr(error,'coverage_reason',None) in {
@@ -617,8 +623,6 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                         # targets, values, or the rejected proposed merge as truth.
                         error.coverage_candidates=failure_candidates
                 raise
-            reason=getattr(error,'coverage_reason',None)
-            if retry_return_gesture_only and reason!='return_gesture_not_explicit':raise
             if reason=='return_gesture_not_explicit':
                 from .ui_video_coverage_resolution import diagnose
                 payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
@@ -671,7 +675,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             break
         except ValueError as error:
             missing=getattr(error,'missing_frame_refs',None)
-            if retry_return_gesture_only or attempt+1>=attempt_limit or not missing or not missing<=window_ids:raise
+            if retry_return_gesture_only or motion_review or delayed_review or attempt+1>=attempt_limit or not missing or not missing<=window_ids:raise
             payload['unresolved_hypotheses']=[{'action':e['action'],'target':e['target'],'observation':e['observation'],'frame_refs':e['frame_refs']} for e in original+before if set(e['frame_refs'])<=missing]
             if any(e['action']=='aiScroll' and set(e['frame_refs'])&missing for e in original+before):
                 payload['validation_feedback']+=' 旧滚动仍未解释：仅当原帧确证是自动回弹或布局变化且没有独立用户滚动时，完整引用旧帧并在observation明确写“未见独立用户滚动”，再说明可见的自动变化依据；不得根据模板猜测，真实滚动须保留，无法确认则保留疑问。'

@@ -323,7 +323,8 @@ def test_preserved_boundary_cannot_be_reexecuted(monkeypatch,tmp_path,action):
     monkeypatch.setattr(ai,'run_ai_skill',model)
     if action=='aiTap':
         with pytest.raises(ValueError):vr._repair_coverage([preserved,scroll],checked,frames,1000,tmp_path,lambda:False,[],{'f3'})
-        assert len(calls)==2
+        # Blind motion review must not retry with the original action labels.
+        assert len(calls)==1
     else:
         result=vr._repair_coverage([preserved,scroll],checked,frames,1000,tmp_path,lambda:False,[],{'f3'})
         assert [e['action'] for e in result['events']]==['aiTap','aiAssert']
@@ -396,9 +397,12 @@ def test_return_only_retry_asks_for_grounded_explanation_and_fails_closed(monkey
     if outcome=='corrected':
         result=vr._repair_window(*args,attempt_limit=2,retry_return_gesture_only=True)
         assert len(result['reconciliation_audit']['coverage_resolutions'])==1
+        assert result['reconciliation_audit']['model_attempts']==2
     else:
-        with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):
+        with pytest.raises(ValueError,match='video_coverage_resolution_invalid') as caught:
             vr._repair_window(*args,attempt_limit=2,retry_return_gesture_only=True)
+        assert caught.value.coverage_frame_refs=={'f1','f2','f3','f4'}
+        assert len(caught.value.coverage_candidates['first_pass'])==2
     assert len(calls)==2
     assert any(x['reason']=='return_gesture_not_explicit' for x in calls[1]['resolution_diagnostics']['result_evidence_to_recheck'])
     assert 'interaction' in calls[1]['validation_feedback'] and '不能' in calls[1]['validation_feedback']
@@ -419,9 +423,56 @@ def test_return_only_extra_call_is_not_used_for_other_rejections(monkeypatch,tmp
         return {'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
                 'coverage_resolutions':[claim],'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'run_ai_skill',model)
-    with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):
+    with pytest.raises(ValueError,match='video_coverage_resolution_invalid') as caught:
         vr._repair_window(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3','f4'},attempt_limit=2,retry_return_gesture_only=True)
     assert len(calls)==1
+    assert caught.value.coverage_reason=='return_repeat_contradiction'
+    assert caught.value.coverage_frame_refs=={'f1','f2','f3','f4'}
+    assert len(caught.value.coverage_candidates['first_pass'])==2
+
+
+@pytest.mark.parametrize('blind',['motion','delayed'])
+@pytest.mark.parametrize('return_only',[False,True])
+def test_blind_review_never_retries_with_source_action_diagnostics(monkeypatch,tmp_path,blind,return_only):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai,ui_video_delayed_response as delayed
+    frames,old,new,claim=return_gesture_fixture()
+    for e in old+new:e.update(action='navigateBack',target='上一页面')
+    for e in old:e['evidence_kind']='inferred'
+    claim['evidence']['before_state']='模型详情页可见'
+    claim['source_anchor_ids']+=['independent_review:0','independent_review:1']
+    claim['evidence']['interaction']='同一次页面横移'
+    new[0]['observation']='一次连续返回手势，页面回到上一级'
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    if blind=='delayed':monkeypatch.setattr(delayed,'review_refs',lambda *args:{'f2'})
+    calls=[]
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        return {'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[claim],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_coverage_resolution_invalid') as caught:
+        vr._repair_window(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3','f4'},attempt_limit=2,retry_return_gesture_only=return_only,motion_review_refs={'f2'} if blind=='motion' else ())
+    assert len(calls)==1
+    assert caught.value.coverage_reason=='return_gesture_not_explicit'
+    assert len(caught.value.coverage_candidates['first_pass'])==2
+    assert all('action' not in e for rows in calls[0]['coverage_checks'].values() for e in rows)
+
+
+@pytest.mark.parametrize('blind',['motion','delayed'])
+def test_blind_initial_review_does_not_expose_source_conflict_kind(monkeypatch,tmp_path,blind):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai,ui_video_delayed_response as delayed
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    if blind=='delayed':monkeypatch.setattr(delayed,'review_refs',lambda *args:{'f2'})
+    calls=[]
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        raise LookupError('observed')
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(LookupError,match='observed'):
+        vr._repair_window([back],{'events':[tap],'uncertainties':[],'multiple_scenarios':False},frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'},motion_review_refs={'f2'} if blind=='motion' else ())
+    assert calls[0]['eligible_resolution_groups']
+    assert all('kind' not in group for group in calls[0]['eligible_resolution_groups'])
 
 
 def test_continuous_return_accepts_actual_touch_inside_overlapping_anchor_interval():
