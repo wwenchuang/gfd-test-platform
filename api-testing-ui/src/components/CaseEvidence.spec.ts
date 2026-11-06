@@ -22,6 +22,64 @@ const result: ExecutionCaseResult = {
 }
 
 describe('CaseEvidence', () => {
+  it('highlights a cleanup failure independently of the main failure', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: {
+      ...result.sanitized_result, trace: [
+        { phase: 'workflow_step', stage: 'main', index: 0, status: 'FAILED' },
+        { phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'FAILED' },
+      ],
+    } } } })
+    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toContain('清理步骤未通过')
+    expect(wrapper.text()).toContain('业务码不匹配')
+  })
+
+  it('uses the final attempt for each cleanup step and does not call resources deleted', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: {
+      ...result.sanitized_result, trace: [
+        { phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'FAILED', attempt: 1, max_attempts: 2 },
+        { phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'PASSED', attempt: 2, max_attempts: 2 },
+      ],
+    } } } })
+    expect(wrapper.find('[data-testid="cleanup-evidence-warning"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="cleanup-evidence-passed"]').text()).toContain('清理步骤已记录为通过')
+    expect(wrapper.get('[data-testid="cleanup-evidence-passed"]').text()).toContain('实际资源状态仍需核对')
+  })
+
+  it('marks skipped cleanup as unconfirmed, even when other cleanup steps passed', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: {
+      ...result.sanitized_result, trace: [
+        { phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'PASSED' },
+        { phase: 'workflow_step', stage: 'cleanup', index: 1, status: 'SKIPPED', failure_category: 'condition_not_met' },
+      ],
+    } } } })
+    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toContain('清理步骤被跳过')
+    expect(wrapper.find('[data-testid="cleanup-evidence-passed"]').exists()).toBe(false)
+  })
+
+  it('keeps missing-variable cleanup and unrecognized statuses unconfirmed', () => {
+    for (const step of [
+      { phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'SKIPPED', failure_category: 'missing_variables' },
+      { phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'UNKNOWN' },
+    ]) {
+      const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: { ...result.sanitized_result, trace: [step] } } } })
+      expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toMatch(/清理步骤被跳过|没有完整的清理步骤证据/)
+      expect(wrapper.find('[data-testid="cleanup-evidence-passed"]').exists()).toBe(false)
+    }
+  })
+
+  it('does not invent cleanup status for read-only and historical records without cleanup evidence', () => {
+    for (const status of ['PASSED', 'FAILED', 'BROKEN']) {
+      const wrapper = mount(CaseEvidence, { props: { result: { ...result, method: 'GET', status, sanitized_result: { ...result.sanitized_result, trace: [] } } } })
+      expect(wrapper.find('[data-testid="cleanup-evidence-warning"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="cleanup-evidence-passed"]').exists()).toBe(false)
+    }
+  })
+
+  it('labels a cleanup-category legacy record with no step details as unconfirmed', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, failure_category: 'cleanup', sanitized_result: { ...result.sanitized_result, trace: [] } } } })
+    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toContain('没有完整的清理步骤证据')
+  })
+
   it('shows an advisory warning without replacing the functional result', () => {
     const wrapper = mount(CaseEvidence, { props: { result: { ...result, status: 'PASSED', sanitized_result: { ...result.sanitized_result, response_time_warning: { status: 'slow', duration_ms: 1200, threshold_ms: 1000 } } } } })
     expect(wrapper.get('[data-testid="response-time-slow"]').text()).toContain('1200 ms')

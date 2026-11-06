@@ -30,6 +30,24 @@ const trace = computed(() => {
   return Array.isArray(value) ? redactSensitiveEvidence(value) as Array<Record<string, unknown>> : []
 })
 const workflowSteps = computed(() => trace.value.filter(item => item.phase === 'workflow_step'))
+const cleanupEvidence = computed(() => {
+  const steps = workflowSteps.value.filter(item => item.stage === 'cleanup')
+  if (!steps.length) return props.result.failure_category === 'cleanup' ? 'missing' : ''
+  // A cleanup step may be polled more than once. Count its final attempt,
+  // while preserving distinct steps and treating unidentifiable entries separately.
+  const latest = new Map<string, Record<string, unknown>>()
+  for (const [position, step] of steps.entries()) {
+    const key = Number.isInteger(step.index) ? `step:${step.index}` : `unknown:${position}`
+    const previous = latest.get(key)
+    const attempt = typeof step.attempt === 'number' ? step.attempt : 1
+    const previousAttempt = previous && typeof previous.attempt === 'number' ? previous.attempt : 1
+    if (!previous || attempt >= previousAttempt) latest.set(key, step)
+  }
+  const statuses = [...latest.values()].map(step => String(step.status || '').toUpperCase())
+  if (statuses.some(status => ['FAILED', 'BROKEN', 'CANCELLED'].includes(status))) return 'failed'
+  if (statuses.includes('SKIPPED')) return 'skipped'
+  return statuses.every(status => status === 'PASSED') ? 'passed' : 'missing'
+})
 const requestUrl = computed(() => String(request.value.url || request.value.resolved_url || ''))
 const responseStatus = computed(() => Number(response.value.status_code || response.value.status || 0))
 const responseDuration = computed(() => {
@@ -110,6 +128,10 @@ function toggleBlock(key: string): void {
     <p v-else-if="loading" class="evidence-load-state state-message">正在读取当前用例的请求、响应和断言，请稍候…</p>
     <p v-else-if="!evidenceReady" class="evidence-load-state state-message">选择用例后读取请求、响应、断言和执行轨迹。</p>
     <template v-else>
+    <p v-if="cleanupEvidence === 'failed'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">清理步骤未通过，请核对本次产生或修改的数据。此提示不改变主体测试结果。</p>
+    <p v-else-if="cleanupEvidence === 'skipped'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">清理步骤被跳过，不能据此确认数据已清理，请核对跳过原因及本次数据。</p>
+    <p v-else-if="cleanupEvidence === 'missing'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">没有完整的清理步骤证据，请核对本次数据的实际状态。</p>
+    <p v-else-if="cleanupEvidence === 'passed'" data-testid="cleanup-evidence-passed" role="status">清理步骤已记录为通过；其他步骤及实际资源状态仍需核对。</p>
     <FailureAnalysis :result="result" />
     <div class="evidence-summary">
       <div><span>状态</span><strong :class="`status-${result.status.toLowerCase()}`">{{ statusLabel(result.status) }}</strong></div>
