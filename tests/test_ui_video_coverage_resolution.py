@@ -845,3 +845,48 @@ def test_failed_return_merge_keeps_categorical_candidates_without_model_text(mon
     assert all(set(item)=={'action','frame_refs'} for group in evidence.values() for item in group)
     assert 'secret-model-observation' not in str(evidence)
     assert len(evidence['first_pass'])==len(old)
+
+
+@pytest.mark.parametrize('blind_motion',[False,True])
+def test_f834_return_window_failed_merge_retains_all_ordered_candidate_frames(monkeypatch,tmp_path,blind_motion):
+    """Anonymized action and timestamp shape from the failed f834 v2 segment."""
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai,ui_video_touch_detail as detail
+    from task_server.workers import ui_video_worker as worker
+    ms=[187567,187700,188000,188500,188667,189000,189233,189400,189700,190100,190267,190900]
+    frames=[{'frame_id':f'frame-{332+i}','timestamp_ms':t} for i,t in enumerate(ms)]
+    times={f['frame_id']:f['timestamp_ms'] for f in frames}
+    def event(action,nums):
+        refs=[f'frame-{i}' for i in nums]
+        return {'action':action,'target':'上一页面' if action=='navigateBack' else '测试按钮',
+                'value':'','frame_refs':refs,'start_ms':times[refs[0]],'end_ms':times[refs[-1]],
+                'observation':'连续返回手势，触点位移 sensitive-marker','uncertainties':[]}
+    first=[event('navigateBack',r) for r in ([332,333,334],[334,335,336,337],[337,338,339,340],[340,341,342])]
+    review=[event('aiTap',[332,333,334]),event('navigateBack',[335,336,337]),
+            event('navigateBack',[338,339,340]),event('navigateBack',[341,342]),
+            event('navigateBack',[341,342,343])]
+    merged=review[-1]
+    claim={'source_anchor_ids':['independent_review:3','independent_review:4'],
+           'resolution':'same_return_gesture','reviewed_event_index':0,
+           'evidence':{'before_frame':'frame-341','interaction_frame':'frame-341','after_frame':'frame-343',
+                       'examined_frame_refs':['frame-341','frame-342','frame-343'],
+                       'before_state':'测试页面','interaction':'同一次导航回到上页',
+                       'after_state':'退回上一级','why_not_separate_actions':'未见第二次按下或新的手势'}}
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a,**kw:[])
+    def model(skill,payload,**kwargs):
+        if blind_motion:
+            assert all('action' not in item for group in payload['coverage_checks'].values() for item in group)
+        return {'events':[{k:v for k,v in merged.items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[claim],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_coverage_resolution_invalid') as caught:
+        vr._repair_window(first,{'events':review,'uncertainties':[],'multiple_scenarios':False},
+                          frames,200000,tmp_path,lambda:False,[],set(times),attempt_limit=1,
+                          motion_review_refs={'frame-332'} if blind_motion else ())
+    assert caught.value.coverage_reason=='return_gesture_not_explicit'
+    expected={name:[{'action':e['action'],'frame_refs':e['frame_refs']} for e in group]
+              for name,group in [('first_pass',first),('independent_review',review)]}
+    assert caught.value.coverage_candidates==expected
+    saved=worker._private_target_failure(caught.value,'video_coverage_resolution_invalid',{'media':{'frames':frames}})
+    assert saved['coverage_candidates']==expected
+    assert 'sensitive-marker' not in str(saved) and '测试按钮' not in str(saved)
