@@ -612,6 +612,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             if boundary_rejected:
                 error=ValueError('video_reference_invalid')
                 error.reference_reason='boundary_overlap'
+                error.boundary_conflicts=[{'action':e['action'],'frame_refs':[r for r in e['frame_refs'] if r in boundary]}
+                                          for e in boundary_rejected]
                 # Persist only validated action types and actual original frame IDs;
                 # do not save targets, values, observations, or inferred truth.
                 if len(boundary_rejected)<=16:
@@ -633,6 +635,10 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                         # targets, values, or the rejected proposed merge as truth.
                         error.coverage_candidates=failure_candidates
                 raise
+            if getattr(error,'boundary_conflicts',None):
+                payload['boundary_conflicts']=error.boundary_conflicts
+                payload['validation_feedback']+=' 上次事件与已保留交互存在边界冲突，boundary_conflicts仅列被拒事件的动作类别和冲突原帧。重新观察原图，独立解释所有旧锚点及相邻真实操作，不得裁剪证据或编造交互。仅严格验证的点击或返回映射可共享一个操作前状态帧；其他交互不能引用已保留的边界帧。无法确认时如实保留疑问。'
+                continue
             if reason=='return_gesture_not_explicit':
                 from .ui_video_coverage_resolution import diagnose
                 payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
