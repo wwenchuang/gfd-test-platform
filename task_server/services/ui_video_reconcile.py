@@ -289,7 +289,7 @@ def _gap_frames(frames,events,missing_refs):
 
 
 def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,missing_refs):
-    """Keep distant conflicts separate, with a fixed four-call total ceiling."""
+    """Keep distant conflicts separate under a bounded four- or five-call ceiling."""
     import copy
     from .ui_video_analysis import validate_analysis
     from .ui_video_automatic_motion import review_refs,disputed_scroll_refs
@@ -359,14 +359,14 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     for frame in window:
         if not groups or positions[frame['frame_id']]!=positions[groups[-1][-1]['frame_id']]+1:groups.append([])
         groups[-1].append(frame)
-    if len(groups)>4 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
+    if len(groups)>5 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
     result=copy.deepcopy(checked);resolutions=[];replacements=[];redundant_claims=[]
     all_ids={f['frame_id'] for f in window}
     replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
     boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} for r in e['frame_refs']}
     all_ids={f['frame_id'] for f in window}
-    calls_remaining=4
+    calls_remaining=5 if len(groups)==5 else 4
     for group_index,group in enumerate(groups):
         if cancelled():raise ValueError('video_cancelled')
         ids={f['frame_id'] for f in group}
@@ -375,7 +375,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         local_original=[original[i] for i in indexes['first_pass']]
         local_checked={**checked,'events':[checked['events'][i] for i in indexes['independent_review']]}
         # Reserve one call for each later gap; extra attempts share the same
-        # four-call ceiling instead of imposing a two-gap ceiling.
+        # bounded ceiling; five gaps each receive exactly one attempt.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
         repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids)
         calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)

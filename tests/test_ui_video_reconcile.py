@@ -723,11 +723,11 @@ def test_static_loading_span_does_not_expand_two_local_interaction_repairs(monke
     assert checked['events']==old
 
 
-@pytest.mark.parametrize('count,retry_first,expected_calls',[(3,False,3),(3,1,4),(3,2,4),(3,3,4),(4,False,4)])
-def test_disjoint_repairs_share_four_call_budget(monkeypatch,tmp_path,count,retry_first,expected_calls):
+@pytest.mark.parametrize('count,retry_first,expected_calls',[(3,False,3),(3,1,4),(3,2,4),(3,3,4),(4,False,4),(5,False,5)])
+def test_disjoint_repairs_share_bounded_call_budget(monkeypatch,tmp_path,count,retry_first,expected_calls):
     from task_server.services import ai_skill_service as ai
     fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,26)]
-    old=[event(i) for i in (2,7,12,17)[:count]]
+    old=[event(i) for i in (2,7,12,17,22)[:count]]
     checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
     (tmp_path/'frames').mkdir()
     for f in fs:(tmp_path/'frames'/(f['frame_id']+'.jpg')).write_bytes(b'image')
@@ -887,3 +887,48 @@ def test_terminal_overlap_context_does_not_cross_actions_or_budgets(monkeypatch,
             fs,count*100,tmp_path,lambda:False,[],{'f1',f'f{tail-1}',f'f{tail}'})
     assert f'f{tail+1}' not in captured
     assert len(captured)<=40
+
+
+def test_five_disjoint_repairs_reserve_exactly_one_call_each(monkeypatch,tmp_path):
+    # Real f834 group sizes (3, 4, 2, 3, 6): all evidence must survive.
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(80)]
+    groups=[(4,6),(20,23),(30,31),(50,52),(70,75)]
+    old=[{**event(start),'frame_refs':[f'f{start}',f'f{end}'],'end_ms':end*100} for start,end in groups]
+    checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
+    calls=[]
+    def repair(original,local,window,*args,**kw):
+        calls.append((len(window),kw['attempt_limit']))
+        return {**local,'reconciliation_audit':{'coverage_resolutions':[],'model_attempts':1}}
+    monkeypatch.setattr(vr,'_repair_window',repair)
+    result=vr._repair_coverage(old,checked,fs,8000,tmp_path,lambda:False,[],{r for e in old for r in e['frame_refs']})
+    assert calls==[(3,1),(4,1),(2,1),(3,1),(6,1)]
+    assert result['events']==old
+
+
+def test_five_gaps_fail_without_retry_if_first_model_response_invalid(monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai,ui_video_windows as windows
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(30)]
+    old=[event(i) for i in (2,7,12,17,22)]
+    checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
+    calls=[]
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    def model(*args,**kw):
+        calls.append(1)
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError):
+        vr._repair_coverage(old,checked,fs,3000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in old})
+    assert len(calls)==1
+
+
+@pytest.mark.parametrize('groups',[
+    [(0,40)],
+    [(0,32),(35,66),(69,100),(103,134),(137,168)],
+])
+def test_expanded_group_and_total_frame_limits_fail_before_model_call(monkeypatch,tmp_path,groups):
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(180)]
+    old=[{**event(start),'frame_refs':[f'f{start}',f'f{end}'],'end_ms':end*100} for start,end in groups]
+    checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(vr,'_repair_window',lambda *a,**kw:pytest.fail('over-budget model call'))
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        vr._repair_coverage(old,checked,fs,18000,tmp_path,lambda:False,[],{r for e in old for r in e['frame_refs']})
