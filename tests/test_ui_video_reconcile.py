@@ -889,7 +889,7 @@ def test_terminal_overlap_context_does_not_cross_actions_or_budgets(monkeypatch,
     assert len(captured)<=40
 
 
-def test_five_disjoint_repairs_reserve_exactly_one_call_each(monkeypatch,tmp_path):
+def test_five_disjoint_repairs_share_one_extra_return_only_call(monkeypatch,tmp_path):
     # Real f834 group sizes (3, 4, 2, 3, 6): all evidence must survive.
     fs=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(80)]
     groups=[(4,6),(20,23),(30,31),(50,52),(70,75)]
@@ -897,11 +897,11 @@ def test_five_disjoint_repairs_reserve_exactly_one_call_each(monkeypatch,tmp_pat
     checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
     calls=[]
     def repair(original,local,window,*args,**kw):
-        calls.append((len(window),kw['attempt_limit']))
-        return {**local,'reconciliation_audit':{'coverage_resolutions':[],'model_attempts':1}}
+        calls.append((len(window),kw['attempt_limit'],kw.get('retry_return_gesture_only')))
+        return {**local,'reconciliation_audit':{'coverage_resolutions':[],'model_attempts':2 if len(calls)==2 else 1}}
     monkeypatch.setattr(vr,'_repair_window',repair)
     result=vr._repair_coverage(old,checked,fs,8000,tmp_path,lambda:False,[],{r for e in old for r in e['frame_refs']})
-    assert calls==[(3,1),(4,1),(2,1),(3,1),(6,1)]
+    assert calls==[(3,2,True),(4,2,True),(2,1,True),(3,1,True),(6,1,True)]
     assert result['events']==old
 
 

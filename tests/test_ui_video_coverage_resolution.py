@@ -371,6 +371,59 @@ def return_gesture_fixture():
     return frames,old,new,claim
 
 
+@pytest.mark.parametrize('outcome',['corrected','still_unclear','second_navigation'])
+def test_return_only_retry_asks_for_grounded_explanation_and_fails_closed(monkeypatch,tmp_path,outcome):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,old,new,claim=return_gesture_fixture()
+    for e in old+new:e.update(action='navigateBack',target='上一页面')
+    for e in old:e['evidence_kind']='inferred'
+    claim['evidence']['before_state']='模型详情页可见'
+    claim['source_anchor_ids']+=['independent_review:0','independent_review:1']
+    new[0]['observation']='一次连续返回手势，页面回到上一级'
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    calls=[]
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        candidate=copy.deepcopy(claim)
+        if len(calls)==1 or outcome=='still_unclear':
+            candidate['evidence']['interaction']='同一次页面横移'
+        elif outcome=='second_navigation':
+            candidate['evidence']['interaction']='同一次返回手势，随后再次返回'
+        return {'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[candidate],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    args=(copy.deepcopy(old),{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3','f4'})
+    if outcome=='corrected':
+        result=vr._repair_window(*args,attempt_limit=2,retry_return_gesture_only=True)
+        assert len(result['reconciliation_audit']['coverage_resolutions'])==1
+    else:
+        with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):
+            vr._repair_window(*args,attempt_limit=2,retry_return_gesture_only=True)
+    assert len(calls)==2
+    assert any(x['reason']=='return_gesture_not_explicit' for x in calls[1]['resolution_diagnostics']['result_evidence_to_recheck'])
+    assert 'interaction' in calls[1]['validation_feedback'] and '不能' in calls[1]['validation_feedback']
+
+
+def test_return_only_extra_call_is_not_used_for_other_rejections(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,old,new,claim=return_gesture_fixture()
+    for e in old+new:e.update(action='navigateBack',target='上一页面')
+    for e in old:e['evidence_kind']='inferred'
+    claim['source_anchor_ids']+=['independent_review:0','independent_review:1']
+    claim['evidence']['interaction']='同一次返回手势，随后再次返回'
+    new[0]['observation']='一次连续返回手势，页面回到上一级'
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    calls=[]
+    def model(*args,**kwargs):
+        calls.append(1)
+        return {'events':[{k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[claim],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_coverage_resolution_invalid'):
+        vr._repair_window(old,{'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False},frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3','f4'},attempt_limit=2,retry_return_gesture_only=True)
+    assert len(calls)==1
+
+
 def test_continuous_return_accepts_actual_touch_inside_overlapping_anchor_interval():
     frames,old,new,claim=return_gesture_fixture()
     result=cr.validate([claim],{'first_pass':old},new,frames)

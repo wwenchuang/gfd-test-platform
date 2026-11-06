@@ -289,7 +289,7 @@ def _gap_frames(frames,events,missing_refs):
 
 
 def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,missing_refs):
-    """Keep distant conflicts separate under a bounded four- or five-call ceiling."""
+    """Keep distant conflicts separate with at most one targeted sixth call."""
     import copy
     from .ui_video_analysis import validate_analysis
     from .ui_video_automatic_motion import review_refs,disputed_scroll_refs
@@ -366,7 +366,8 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
     boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} for r in e['frame_refs']}
     all_ids={f['frame_id'] for f in window}
-    calls_remaining=5 if len(groups)==5 else 4
+    return_retry_only=len(groups)==5
+    calls_remaining=6 if return_retry_only else 4
     for group_index,group in enumerate(groups):
         if cancelled():raise ValueError('video_cancelled')
         ids={f['frame_id'] for f in group}
@@ -375,9 +376,9 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         local_original=[original[i] for i in indexes['first_pass']]
         local_checked={**checked,'events':[checked['events'][i] for i in indexes['independent_review']]}
         # Reserve one call for each later gap; extra attempts share the same
-        # bounded ceiling; five gaps each receive exactly one attempt.
+        # bounded ceiling; five gaps share one return-specific extra attempt.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
-        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids)
+        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only)
         calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
@@ -463,7 +464,7 @@ def _exclude_focus_context_groups(groups,sources):
     return [g for g in groups if not is_focus_group(g)]
 
 
-def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=()):
+def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=(),retry_return_gesture_only=False):
     """Revisit one bounded gap without accepting omission or copying old semantics."""
     import copy
     from . import ai_skill_service as ai
@@ -571,7 +572,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 timeout=120,retry_count=0,max_tokens=5000,repair_invalid_json=False)
         except ai.SkillSchemaError as error:
             if cancelled():raise ValueError('video_cancelled') from None
-            if attempt+1>=attempt_limit:raise
+            if retry_return_gesture_only or attempt+1>=attempt_limit:raise
             # Consume the existing local/global repair budget; do not create
             # another retry layer or turn malformed output into empty events.
             payload['validation_feedback']+=' '+error.model_feedback+' 核对同一组原帧，完整输出规定字段；不补造操作。'
@@ -585,13 +586,13 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         try:
             repaired=validate_analysis(_bind_whole_evidence(observation,window),window,duration,secrets)
         except ValueError as error:
-            if attempt+1>=attempt_limit or str(error) not in {'video_action_invalid','video_model_invalid','video_reference_invalid'}:raise
+            if retry_return_gesture_only or attempt+1>=attempt_limit or str(error) not in {'video_action_invalid','video_model_invalid','video_reference_invalid'}:raise
             payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。navigateBack的target必须精确为上一页面、value必须为空字符串；dismissKeyboard的target必须精确为当前页面的软键盘、value必须为空字符串。仅在原帧证实相应动作时使用，不能为满足格式编造操作。'
             continue
         try:
             claims,redundant_claims=_separate_redundant_assert_claims(claims,{'first_pass':original,'independent_review':before},repaired['events'])
             resolutions=validate_resolutions(claims,{'first_pass':original,'independent_review':before},repaired['events'],window,
-                                             allow_unresolved_return=attempt+1>=attempt_limit)
+                                             allow_unresolved_return=retry_return_gesture_only or attempt+1>=attempt_limit)
             for resolution in resolutions:
                 if resolution['resolution']=='tap_return_conflict':
                     event=repaired['events'][resolution['reviewed_event_index']]
@@ -616,6 +617,13 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                         # targets, values, or the rejected proposed merge as truth.
                         error.coverage_candidates=failure_candidates
                 raise
+            reason=getattr(error,'coverage_reason',None)
+            if retry_return_gesture_only and reason!='return_gesture_not_explicit':raise
+            if reason=='return_gesture_not_explicit':
+                from .ui_video_coverage_resolution import diagnose
+                payload['resolution_diagnostics']=diagnose(claims,{'first_pass':original,'independent_review':before},repaired['events'],window)
+                payload['validation_feedback']+=' 上次返回映射的interaction未明确说明实际返回手势。重新逐帧核对，只有原帧确证是同一次返回手势时，interaction才用肯定句描述所见手势及前后页面；why_not_separate_actions单独说明是否存在第二次按下或导航。不能确认时保留疑问和独立动作，不能为了格式编造手势或合并不同返回。'
+                continue
             # If the observed events already cover both sources one-to-one,
             # a merge declaration is unnecessary. Ask for a fresh observation
             # response; never accept or silently strip an invalid declaration.
@@ -663,7 +671,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             break
         except ValueError as error:
             missing=getattr(error,'missing_frame_refs',None)
-            if attempt+1>=attempt_limit or not missing or not missing<=window_ids:raise
+            if retry_return_gesture_only or attempt+1>=attempt_limit or not missing or not missing<=window_ids:raise
             payload['unresolved_hypotheses']=[{'action':e['action'],'target':e['target'],'observation':e['observation'],'frame_refs':e['frame_refs']} for e in original+before if set(e['frame_refs'])<=missing]
             if any(e['action']=='aiScroll' and set(e['frame_refs'])&missing for e in original+before):
                 payload['validation_feedback']+=' 旧滚动仍未解释：仅当原帧确证是自动回弹或布局变化且没有独立用户滚动时，完整引用旧帧并在observation明确写“未见独立用户滚动”，再说明可见的自动变化依据；不得根据模板猜测，真实滚动须保留，无法确认则保留疑问。'
