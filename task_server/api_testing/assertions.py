@@ -329,7 +329,7 @@ def evaluate_business_response(assertions, response):
         passed=False,
         actual=copy.deepcopy(actual),
         expected="0、200 或精确声明的预期业务码",
-        message=f"HTTP 请求成功，但业务码 {actual} 未被精确断言接受",
+        message=f"HTTP {response.status_code}，业务码 {actual} 未被精确断言接受",
     )
 
 
