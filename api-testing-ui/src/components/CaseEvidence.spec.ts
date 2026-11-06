@@ -96,7 +96,7 @@ describe('CaseEvidence', () => {
       { phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'UNKNOWN' },
     ]) {
       const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: { ...result.sanitized_result, trace: [step] } } } })
-      expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toMatch(/清理步骤被跳过|没有完整的清理步骤证据/)
+      expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toMatch(/清理步骤被跳过|当前未能确认清理步骤证据/)
       expect(wrapper.find('[data-testid="cleanup-evidence-passed"]').exists()).toBe(false)
     }
   })
@@ -111,7 +111,7 @@ describe('CaseEvidence', () => {
 
   it('labels a cleanup-category legacy record with no step details as unconfirmed', () => {
     const wrapper = mount(CaseEvidence, { props: { result: { ...result, failure_category: 'cleanup', sanitized_result: { ...result.sanitized_result, trace: [] } } } })
-    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toContain('没有完整的清理步骤证据')
+    expect(wrapper.get('[data-testid="cleanup-evidence-warning"]').text()).toContain('当前未能确认清理步骤证据')
   })
 
   it('shows an advisory warning without replacing the functional result', () => {
