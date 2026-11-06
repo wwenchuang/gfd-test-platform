@@ -25,6 +25,19 @@ test('practice workspace keeps actual task links permission scoped and blocks st
  const {w,calls}=fixture(t);w.canAccessWorkflow=()=>false;w.hasPermission=p=>p==='platform.configure';w.activeWorkflow='ai_practice';w.showAiPractice();let page=w.document.querySelector('[data-practice-workbench]');assert.equal(page.querySelector('[data-practice-api]'),null);assert.ok(page.querySelector('[data-practice-workflow="ui_start"]').disabled);assert.ok(page.querySelector('[data-practice-workflow="ui_reports"]').disabled);
  w.hasPermission=()=>true;w.canAccessWorkflow=()=>true;w.showAiPractice();page=w.document.querySelector('[data-practice-workbench]');const link=page.querySelector('[data-practice-api]'),button=page.querySelector('[data-practice-workflow="ui_reports"]');w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);button.click();assert.equal(calls.includes('ui_reports'),false);
 });
+test('practice evidence links preserve the actual results and their limitations without running tests',async t=>{
+ const {w}=fixture(t),requests=[];w.canAccessWorkflow=()=>true;w.apiRequest=async(path,options={})=>{requests.push([path,options.method||'GET']);return {ok:true,enabled:true,results:[]};};
+ w.activeWorkflow='ai_practice';w.showAiPractice();const snapshot=w.document.querySelector('[data-practice-acceptance]');assert.ok(snapshot);assert.equal(snapshot.open,false);
+ assert.match(snapshot.textContent,/2026-11-06/);assert.match(snapshot.textContent,/09:39:48.*标记删除/);assert.match(snapshot.textContent,/物理删除.*未/);assert.match(snapshot.textContent,/17:12:20.*只读.*通过.*HTTP 200.*业务码 0.*3 条断言通过/);assert.match(snapshot.textContent,/17:02:55.*临时变量.*发请求前中断.*未收到响应.*失败/);assert.match(snapshot.textContent,/并发.*未/);
+ const links=[...snapshot.querySelectorAll('a')];assert.deepEqual(links.map(link=>link.getAttribute('href')),['/api-test/#/runs?executionId=0157b386-1475-4946-aae8-1664498ecc69','/api-test/#/runs?executionId=1eb0c640-d78a-41f9-b441-02785fd87e1c','/api-test/#/runs?executionId=43b09e5e-d879-47a2-bde5-2d462d48e988']);assert.equal(requests.filter(([,method])=>method==='POST').length,0);
+});
+test('practice evidence is hidden from limited users and stale links cannot be used',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.activeWorkflow='ai_practice';w.showAiPractice();const links=[...w.document.querySelectorAll('[data-practice-acceptance] a')];assert.equal(links.length,3);
+ w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};for(const link of links)assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
+ w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.hasPermission=p=>p!=='api.view';for(const link of links)assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);w.hasPermission=()=>true;
+ w.currentAccessProfile={user_id:'u1',scope:{ui_apps:['one']}};w.showAiPractice();assert.equal(w.document.querySelector('[data-practice-acceptance]'),null);
+ w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.hasPermission=p=>p==='api.view';w.showAiPractice();assert.equal(w.document.querySelector('[data-practice-acceptance]'),null);
+});
 test('release testing page does not contain the learning guide or probe',async t=>{
  const {w}=fixture(t);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
  assert.equal(w.document.querySelector('[data-ui-week-one]'),null);
