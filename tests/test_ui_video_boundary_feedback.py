@@ -98,6 +98,22 @@ def test_second_reply_still_cannot_skip_focus_or_escape_boundary(monkeypatch, tm
         assert len(calls) == 2
 
 
+def test_exhausted_boundary_retry_keeps_both_feedback_and_private_evidence(monkeypatch, tmp_path):
+    frames, first, reviewed = evidence()
+    calls = setup(monkeypatch, [reply([first[0], first[2]])])
+    with pytest.raises(ValueError, match='video_reference_invalid') as caught:
+        run_window(tmp_path, first, reviewed, frames)
+    error = caught.value
+    assert len(calls) == 2
+    assert error.reference_reason == 'boundary_overlap'
+    assert error.boundary_conflicts == [{'action': 'aiInput', 'frame_refs': ['frame-066']}]
+    assert error.boundary_failure_evidence == {'events': [{
+        'action': 'aiInput', 'frame_refs': first[2]['frame_refs'],
+        'overlap_frame_refs': ['frame-066'],
+    }]}
+    assert '文本框' not in str(error.boundary_failure_evidence)
+
+
 @pytest.mark.parametrize('mode', ['motion', 'delayed', 'return_only'])
 def test_boundary_does_not_extend_blind_or_return_only_budget(monkeypatch, tmp_path, mode):
     frames, first, reviewed = evidence()
