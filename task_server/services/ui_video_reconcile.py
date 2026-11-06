@@ -608,8 +608,18 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                     question='返回操作存在重叠记录，请对照原视频核对次数'
                     if question not in event['uncertainties']:event['uncertainties'].append(question)
             from .ui_video_coverage_resolution import boundary_safe
-            if any(not boundary_safe(e,boundary,resolutions,window) for e in repaired['events']):
-                raise ValueError('video_reference_invalid')
+            boundary_rejected=[e for e in repaired['events'] if not boundary_safe(e,boundary,resolutions,window)]
+            if boundary_rejected:
+                error=ValueError('video_reference_invalid')
+                error.reference_reason='boundary_overlap'
+                # Persist only validated action types and actual original frame IDs;
+                # do not save targets, values, observations, or inferred truth.
+                if len(boundary_rejected)<=16:
+                    error.boundary_failure_evidence={'events':[
+                        {'action':e['action'],'frame_refs':list(e['frame_refs']),
+                         'overlap_frame_refs':[r for r in e['frame_refs'] if r in boundary]}
+                        for e in boundary_rejected]}
+                raise error
         except ValueError as error:
             reason=getattr(error,'coverage_reason',None)
             if attempt+1>=attempt_limit or motion_review or delayed_review or (retry_return_gesture_only and reason!='return_gesture_not_explicit'):

@@ -101,3 +101,31 @@ def test_coverage_failure_rejects_untrusted_candidate_payload(bad):
     error=ValueError('video_coverage_resolution_invalid');error.coverage_frame_refs={'frame-001'};error.coverage_candidates=bad
     doc={'media':{'frames':[{'frame_id':'frame-001'}]}}
     assert worker._private_target_failure(error,'video_coverage_resolution_invalid',doc)=={'coverage_frame_refs':['frame-001']}
+
+
+def test_boundary_failure_keeps_only_bounded_whitelisted_overlap():
+    error=ValueError('video_reference_invalid');error.reference_reason='boundary_overlap'
+    error.boundary_failure_evidence={'events':[{'action':'navigateBack','frame_refs':['frame-001','frame-end'],
+                                               'overlap_frame_refs':['frame-end']}]}
+    doc={'media':{'frames':[{'frame_id':'frame-001'},{'frame_id':'frame-end'}]}}
+    result=worker._private_target_failure(error,'video_reference_invalid',doc)
+    assert result=={'boundary_failure_evidence':error.boundary_failure_evidence}
+    worker._log_failure('uvs_'+'a'*32,'analysis',error,'video_reference_invalid')
+
+
+@pytest.mark.parametrize('mutation',['reason','wrong_code','unknown_frame','extra_text','unknown_action','empty_overlap','wrong_overlap','too_many','duplicate'])
+def test_boundary_failure_rejects_other_errors_or_forged_evidence(mutation):
+    error=ValueError('video_reference_invalid');error.reference_reason='boundary_overlap'
+    error.boundary_failure_evidence={'events':[{'action':'aiTap','frame_refs':['frame-001'], 'overlap_frame_refs':['frame-001']}]}
+    item=error.boundary_failure_evidence['events'][0]
+    if mutation=='reason':error.reference_reason='outside_window'
+    if mutation=='unknown_frame':item['frame_refs']=['frame-999']
+    if mutation=='extra_text':item['observation']='secret marker'
+    if mutation=='unknown_action':item['action']='exec'
+    if mutation=='empty_overlap':item['overlap_frame_refs']=[]
+    if mutation=='wrong_overlap':item['overlap_frame_refs']=['frame-end']
+    if mutation=='too_many':error.boundary_failure_evidence['events']=[dict(item) for _ in range(17)]
+    if mutation=='duplicate':item['frame_refs']=['frame-001','frame-001']
+    doc={'media':{'frames':[{'frame_id':'frame-001'},{'frame_id':'frame-end'}]}}
+    code='video_model_invalid' if mutation=='wrong_code' else 'video_reference_invalid'
+    assert worker._private_target_failure(error,code,doc)=={}

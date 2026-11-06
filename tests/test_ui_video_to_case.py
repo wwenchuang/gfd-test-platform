@@ -1023,3 +1023,27 @@ def test_failed_return_candidates_are_owner_app_scoped_and_cannot_import(env,tmp
     with actor_context(B):
         with pytest.raises(KeyError):video.owned_source(B,doc['source_id'],APP)
     with pytest.raises(KeyError):store.get(doc['source_id'],A['user_id'],'foreign.app')
+
+
+def test_failed_boundary_evidence_is_owner_app_scoped_and_cannot_be_imported(env,tmp_path,monkeypatch):
+    from task_server.services import ui_video_source_service as video, ui_case_draft_service as drafts
+    store=video.VideoStore(tmp_path/'videos');monkeypatch.setattr(video,'service_store',lambda:store)
+    doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'mp4'),3,actor=A)
+    evidence={'boundary_failure_evidence':{'events':[{'action':'navigateBack','frame_refs':['frame-001','frame-end'],
+                                                       'overlap_frame_refs':['frame-end']}]}}
+    assert store.transition(doc['source_id'],{'queued'},'failed',expected_version=2,
+                            expected_owner=A['user_id'],expected_app=APP,failure_diagnostic=evidence) is None
+    assert store.transition(doc['source_id'],{'queued'},'failed',expected_version=1,
+                            expected_owner='foreign',expected_app=APP,failure_diagnostic=evidence) is None
+    assert store.transition(doc['source_id'],{'queued'},'failed',expected_version=1,
+                            expected_owner=A['user_id'],expected_app='foreign.app',failure_diagnostic=evidence) is None
+    assert store.transition(doc['source_id'],{'queued'},'failed',expected_version=1,
+                            expected_owner=A['user_id'],expected_app=APP,failure_diagnostic=evidence)
+    with actor_context(A):
+        _,_,found=video.owned_source(A,doc['source_id'],APP,'ui.view')
+        assert video.public_source(found)['failure_diagnostic']==evidence
+        with pytest.raises(ValueError,match='video_not_ready'):video.import_video_draft(A,doc['source_id'],APP)
+        assert drafts.list_drafts(A,APP)['items']==[]
+    with actor_context(B):
+        with pytest.raises(KeyError):video.owned_source(B,doc['source_id'],APP)
+    with pytest.raises(KeyError):store.get(doc['source_id'],A['user_id'],'foreign.app')

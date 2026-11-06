@@ -994,3 +994,24 @@ def test_f834_return_window_failed_merge_retains_all_ordered_candidate_frames(mo
     saved=worker._private_target_failure(caught.value,'video_coverage_resolution_invalid',{'media':{'frames':frames}})
     assert saved['coverage_candidates']==expected
     assert 'sensitive-marker' not in str(saved) and '测试按钮' not in str(saved)
+
+
+def test_boundary_rejection_retains_only_event_action_and_overlapping_original_frames(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr, ui_video_windows as windows, ai_skill_service as ai,ui_video_touch_detail as detail
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200},
+            {'frame_id':'frame-end','timestamp_ms':300}]
+    event={'action':'aiTap','target':'sensitive target','value':'','start_ms':100,'end_ms':300,
+           'frame_refs':['frame-001','frame-002','frame-end'],'observation':'sensitive model prose','uncertainties':[]}
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a,**kw:[])
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:{'events':[{k:v for k,v in event.items() if k not in ('start_ms','end_ms')}],
+        'coverage_resolutions':[],'uncertainties':[],'multiple_scenarios':False})
+    with pytest.raises(ValueError,match='video_reference_invalid') as caught:
+        vr._repair_window([event],{'events':[event],'uncertainties':[],'multiple_scenarios':False},
+                          frames,1000,tmp_path,lambda:False,[],{'frame-001','frame-002','frame-end'},
+                          boundary={'frame-end'},attempt_limit=1)
+    assert caught.value.reference_reason=='boundary_overlap'
+    evidence=caught.value.boundary_failure_evidence
+    assert evidence=={'events':[{'action':'aiTap','frame_refs':['frame-001','frame-002','frame-end'],
+                                  'overlap_frame_refs':['frame-end']}]}
+    assert 'sensitive' not in str(evidence)
