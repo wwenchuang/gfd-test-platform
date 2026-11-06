@@ -14,10 +14,10 @@ import shutil
 import subprocess
 import tempfile
 
-STAGE = Path('/root/ai-test-practice-20261105/w04-practice-web-stage')
+STAGE = Path('/tmp/w04-practice-page')
 HOST = Path('/opt/midscene-task-platform')
 CONTAINER = 'sonic-server-272-midscene-reports-1'
-WEB_ROOTS = ('/usr/share/nginx/html', '/www/html')
+WEB_ROOTS = ('/usr/share/nginx/html', '/var/www/html', '/www/html')
 FILES = (
     ('js/ui-simple-entry.js', '61020d9cf0444fec47b2ccb7b2f0a91670f75c7d834067d9fdba9024a270b40b', '3d23e09000b134dd2ed1debd5cd5a06a275fc6cfedc68d868cdd7e9bbe771824'),
     ('task-manager.html', 'cde44b35fcbede6bb2bf4f1f041f03c8af649fd2f96f1af6c8f937fc1cea57a6', '3ef0d7f22b21733333a32c5341549f5d172ea4af4fceea96a3688e9f1fe33566'),
