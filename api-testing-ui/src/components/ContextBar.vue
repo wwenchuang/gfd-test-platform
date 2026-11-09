@@ -81,6 +81,20 @@ function environmentLabel(environment: EnvironmentRevisionOption): string {
 function nullable(value: string): string | null {
   return value || null
 }
+
+function requestProjectChange(event: Event): void {
+  const select = event.target as HTMLSelectElement
+  const nextValue = nullable(select.value)
+  select.value = props.projectId || ''
+  emit('update:projectId', nextValue)
+}
+
+function requestSourceChange(event: Event): void {
+  const select = event.target as HTMLSelectElement
+  const nextValue = nullable(select.value)
+  select.value = props.sourceRevisionId || ''
+  emit('update:sourceRevisionId', nextValue)
+}
 </script>
 
 <template>
@@ -99,13 +113,13 @@ function nullable(value: string): string | null {
     >切换项目 / 环境<ChevronDown :size="15" :class="{ rotated: expanded }" /></button>
     <div class="context-selectors">
       <label>项目
-        <select data-testid="context-project" :value="projectId || ''" :disabled="loading" @change="emit('update:projectId', nullable(($event.target as HTMLSelectElement).value))">
+        <select data-testid="context-project" :value="projectId || ''" :disabled="loading" @change="requestProjectChange">
           <option value="">选择项目</option>
           <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
         </select>
       </label>
       <label>接口版本
-        <select data-testid="context-source" :value="sourceRevisionId || ''" :disabled="loading || !projectId" @change="emit('update:sourceRevisionId', nullable(($event.target as HTMLSelectElement).value))">
+        <select data-testid="context-source" :value="sourceRevisionId || ''" :disabled="loading || !projectId" @change="requestSourceChange">
           <option value="">{{ sources.length ? '选择已保存接口' : '暂无已保存接口' }}</option>
           <option v-for="source in sources" :key="source.id" :value="source.id">{{ sourceLabel(source) }}</option>
         </select>

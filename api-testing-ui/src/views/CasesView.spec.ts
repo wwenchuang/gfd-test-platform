@@ -84,6 +84,31 @@ describe('CasesView', () => {
     wrapper.unmount()
   })
 
+  it.each(['project', 'source'])('restores the visible %s selector after cancelling raw discard', async kind => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p', sourceRevisionId: 's', projects: [{id: 'p', name: 'P'}, {id: 'q', name: 'Q'}], sourceRevisions: [{id: 's', project_id: 'p', name: 'S', revision_number: 1, endpoint_count: 1}, {id: 't', project_id: 'p', name: 'T', revision_number: 2, endpoint_count: 1}] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const original = savedCase('version-a', 'original'); cases.registerVersion(original)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises(); wrapper.findComponent(CaseListPanel).vm.$emit('edit-version', original); await flushPromises()
+    await wrapper.get('[data-testid="raw-tab"]').trigger('click')
+    await wrapper.get<HTMLTextAreaElement>('.raw-editor textarea').setValue('{ invalid raw')
+    const selector = kind === 'project' ? 'context-project' : 'context-source'
+    await wrapper.get<HTMLSelectElement>(`[data-testid="${selector}"]`).setValue(kind === 'project' ? 'q' : 't'); await flushPromises()
+    expect(confirm).toHaveBeenCalled()
+    expect(context.projectId).toBe('p')
+    expect(context.sourceRevisionId).toBe('s')
+    expect(wrapper.get<HTMLSelectElement>(`[data-testid="${selector}"]`).element.value).toBe(kind === 'project' ? 'p' : 's')
+    expect(wrapper.get<HTMLTextAreaElement>('.raw-editor textarea').element.value).toBe('{ invalid raw')
+    wrapper.unmount()
+  })
+
   it('keeps invalid raw JSON when cancelling a version switch', async () => {
     const context = useContextStore(); Object.assign(context, { projectId: 'p', sourceRevisionId: 's' })
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()

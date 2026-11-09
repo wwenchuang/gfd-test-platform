@@ -794,7 +794,7 @@ function sourceRevisionLabel(revisionId: string | null): string {
 </script>
 
 <template>
-  <section v-if="route.query.help === 'load-metrics'" class="workspace" data-testid="load-metric-help-page">
+  <section v-show="route.query.help === 'load-metrics'" class="workspace" data-testid="load-metric-help-page">
     <header class="page-toolbar">
       <div><p class="eyebrow">工作台 · 使用帮助</p><h1>压测使用帮助</h1><p class="page-subtitle">了解指标含义、计算方式和使用边界；正式结果请查看性能报告。</p></div>
       <div class="load-toolbar-actions">
@@ -804,7 +804,7 @@ function sourceRevisionLabel(revisionId: string | null): string {
     </header>
     <LoadMetricGuide initially-expanded />
   </section>
-  <section v-else class="workspace workbench-page">
+  <section v-show="route.query.help !== 'load-metrics'" class="workspace workbench-page">
     <header class="page-toolbar"><div><p class="eyebrow">接口测试</p><h1>接口测试工作台</h1><p class="page-subtitle">选接口，AI 设计，保存草稿后直接调试。</p></div><div class="load-toolbar-actions"><RouterLink class="secondary-command" :to="{ path: '/', query: { help: 'load-metrics' } }">压测使用帮助</RouterLink><button class="icon-command" type="button" title="重新读取已保存接口" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="context.sourceRevisionId && assets.load(context.sourceRevisionId)"><RefreshCw :size="18" /></button></div></header>
     <div v-if="workspaceRestoring" class="state-message workspace-restoring" data-testid="workspace-restoring">
       <RefreshCw class="spinning" :size="18" />

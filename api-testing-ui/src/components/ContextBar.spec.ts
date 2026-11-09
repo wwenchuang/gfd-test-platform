@@ -31,6 +31,20 @@ describe('ContextBar', () => {
     expect(wrapper.emitted('update:environmentRevisionId')?.at(-1)?.[0]).toBe('env-uuid')
   })
 
+  it('displays accepted project and source changes from the parent', async () => {
+    const wrapper = mount({
+      components: { ContextBar },
+      data: () => ({ project: 'p', source: 's', projects: [{ id: 'p', name: 'P' }, { id: 'q', name: 'Q' }], sources: [{ id: 's', project_id: 'p', name: 'S', revision_number: 1, endpoint_count: 1 }, { id: 't', project_id: 'p', name: 'T', revision_number: 2, endpoint_count: 1 }] }),
+      template: `<ContextBar :projects="projects" :source-revisions="sources" :project-id="project" :source-revision-id="source" :environment-revision-id="null" @update:project-id="project = $event" @update:source-revision-id="source = $event" />`,
+    })
+    const source = wrapper.get<HTMLSelectElement>('[data-testid="context-source"]')
+    await source.setValue('t')
+    expect(source.element.value).toBe('t')
+    const project = wrapper.get<HTMLSelectElement>('[data-testid="context-project"]')
+    await project.setValue('q')
+    expect(project.element.value).toBe('q')
+  })
+
   it('shows a direct next action when no saved source exists', () => {
     const wrapper = mount(ContextBar, {
       props: { projects: OPTIONS.projects, sourceRevisions: [], environmentRevisions: [], projectId: 'project-uuid', sourceRevisionId: null, environmentRevisionId: null },
