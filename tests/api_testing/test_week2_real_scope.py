@@ -69,3 +69,66 @@ def test_real_subprocess_rechecks_identity_and_project_environment_scope(api_con
     store.create_role('admin', {'id':'week2-no-api', 'name':'no api', 'permissions':['platform.configure']})
     store.update_user('admin', 'w2reader', {'scope':scope, 'role_ids':['week2-no-api']})
     assert week2_real._invoke_authorization(owner, 'w2reader', sources, 10) == [False]
+
+from task_server import router
+from task_server.api_testing import http
+from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
+from task_server.api_testing.models.execution import ApiExecutionCase
+from tests.api_testing.test_http_contract import _audit, http_client
+
+
+@pytest.mark.parametrize('other_environment_authorized', [False, True])
+def test_parent_child_environment_mismatch_is_hidden_even_if_both_are_authorized(
+        api_context, owned_records, identities, http_client, tmp_path, monkeypatch, other_environment_authorized):
+    records = owned_records
+    with api_context['factory'].begin() as session:
+        other = ApiEnvironment(project_id=records['project'].id, source_id=records['source'].id,
+                               name='second', **_audit('owner-a'))
+        session.add(other); session.flush()
+        revision = ApiEnvironmentRevision(environment_id=other.id, source_revision_id=records['revision'].id,
+                                          revision_number=1, name='second', **_audit('owner-a'))
+        session.add(revision); session.flush()
+        valid = ApiExecutionCase(execution_id=records['execution'].id, case_version_id=records['version'].id,
+                                 endpoint_id=records['endpoint'].id,
+                                 environment_revision_id=records['environment_revision'].id,
+                                 ordinal=0, status='PASSED', sanitized_result={}, **_audit('owner-a'))
+        mismatched = ApiExecutionCase(execution_id=records['execution'].id, case_version_id=records['version'].id,
+                                      endpoint_id=records['endpoint'].id, environment_revision_id=revision.id,
+                                      ordinal=1, status='PASSED', sanitized_result={}, **_audit('owner-a'))
+        session.add_all((valid, mismatched)); session.flush()
+        valid_id, mismatch_id, other_id = valid.id, mismatched.id, other.id
+    execution_id = records['execution'].id
+    profile = identities['reader']
+    profile.update(user_id='reader-id', scope={'ui_apps':'*', 'api_projects':[records['project'].id],
+                  'api_environments':[records['environment'].id] + ([other_id] if other_environment_authorized else [])})
+    profile['permissions'].append('platform.configure')
+    monkeypatch.setenv('TASK_AUTH_DB', str(tmp_path / 'identity.sqlite3'))
+    monkeypatch.setattr(week2_real.identity, 'get_access_profile', lambda username: profile if username == 'reader' else None)
+    monkeypatch.setattr(week2_real, '_analyze', lambda payload, execution, case:
+                        {'status':'passed', 'execution_case_id':case, 'checks':[{'id':'private'}]})
+    actual_get = http._get
+    reads = []
+    def record_read(segments, *args, **kwargs):
+        reads.append(segments)
+        return actual_get(segments, *args, **kwargs)
+    monkeypatch.setattr(http, '_get', record_read)
+    assert week2_real._verify_sources('reader-id', 'reader', [(execution_id, valid_id)]) == [True]
+    assert week2_real._verify_sources('reader-id', 'reader', [(execution_id, mismatch_id)]) == [False]
+    assert week2_real._derive('reader-id', 'reader', execution_id, valid_id)[0] is True
+    reads.clear()
+    assert week2_real._derive('reader-id', 'reader', execution_id, mismatch_id) == (False, None)
+    assert ('executions', execution_id, 'cases', mismatch_id) not in reads
+
+    # Exercise the real HTTP route and its final/history authorization while using
+    # the test process in place of subprocesses so it sees the isolated schema.
+    monkeypatch.setattr(router, '_week2_real_actor', lambda handler: ('reader-id', 'reader'))
+    monkeypatch.setattr(week2_real, '_invoke_worker', lambda *args, **kwargs: week2_real._derive(*args[:4]))
+    monkeypatch.setattr(week2_real, '_invoke_authorization', lambda owner, username, sources, timeout, **kwargs:
+                        week2_real._verify_sources(owner, username, sources))
+    response = http_client.post('/api/platform/week2-real', {'execution_id':execution_id, 'case_id':mismatch_id})
+    assert response.status == 200 and response.body['result']['status'] == 'blocked'
+    assert 'execution_id' not in response.body['result'] and 'execution_case_id' not in response.body['result']
+    assert 'private' not in str(response.body)
+    history = http_client.get('/api/platform/week2-real')
+    assert history.status == 200 and history.body['results'][0]['status'] == 'blocked'
+    assert 'execution_id' not in history.body['results'][0] and 'private' not in str(history.body)

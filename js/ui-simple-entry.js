@@ -166,7 +166,7 @@ function attachTaskWorkbench(page){
   const environment=document.createElement('details');environment.dataset.uiWeekOne='';environment.className='ui-case-source-picker ui-practice-panel';environment.innerHTML='<summary>环境与模型检查</summary><p>检查服务与模型的已有结果；真实模型调用可能产生费用。</p>';
   environment.append(previousEnvironment.querySelector('[data-week-probe]'),previousEnvironment.querySelector('[data-week-smoke]'));
   const firstSnapshot=previousEnvironment.querySelector('[data-week-snapshot]');firstSnapshot.querySelector('summary').textContent='查看历史检查证据';
-  firstSnapshot.querySelector('p').textContent='2026-11-05 的历史快照，不是实时状态；当前情况请以实际检查为准。';environment.append(firstSnapshot);previousEnvironment.remove();page.append(environment);
+  firstSnapshot.querySelector('p').textContent='历史结果请在本人检查记录中按账号权限查看，当前情况以实际检查为准。';environment.append(firstSnapshot);previousEnvironment.remove();page.append(environment);
   if(!hasPermission('api.view'))return;
   attachUiWeekTwoGuide(page);
   const previousEvidence=page.querySelector('[data-ui-week-two]'),panel=previousEvidence.querySelector('[data-week2-real]');
@@ -177,11 +177,28 @@ function attachTaskWorkbench(page){
   const walker=document.createTreeWalker(snapshot,NodeFilter.SHOW_TEXT);while(walker.nextNode())walker.currentNode.nodeValue=walker.currentNode.nodeValue.replace(/W02\s*/g,'').replace('本记录不代表整周验收或所有业务已通过','本记录不代表所有业务已通过');
   panel.append(snapshot,previousEvidence.querySelector('[data-week2-howto]'));evidence.append(panel);previousEvidence.remove();page.append(evidence);
   const acceptance=document.createElement('details');acceptance.dataset.practiceAcceptance='';acceptance.className='ui-practice-details';
-  acceptance.innerHTML='<summary>查看接口数据与清理实战记录</summary><p>以下是 2026-11-05 至 2026-11-06 的历史执行记录（北京时间），不代表当前实时状态。打开原记录需要对应项目和环境的查看权限。</p><ul><li>2026-11-06 09:39:48：生产环境单次创建会话后按本次返回的编号标记删除，随后接口查询不可见。<span data-practice-run="cleanup"></span></li><li>2026-11-06 17:12:20：既有接口基线只读执行通过，HTTP&#32;200、业务码 0、3 条断言通过。<span data-practice-run="baseline"></span></li><li>2026-11-06 17:02:55：因缺少临时变量 week2_request_id 在发请求前中断，未收到响应；该次执行失败。<span data-practice-run="failure"></span></li><li>2026-11-05 17:13:05：只读反馈分类请求携带请求号，HTTP&#32;200、业务码 0、3 条断言通过；业务日志关联尚未核实。<span data-practice-run="trace"></span></li></ul><p>本次标记删除和不可见不证明关联资源已清除或物理删除；并发、异常恢复与 Mock 验证仍未完成。以上记录不代表全部业务或整个计划已通过。</p>';
+  acceptance.dataset.practiceLegacyEvidence='';
+  acceptance.innerHTML='<summary>查看接口数据与清理实战记录</summary><p>历史记录按账号的项目和环境权限读取；无权访问或来源不可用的记录不会显示。不代表当前实时状态，也不会重新执行测试。</p><button type="button" data-legacy-refresh>重新读取</button><div data-legacy-result aria-live="polite"></div>';
   const allowed=()=>current()&&hasPermission('platform.configure')&&hasPermission('api.view')&&(currentAccessProfile?.is_superuser===true||currentAccessProfile?.scope?.ui_apps==='*');
-  for(const [kind,id] of [['cleanup','0157b386-1475-4946-aae8-1664498ecc69'],['baseline','1eb0c640-d78a-41f9-b441-02785fd87e1c'],['failure','43b09e5e-d879-47a2-bde5-2d462d48e988'],['trace','6e5ae109-ba21-4434-9835-5d1e58d228ff']]){
-    const link=document.createElement('a');link.className='ui-week-link';link.href='/api-test/#/runs?executionId='+id;link.textContent='查看执行记录';link.onclick=event=>{if(!allowed())event.preventDefault();};acceptance.querySelector('[data-practice-run="'+kind+'"]').append(' ',link);
-  }
+  const legacyResult=acceptance.querySelector('[data-legacy-result]');let legacySerial=0,legacyLoaded=false;
+  const legacyProfile=()=>JSON.stringify([currentAccessProfile?.user_id,currentAccessProfile?.is_superuser,currentAccessProfile?.scope,currentAccessProfile?.permissions]);
+  const loadLegacy=async()=>{
+    const request=++legacySerial,profile=legacyProfile();legacyLoaded=true;legacyResult.replaceChildren();const checks=page.querySelector('[data-week2-checks]');checks?.replaceChildren();
+    if(!allowed()){legacyResult.textContent='当前无权查看。';return;}
+    legacyResult.textContent='正在读取授权记录…';
+    try{
+      const data=await apiRequest('/platform/practice-legacy-evidence',{timeoutMs:20000});
+      if(request!==legacySerial||!allowed()||legacyProfile()!==profile){if(request===legacySerial)legacyResult.replaceChildren();return;}
+      const records=data?.ok===true&&Array.isArray(data.records)?data.records:[];legacyResult.replaceChildren();
+      for(const item of records){
+        if(!['cleanup','baseline','failure','trace','feedback','timeout'].includes(item?.key)||typeof item.summary!=='string'||item.summary.length>2000||typeof item.execution_id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.execution_id))continue;
+        const row=document.createElement('p');row.textContent=item.summary+' ';const link=document.createElement('a');link.className='ui-week-link';link.href='/api-test/#/runs?executionId='+encodeURIComponent(item.execution_id);link.textContent='查看原执行记录';link.onclick=event=>{if(!allowed()||legacyProfile()!==profile)event.preventDefault();};row.append(link);legacyResult.append(row);
+        if(item.key==='feedback'&&checks&&Array.isArray(item.checks)&&item.checks.length<=30){for(const label of item.checks){if(typeof label!=='string'||label.length>100)continue;const li=document.createElement('li');li.dataset.week2Check='';li.textContent=label;checks.append(li);}}
+      }
+      if(!legacyResult.childNodes.length)legacyResult.textContent='暂无可查看的记录，或当前账号无权查看。';
+    }catch(_){if(request===legacySerial){legacyResult.replaceChildren();if(allowed()&&legacyProfile()===profile)legacyResult.textContent='记录暂不可用或当前账号无权查看，请稍后重新读取。';}}
+  };
+  acceptance.querySelector('[data-legacy-refresh]').onclick=loadLegacy;acceptance.addEventListener('toggle',()=>{if(acceptance.open&&!legacyLoaded)loadLegacy();});
   const scheduled=document.createElement('details');scheduled.dataset.practiceCleanupEvidence='';scheduled.className='ui-practice-details';
   scheduled.innerHTML='<summary>查看定时清理执行记录</summary><p>仅显示当前账号有权查看的历史记录；这不是实时测试结果。</p><button type="button">重新读取</button><div data-cleanup-result aria-live="polite"></div>';
   const result=scheduled.querySelector('[data-cleanup-result]'),button=scheduled.querySelector('button');let sequence=0,loaded=false;
@@ -209,7 +226,7 @@ function attachUiFirstWeekGuide(page){
   const guide=document.createElement('details');guide.dataset.uiWeekOne='';guide.className='ui-case-source-picker';
   guide.innerHTML='<summary>第 1 周入门步骤</summary><ol><li>先做快速体检，检查服务、执行环境和模型配置。 <button type="button" data-week-workflow="system_config">打开环境体检</button></li><li>检查模型配置，再运行真实文本和固定图视觉探针。 <button type="button" data-week-workflow="config">打开模型配置</button><span data-week-probe-slot></span></li><li>选择只读业务接口，执行并核对业务断言。 <span data-week-api-slot></span><span data-week-smoke-slot></span></li><li>进入“开始测试”创建或选择用例，选择设备后执行；在“我的测试”查看实际结果。 <button type="button" data-week-workflow="ui_reports">查看我的测试</button></li><li>保存执行证据。人工耗时记录暂缓；网页暂不提供周验收和耗时记录，请另行留档。</li></ol>';
   const snapshot=document.createElement('details');snapshot.dataset.weekSnapshot='';
-  snapshot.innerHTML='<summary>查看第 1 周练习范围和阶段证据</summary><p>2026-11-05 服务器历史快照，不是实时状态，也不是整周验收结果；以下是服务器执行记录，并非由本网页执行。</p><ul><li>平台盘点：已有网页入口、接口记录、模型探针和执行报告；运行版本、Runner 和队列以现场检查为准。</li><li>练习范围：反馈分类只读接口及匿名登录页；业务角色、权限合同和字段规则仍待确认。</li><li>历史已认证业务接口：HTTP 状态 200、业务码 0，返回列表。另一次匿名请求得到业务码 4009，验证的是未登录拒绝，不是业务成功。</li><li>服务器 API 冒烟：正向退出码 0，故意错误预期的反向退出码 1；匿名场景用于验证权限拒绝。</li><li>服务器 UI 冒烟：正向退出码 0，故意错误预期的反向退出码 1；检查登录页文案，未提交登录。</li><li>复现：已下载并使用配套浏览器重跑，但复用已有隔离 Linux 动态库；全新无复用环境复现未完成。</li><li>历史截图和 trace 保存在服务器受控目录，不在网页展示；新执行可在网页按权限查看截图和下载 trace。</li><li>人工耗时、视觉结果人工确认及账单计费方式待确认。</li></ul>';
+  snapshot.innerHTML='<summary>查看历史检查说明</summary><p>历史结果请在本人检查记录中查看；服务器配置、截图和 trace 按账号权限访问。人工确认仍待完成。</p>';
   guide.append(snapshot);
   for(const button of guide.querySelectorAll('[data-week-workflow]')){
     const target=button.dataset.weekWorkflow;button.disabled=!canOpen(target);
@@ -236,22 +253,12 @@ function attachUiWeekTwoGuide(page){
   const guide=document.createElement('details');guide.dataset.uiWeekTwo='';guide.className='ui-case-source-picker';
   guide.innerHTML='<summary>第 2 周｜真实项目接口实战</summary><p>围绕现有 APP 和后台的真实接口，练习选择环境、检查用例、执行与复盘。这里提供操作入口，不会自动发起测试。</p><ol><li><strong>确认项目与环境：</strong>进入接口资产，选择现有真实业务项目、接口版本和执行环境；核对目标地址和账号权限。<span data-week2-slot="assets"></span></li><li><strong>检查用例和数据：</strong>在用例管理中选择已有接口与用例，先检查请求、业务断言和前后置步骤。确认数据写入、副作用、归属及清理方式；不明确时先停下核实。<span data-week2-slot="cases"></span></li><li><strong>逐条调试与复盘：</strong>确认范围后，在原平台执行选定用例；在执行记录查看实际状态、业务断言、失败信息，以及本次数据清理证据。仅有 HTTP 成功不能证明业务通过。<span data-week2-slot="runs"></span></li><li><strong>整理可复用基线：</strong>查看已有基线与调试结果，通过审核后再按平台流程维护；不要把未执行或未审核的用例计为通过。<span data-week2-slot="baselines"></span></li></ol><p>人工基线整理与审核仍待处理；本周是否完成应以实际执行结果及可核对的证据为准。</p>';
   const acceptance=document.createElement('section');
-  acceptance.innerHTML='<h3>本周六项验收</h3><p>以下状态初始为待验证，完成后需依据本轮可复现证据核对；30 条人工基线审核和口述先暂缓。</p><ol><li data-week2-task="W02-01"><strong>W02-01 · 待验证｜Python 数据处理</strong>：围绕真实反馈分类响应，整理字段、边界与规则；保留脱敏输入、结果和规则说明。</li><li data-week2-task="W02-02"><strong>W02-02 · 待验证｜工程与配置</strong>：整理测试代码、配置、数据和结果目录；记录依赖与运行方式，凭据使用环境配置，不写入代码或报告。</li><li data-week2-task="W02-03"><strong>W02-03 · 待验证｜接口客户端</strong>：真实反馈接口由现有 API 平台执行；Python 客户端只读取平台执行证据，不直接请求业务接口。现有 API 平台已认证请求一次通过，请求头发送已核实；真实超时、非 2xx 和业务日志关联仍待验证，敏感信息脱敏。</li><li data-week2-task="W02-04"><strong>W02-04 · 待验证｜数据归属与清理</strong>：检查真实用例前后置、副作用、数据归属及清理证据；只读查询不能证明写入数据已清理，未执行写入和清理时如实保留待验证。</li><li data-week2-task="W02-05"><strong>W02-05 · 待验证｜数据检查</strong>：对真实反馈分类相关的数据处理执行不少于 12 项有意义的检查，留存运行数量、结果和失败明细。</li><li data-week2-task="W02-06"><strong>W02-06 · 待验证｜独立重跑</strong>：按说明在新建 venv 安装锁定依赖并重跑，留存命令、环境信息、结果与必要清理证据。</li></ol><details data-week2-snapshot><summary>查看本轮已核验的执行快照</summary><p>2026-11-05 15:44:13（北京时间）：单次历史执行真实只读 GET /print3d/api/v1/feedback/category/first，1/1 通过；HTTP&#32;200、业务码 0、响应结构三项断言通过。本记录不代表整周验收或所有业务已通过，真实写入及归属清理尚未完成。</p><span data-week2-snapshot-link></span></details>';
-  for(const [id,text] of [['W02-01','2026-11-05 历史文件模式下，本机与服务器对脱敏文件的数据处理检查通过；规则业务审核待验证。'],['W02-02','服务器新 venv 可运行；工程配置完整性待验证。'],['W02-03','本机与服务器的证据文件处理通过；现有平台已认证请求一次通过，请求头发送已核实；真实超时、非 2xx 和日志关联待验证。'],['W02-05','2026-11-05 历史文件模式下，本机与服务器的 17 项数据处理检查通过；正式业务规则待验证。'],['W02-06','服务器新 venv 文件模式重跑通过；授权读取平台证据及写入清理仍待验证。']]){const note=document.createElement('p');note.textContent=text;acceptance.querySelector('[data-week2-task="'+id+'"]').append(note);}
-  const replay=document.createElement('p');replay.textContent='服务器一次重跑快照（2026-11-05）：新 venv 使用 Python 3.10.12，工具 unittest 11/11 通过；读取本轮脱敏证据文件的 17/17 项本地数据处理检查通过，原平台断言 3 项，本次业务请求 0，退出码 0。文件投影来源未独立认证，须与原平台记录交叉核对；该快照不是下方按钮生成的最新分析结果。';acceptance.querySelector('[data-week2-snapshot]').append(replay);
-  const trace=document.createElement('p');trace.innerHTML='2026-11-05 真实 W02 追踪用例：发送的 X-Request-ID 与本次生成 UUID 一致；HTTP&#32;200、业务码 0、结构断言通过。业务响应未回显该请求头，服务端日志关联未验证。<span data-week2-trace-slot></span>';acceptance.querySelector('[data-week2-snapshot]').append(trace);
-  const timeoutEvidence=document.createElement('p');timeoutEvidence.dataset.week2TimeoutEvidence='';timeoutEvidence.innerHTML='历史执行 POST 文字建模聊天：平台记录 The read operation timed out，未收到响应，用例耗时 30043 ms，0 条断言。这不是反馈接口超时，本次没有新发起业务请求。<span data-week2-timeout-slot></span>';acceptance.querySelector('[data-week2-snapshot]').append(timeoutEvidence);
+  acceptance.innerHTML='<h3>操作准备</h3><p>从已授权执行记录核对业务结果；数据处理及业务规则以本人最新记录为准。</p><p data-week2-task="W02-01"></p><p data-week2-task="W02-05"></p><details data-week2-snapshot><summary>查看历史执行证据</summary><p>展开下方接口数据与清理实战记录，按当前账号权限查看。</p></details>';
   const howto=document.createElement('details');howto.dataset.week2Howto='';
   howto.innerHTML='<summary>查看具体操作、17 项检查与复现命令</summary><p>先打开上面的原始执行记录，核对真实反馈分类接口和原断言；再从可信渠道准备该记录的最小脱敏证据文件。本地数据处理只读取证据文件，不发起业务请求；对真实记录的副本构造边界输入，不是 17 次真实接口调用。文件模式未独立核验文件来源，应与原始记录交叉核对；字段规则来自历史观察，不是经业务审核的正式业务合同。</p><h4>数据处理检查内容</h4><ol data-week2-checks></ol><h4>新建独立环境重跑</h4><p>在项目根目录进入练习目录；以下证据路径、执行 ID 和子用例 ID 均需替换为实际值。文件只保留必要的脱敏字段，不要把凭据写入命令或文件。</p><pre data-week2-commands></pre><p>unittest 使用合成数据检查工具本身；run.py 读取真实执行证据后才产生该记录的本地处理结果。此过程没有创建真实业务数据，不能作为真实写入或清理通过的证据。</p>';
   howto.querySelector('h4:last-of-type').textContent='新建 venv 独立环境重跑（示例目录需事先不存在）';
-  for(const label of ['HTTP 状态检查','业务码为整数','业务码为观察到的 0','data 为列表','每项为对象','包含所需字段','sn 为非空字符串','name 为非空字符串','children 为列表','order_related 为布尔值','提取数量与原数据一致','提取不修改原输入','拒绝无效 sn','拒绝空 name','拒绝无效 children','拒绝无效 order_related','拒绝缺少必需字段']){const row=document.createElement('li');row.dataset.week2Check='';row.textContent=label;howto.querySelector('[data-week2-checks]').append(row);}
+  const checksNotice=document.createElement('p');checksNotice.textContent='展开历史执行记录后，按权限显示对应的数据检查内容。';howto.querySelector('[data-week2-checks]').before(checksNotice);
   howto.querySelector('[data-week2-commands]').textContent='cd task_server/fixtures/week2_real\npython3 -m venv /tmp/week2-real-venv\n/tmp/week2-real-venv/bin/python -m unittest discover -s tests -v\n/tmp/week2-real-venv/bin/python run.py --evidence /安全路径/证据.json --execution-id 真实执行ID --case-id 真实子用例ID';
-  acceptance.querySelector('[data-week2-task="W02-01"] strong').textContent='W02-01 · 业务规则待验证｜Python 数据处理';
-  acceptance.querySelector('[data-week2-task="W02-05"] strong').textContent='W02-05 · 业务规则待验证｜数据检查';
-  const clientTask=acceptance.querySelector('[data-week2-task="W02-03"]');
-  for(const node of clientTask.childNodes)if(node.nodeType===Node.TEXT_NODE)node.textContent=node.textContent.replace('真实超时、非 2xx','反馈接口真实超时、非 2xx');
-  clientTask.querySelector('p').textContent='本机与服务器的证据文件处理通过；现有平台已认证请求一次通过，请求头发送已核实；反馈接口真实超时、非 2xx 和日志关联待验证。文字建模聊天历史超时见执行快照。';
-  acceptance.querySelector('[data-week2-task="W02-06"] p').textContent='服务器新 venv 文件模式重跑通过；授权读取平台证据已通过，写入清理仍待验证。';
   const stepDetails=document.createElement('details');stepDetails.className='ui-practice-details';stepDetails.innerHTML='<summary>查看操作步骤与平台入口</summary>';
   const originalSteps=guide.querySelector(':scope > ol');originalSteps.replaceWith(stepDetails);stepDetails.append(originalSteps);
   const acceptanceDetails=document.createElement('details');acceptanceDetails.className='ui-practice-details';acceptanceDetails.innerHTML='<summary>查看六项验收与历史执行快照</summary>';acceptanceDetails.append(acceptance);
@@ -265,10 +272,7 @@ function attachUiWeekTwoGuide(page){
     const link=document.createElement('a');link.dataset.week2Link=key;link.className='ui-week-link';link.href=path;link.textContent=label;
     link.onclick=event=>{if(!current())event.preventDefault();};guide.querySelector('[data-week2-slot="'+key+'"]').append(' ',link);
   }
-  const record=document.createElement('a');record.className='ui-week-link';record.href='/api-test/#/runs?executionId=de803f8b-e18b-4e67-986d-b14ce737b8aa';record.textContent='查看本次真实执行记录';
-  record.onclick=event=>{if(!current())event.preventDefault();};guide.querySelector('[data-week2-snapshot-link]').append(record);
-  const traceLink=document.createElement('a');traceLink.dataset.week2TraceLink='';traceLink.className='ui-week-link';traceLink.href='/api-test/#/runs?executionId=6e5ae109-ba21-4434-9835-5d1e58d228ff';traceLink.textContent='查看请求追踪执行记录';traceLink.onclick=event=>{if(!current())event.preventDefault();};guide.querySelector('[data-week2-trace-slot]').append(' ',traceLink);
-  const timeoutLink=document.createElement('a');timeoutLink.className='ui-week-link';timeoutLink.href='/api-test/#/runs?executionId=0dfab6ed-b597-4c56-81bf-cc8d7dcb6342';timeoutLink.textContent='查看历史超时执行记录';timeoutLink.onclick=event=>{if(!current())event.preventDefault();};guide.querySelector('[data-week2-timeout-slot]').append(' ',timeoutLink);
+
 }
 
 function uiPracticeTime(value){
@@ -279,9 +283,9 @@ function attachUiWeekTwoReal(guide,page,identity,epoch){
   const canRun=()=>hasPermission('platform.configure')&&hasPermission('api.view')&&(currentAccessProfile?.is_superuser===true||currentAccessProfile?.scope?.ui_apps==='*');
   const valid=()=>page.isConnected&&activeWorkflow==='ai_practice'&&identity===uiSimpleIdentity()&&epoch===uiSimpleEpoch&&canRun();
   const panel=document.createElement('details');panel.dataset.week2Real='';panel.className='ui-week-probe';
-  panel.innerHTML='<summary>查看和分析已有反馈记录</summary><p>对真实反馈分类的已有记录进行确定性数据检查；不调用 AI，不重新调用业务接口，也不创建业务数据。原始断言和本次检查分开展示，写入及清理仅完成单次验证，异常恢复和关联资源清理仍待验证。</p>';
+  panel.innerHTML='<summary>查看和分析已有反馈记录</summary><p>对真实反馈分类的已有记录进行确定性数据检查；不调用 AI，不重新调用业务接口，也不创建业务数据。原始断言和本次检查分开展示，写入与清理结果请查看当前账号有权访问的执行记录。</p>';
   const progress=['W02-01','W02-05'].map(id=>{const line=document.createElement('p');line.dataset.week2Progress='';line.textContent='本人分析结果待核验。';guide.querySelector('[data-week2-task="'+id+'"]').append(line);return line;});
-  const scope=document.createElement('p');scope.textContent='默认分析执行记录 de803f8b-e18b-4e67-986d-b14ce737b8aa；也可以指定其他真实反馈执行记录。';panel.append(scope);
+  const scope=document.createElement('p');scope.textContent='可分析默认反馈记录，也可以指定其他真实反馈执行记录；记录详情按当前账号权限核验。';panel.append(scope);
   guide.insertBefore(panel,guide.querySelector('.ui-practice-details'));
   if(!canRun()){const message=document.createElement('p');message.textContent='需要 API 查看与平台配置权限及完整 UI 应用数据范围；还需有对应项目和环境权限。请联系管理员。';panel.append(message);return;}
   panel.insertAdjacentHTML('beforeend','<details><summary>使用其他真实反馈执行记录</summary><p>粘贴本平台执行记录链接或执行编号；只有一条子用例时会自动选择。多条子用例时需要填写子用例编号；两个都留空使用默认记录。服务器会核对账号权限和反馈分类接口，不会发起业务回归。</p><label>执行编号或记录链接 <input type="text" data-week2-execution-id autocomplete="off" placeholder="执行记录链接或 UUID"></label><label>子用例编号（可选） <input type="text" data-week2-case-id autocomplete="off" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></label></details><div class="ui-week-probe-actions"><button type="button" data-week2-real-run>分析真实反馈执行证据</button><button type="button" data-week2-real-refresh>刷新分析记录</button></div><p data-week2-real-notice role="status" aria-live="polite">展开后读取本人的分析记录。</p><div data-week2-real-history></div>');
@@ -301,7 +305,7 @@ function attachUiWeekTwoReal(guide,page,identity,epoch){
       const row=document.createElement('details');row.className='ui-week-probe-row';
       const title=document.createElement('summary');title.textContent='服务器本次分析 · '+(item.status==='passed'&&!good?'结果待核实':status(item.status))+' · '+field(item.total)+' 项 · '+uiPracticeTime(item.created_at);row.append(title);
       const meta=document.createElement('p');meta.textContent='原业务执行编号：'+field(item.execution_id)+'；子用例编号：'+field(item.execution_case_id)+'；分析代码指纹：'+field(item.code_sha256);row.append(meta);
-      const source=document.createElement('p');source.textContent='来源：'+(item.source==='platform_record'?'服务器读取已保存的平台执行记录':'未知')+'；来源核验：'+(item.source_verification==='server_authorized_platform_read'?'服务器授权读取':'未核实')+'；本次分析业务请求：'+field(item.business_requests)+'。写入及清理仅完成单次验证，异常恢复和关联资源清理仍待验证。';row.append(source);
+      const source=document.createElement('p');source.textContent='来源：'+(item.source==='platform_record'?'服务器读取已保存的平台执行记录':'未知')+'；来源核验：'+(item.source_verification==='server_authorized_platform_read'?'服务器授权读取':'未核实')+'；本次分析业务请求：'+field(item.business_requests)+'。写入与清理结果请查看当前账号有权访问的执行记录。';row.append(source);
       const original=document.createElement('p');original.textContent='原始平台断言：'+(assertions.length?assertions.map(a=>field(a.type)+' '+(a.passed===true?'通过':a.passed===false?'失败':'未知')).join('；'):'未记录');row.append(original);
       const summary=document.createElement('p');summary.textContent='本次数据处理检查：'+field(item.total)+' 项。';row.append(summary);
       const list=document.createElement('ol');for(const check of checks){const line=document.createElement('li');line.textContent=(labels[check?.id]||field(check?.id))+'：'+status(check?.status);list.append(line);}if(list.childElementCount)row.append(list);

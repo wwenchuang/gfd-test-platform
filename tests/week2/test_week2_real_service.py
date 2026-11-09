@@ -17,6 +17,7 @@ REAL_AUTHORIZED_ACTOR = service.authorized_actor
 
 @pytest.fixture(autouse=True)
 def authorized(monkeypatch):
+    monkeypatch.setattr(service.identity, 'get_access_profile', lambda _: {'user_id': 'alice-id', 'scope': {}})
     monkeypatch.setattr(service, 'authorized_actor', lambda *_: True)
     monkeypatch.setattr(service, '_scope_authorized', lambda *_: None)
     monkeypatch.setattr(service, '_invoke_worker', lambda *args, **kwargs: service._derive(*args))

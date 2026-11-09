@@ -1,4 +1,5 @@
 """Analyze one existing API execution with the caller's platform authorization."""
+import copy
 import hashlib
 import fcntl
 import json
@@ -139,6 +140,9 @@ def _fetch_authorized(username, execution_id, case_id):
             raise ValueError('case_unavailable')
         case_id = str(uuid.UUID(records[0].get('execution_case_id', '')))
         case_segments = ('executions', execution_id, 'cases', case_id)
+    # The generic API's case scope inherits the parent execution environment.
+    # Reject inconsistent child environments before reading the case evidence.
+    _scope_authorized(username, execution_id, case_id)
     access.authorize_http(actor, 'GET', case_segments)
     case = http._get(case_segments, {}, actor, settings)
     return {'execution': execution.get('execution'), 'case_result': case.get('case_result')}
@@ -151,7 +155,8 @@ def _scope_authorized(username, execution_id, case_id):
     execution = http._scope_execution(factory, execution_id, username)
     if case_id:
         child = http._scope_execution_case(factory, case_id, username)
-        if child.execution_id != execution.id:
+        if (child.execution_id != execution.id or
+                child.environment_revision_id != execution.environment_revision_id):
             raise ValueError('not_found')
 
 
@@ -296,6 +301,11 @@ def _run_in_slot(owner, username, path, *, execution_id, case_id, slot_fd):
         case_id = str(uuid.UUID(case_id)) if case_id is not None else None
     except (TypeError, ValueError, AttributeError):
         raise ValueError('invalid_identifier') from None
+    try:
+        profile = copy.deepcopy(identity.get_access_profile(username))
+        profile_available = True
+    except Exception:
+        profile, profile_available = None, False
     token = _claim(path)
     created = time.time()
     result = {'id': uuid.uuid4().hex, 'created_at': datetime.now(timezone.utc).isoformat(),
@@ -310,7 +320,7 @@ def _run_in_slot(owner, username, path, *, execution_id, case_id, slot_fd):
         _release(path, token)
         raise
     deadline = time.monotonic() + _TIMEOUT_SECONDS
-    ok, data, release_lease = False, None, True
+    ok, data, release_lease, source_authorized = False, None, True, False
     try:
         ok, data = _invoke_worker(owner, username, execution_id, case_id, timeout=deadline - time.monotonic(), slot_fd=slot_fd)
         resolved_case = data.get('execution_case_id') if ok and isinstance(data, dict) else case_id
@@ -318,8 +328,9 @@ def _run_in_slot(owner, username, path, *, execution_id, case_id, slot_fd):
                    or (case_id is not None and resolved_case != case_id)):
             raise ValueError('invalid_worker_result')
         if ok or data == 'ambiguous_case':
-            if not _invoke_authorization(owner, username, [(execution_id, resolved_case)],
-                                         deadline - time.monotonic(), slot_fd=slot_fd)[0]:
+            source_authorized = _invoke_authorization(owner, username, [(execution_id, resolved_case)],
+                                                      deadline - time.monotonic(), slot_fd=slot_fd)[0]
+            if not source_authorized:
                 ok, data = False, None
         if ok:
             result.update(data, source_verification='server_authorized_platform_read',
@@ -336,6 +347,19 @@ def _run_in_slot(owner, username, path, *, execution_id, case_id, slot_fd):
     finally:
         if release_lease:
             _release(path, token)
+    # Preserve the source privately so history can recheck scope, but never
+    # return even the default identifiers until this request proves access.
+    try:
+        still_authorized = (profile_available and source_authorized and authorized_actor(owner, username)
+                            and profile == identity.get_access_profile(username))
+    except Exception:
+        still_authorized = False
+    if not still_authorized:
+        return {'id': result['id'], 'created_at': result['created_at'],
+                'status': 'blocked', 'source': 'platform_record', 'source_verification': 'pending',
+                'original_assertions': [], 'checks': [], 'total': 0, 'business_requests': 0,
+                'cleanup': 'not_applicable_no_business_data_created', 'code_sha256': None,
+                'message': '记录不可读取、权限不足、分析超时或来源无法核对。'}
     return result
 
 
@@ -349,8 +373,11 @@ def list_results(owner, path=None, *, username=None):
     if username and rows:
         sources = list(dict.fromkeys((json.loads(raw).get('execution_id'), json.loads(raw).get('execution_case_id')) for _, raw in rows))
         try:
+            profile = copy.deepcopy(identity.get_access_profile(username))
             with _history_slot(path) as slot:
                 scopes = dict(zip(sources, _invoke_authorization(owner, username, sources, _HISTORY_TIMEOUT_SECONDS, slot_fd=slot)))
+            if not authorized_actor(owner, username) or profile != identity.get_access_profile(username):
+                scopes = {}
         except HistoryBusy:
             hidden_message = '核验繁忙，详情已隐藏，请稍后重试。'
         except Exception:
