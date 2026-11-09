@@ -386,6 +386,8 @@ export const useCasesStore = defineStore('api-cases', {
     async saveForDebug(endpointId: string, environmentRevisionId: string): Promise<CaseVersion> {
       const draft = this.drafts[endpointId]
       if (!draft) throw new Error('请先编辑测试用例')
+      const draftIdentity = this.draftIdentities[endpointId] || 0
+      const previewId = this.activeGeneratedPreviewId
       const localErrors = validateCaseDraftLocally(draft)
       if (Object.keys(localErrors).length) {
         this.validationErrors = localErrors
@@ -393,6 +395,12 @@ export const useCasesStore = defineStore('api-cases', {
         throw new Error(Object.values(localErrors)[0])
       }
       const version = await this.save(endpointId, environmentRevisionId, { requireValidation: true })
+      if ((this.draftIdentities[endpointId] || 0) !== draftIdentity
+          || this.activeGeneratedPreviewId !== previewId
+          || this.activeVersionByEndpoint[endpointId] !== version.id
+          || this.missingDraftVersionByEndpoint[endpointId]) {
+        throw new Error('草稿已保存，但当前选择已变化；调试未开始，请重新确认')
+      }
       if (this.dirtyDrafts[endpointId]) {
         throw new Error('草稿已保存，但保存期间又有修改；调试未开始，请确认最新内容后重试')
       }

@@ -309,6 +309,24 @@ describe('cases store', () => {
     expect(store.saving).toBe(false)
   })
 
+  it('does not prepare the old version if selection changes during post-save validation', async () => {
+    const store = useCasesStore(); store.registerVersion(VERSION)
+    const other = { ...VERSION, id: 'other-version', case_id: 'other-case', name: 'other case' }
+    store.registerVersion(other, false)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }] })
+    const saved = { ...VERSION, id: 'version-2', version: 2 }
+    vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: { case_version: saved } })
+    let finishValidation!: () => void
+    vi.spyOn(store, 'validate').mockImplementationOnce(() => new Promise(resolve => { finishValidation = resolve }))
+    const pending = store.saveForDebug(VERSION.endpoint_id, 'environment-1')
+    await Promise.resolve(); await Promise.resolve()
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-2')
+    store.setActiveVersion(VERSION.endpoint_id, 'other-version')
+    finishValidation()
+    await expect(pending).rejects.toThrow('调试未开始')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('other-version')
+  })
+
   it('does not prepare debugging when the user edits while the draft is being saved', async () => {
     const store = useCasesStore(); store.registerVersion(VERSION)
     store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }] })

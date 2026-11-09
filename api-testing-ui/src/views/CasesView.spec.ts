@@ -358,6 +358,44 @@ describe('CasesView', () => {
     wrapper.unmount()
   })
 
+  it.each(['editor', 'saved-version'])('does not send %s debug if current case differs when save returns', async mode => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 'source-1'; cases.draftScopeReady = true
+    const original = savedCase('version-1', 'original')
+    const other = { ...savedCase('version-2', 'other'), case_id: 'case-other' }
+    cases.registerVersion(original); cases.registerVersion(other, false)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    let finish!: (value: CaseVersion) => void
+    const prepare = vi.spyOn(cases, 'saveForDebug').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: {
+      ContextBar: true, EndpointDetail: true, DebugDrawer: true,
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises()
+    const panel = wrapper.findComponent(CaseListPanel)
+    if (mode === 'editor') {
+      panel.vm.$emit('edit-version', original); await flushPromises()
+      await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    } else panel.vm.$emit('run-version', original)
+    await flushPromises(); expect(prepare).toHaveBeenCalledOnce()
+    panel.vm.$emit('edit-version', other); await flushPromises()
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(other.id)
+    finish(original); await flushPromises()
+    expect(saveTask).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/草稿已保存.*调试未开始/)
+    wrapper.unmount()
+  })
+
   it.each(['editor', 'saved-version'])('does not start %s debug when a draft changes during task save', async mode => {
     const context = useContextStore()
     Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', environment_id: 'environment-1', project_id: 'project-1', name: 'production', revision: 1 }] })

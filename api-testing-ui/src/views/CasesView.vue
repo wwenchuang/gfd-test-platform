@@ -540,6 +540,7 @@ async function runCaseVersionOnce(version: CaseVersion): Promise<void> {
   const savedPreviewId = cases.activeGeneratedPreviewId
   const savedDraftIsCurrent = () => activeEndpoint.value?.id === endpointId
     && !cases.dirtyDrafts[endpointId] && !cases.missingDraftVersionByEndpoint[endpointId]
+    && cases.activeVersionByEndpoint[endpointId] === prepared.id
     && (cases.draftIdentities[endpointId] || 0) === savedDraftIdentity
     && cases.activeGeneratedPreviewId === savedPreviewId
   if (!savedDraftIsCurrent()) {
@@ -626,6 +627,7 @@ async function submitDebugOnce(): Promise<void> {
   const savedPreviewId = cases.activeGeneratedPreviewId
   const savedDraftIsCurrent = () => activeEndpoint.value?.id === endpointId
     && !cases.dirtyDrafts[endpointId] && !cases.missingDraftVersionByEndpoint[endpointId]
+    && cases.activeVersionByEndpoint[endpointId] === version.id
     && (cases.draftIdentities[endpointId] || 0) === savedDraftIdentity
     && cases.activeGeneratedPreviewId === savedPreviewId
   if (!savedDraftIsCurrent()) {

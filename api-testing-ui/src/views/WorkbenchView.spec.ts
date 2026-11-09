@@ -748,7 +748,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(context, 'saveContext').mockImplementation(() => new Promise(resolve => { finishContext = resolve }))
     const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
     const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = 'version-new'; delete cases.dirtyDrafts[endpointId]; return { id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
     const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
     const saveTask = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
@@ -778,7 +778,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(context, 'saveContext').mockImplementation(() => new Promise(resolve => { finishContext = resolve }))
     const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
     const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = 'version-new'; delete cases.dirtyDrafts[endpointId]; return { id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
     const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
     const saveTask = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
@@ -809,7 +809,7 @@ describe('WorkbenchView debug workflow', () => {
     const saveContext = vi.spyOn(context, 'saveContext').mockImplementation(() => phase === 'run-workspace-save' ? new Promise(resolve => { finishWorkspace = resolve }) : Promise.resolve())
     const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
     const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = 'version-new'; delete cases.dirtyDrafts[endpointId]; return { id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
     const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
     let finishTask!: (value: never) => void
@@ -840,13 +840,41 @@ describe('WorkbenchView debug workflow', () => {
     wrapper.unmount()
   })
 
+  it('does not debug the saved version when a different case is active after validation', async () => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    let finish!: (value: CaseVersion) => void
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { props: ['endpoints'], emits: ['activate'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click'); await flushPromises()
+    cases.activeVersionByEndpoint[ENDPOINT.id] = 'other-version'
+    finish({ id: 'saved-version', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion); await flushPromises()
+    expect(debug).not.toHaveBeenCalled()
+    expect(saveTask).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/调试未开始/)
+    wrapper.unmount()
+  })
+
   it('does not debug an older saved draft when editing continues during task save', async () => {
     const context = useContextStore()
     Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1' })
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
     const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
     const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = 'version-new'; delete cases.dirtyDrafts[endpointId]; return { id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
     const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
     let finishTask!: (value: never) => void
@@ -874,7 +902,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
     const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
     const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = 'version-new'; delete cases.dirtyDrafts[endpointId]; return { id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion })
     let finishDebug!: () => void
     const debug = vi.spyOn(cases, 'debug').mockImplementation(() => new Promise(resolve => { finishDebug = resolve }))
     const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); const restore = vi.spyOn(tasks, 'restore').mockResolvedValue(null)
@@ -903,7 +931,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
     const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
     const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = 'version-new'; delete cases.dirtyDrafts[endpointId]; return { id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
     const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
     const taskA = { id: 'task-a', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1', selected_endpoint_ids: [ENDPOINT.id], name: 'A' } as ApiTestTask
@@ -935,7 +963,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
     const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
     const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = 'version-new'; delete cases.dirtyDrafts[endpointId]; return { id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
     const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
     const taskA = { id: 'task-a', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1', selected_endpoint_ids: [ENDPOINT.id], name: 'A' } as ApiTestTask
@@ -981,7 +1009,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
     vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
     const savedVersion = { id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion
-    const prepare = vi.spyOn(cases, 'saveForDebug').mockResolvedValue(savedVersion)
+    const prepare = vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = savedVersion.id; delete cases.dirtyDrafts[endpointId]; return savedVersion })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
 
     const tasks = useTasksStore()
@@ -1086,7 +1114,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(cases, 'loadVersion').mockImplementation(async () => {
       cases.registerVersion({ ...savedCase('version-edited', 'case-edited', '新手必学', {}), endpoint_id: editedEndpoint.id })
     })
-    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-edited-next', endpoint_id: editedEndpoint.id } as CaseVersion)
+    vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => { cases.activeVersionByEndpoint[endpointId] = 'version-edited-next'; delete cases.dirtyDrafts[endpointId]; return { id: 'version-edited-next', endpoint_id: editedEndpoint.id } as CaseVersion })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
 
     const restoredTask = {
