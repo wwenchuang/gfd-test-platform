@@ -41,7 +41,7 @@ const previewOverrides = ref<Record<string, unknown>>({})
 const stageLabel = computed(() => props.stage === 'setup' ? '前置步骤' : '清理步骤')
 const stageHint = computed(() => props.stage === 'setup'
   ? '按顺序获取主体请求需要的真实业务数据。'
-  : '主体结束后依次检查条件并清理，只回收本次运行产生或修改的数据。')
+  : '流程中按条件尝试清理；运行前请核对清理目标及数据归属。')
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -290,7 +290,7 @@ async function runPreview(index: number): Promise<void> {
     action: '试运行前置步骤',
     environmentName: props.environmentName || '当前执行环境',
     targetName: target?.name || `第 ${index + 1} 步`,
-    caseCount: index + 1,
+    effect: `会按条件尝试此前启用的前置步骤，直至第 ${index + 1} 步，请求会真实发送，可能创建或修改业务数据；不执行清理，也不保存执行记录。`,
   })) return
   previewLoadingIndex.value = index
   try {
@@ -357,6 +357,7 @@ watch(() => props.validationErrors, errors => {
       <div><strong>{{ stageLabel }}</strong><span>{{ stageHint }}</span></div>
       <button :data-testid="`add-${stage}-step`" class="secondary-command" type="button" @click="addStep"><Plus :size="14" />添加步骤</button>
     </header>
+    <p v-if="stage === 'cleanup' && modelValue.some(step => step.enabled !== false)" class="field-warning" role="status" data-testid="cleanup-ownership-warning">平台不会自动确认清理目标属于本次运行。创建失败或响应丢失时可能使用旧编号；无法确认归属时，生产环境不要运行自动清理。</p>
     <p v-if="!modelValue.length" class="compact-empty">当前没有{{ stageLabel }}。</p>
     <WorkflowStepCard
       v-for="(step, index) in modelValue"
@@ -386,16 +387,16 @@ watch(() => props.validationErrors, errors => {
           </div>
           <div class="workflow-required-variables"><span>必需变量</span><VariablePicker :model-value="step.required_variables" :options="availableVariables(index)" :test-id-prefix="`${stage}-${index}`" @update:model-value="patchStep(index, { required_variables: $event })" /></div>
           <label class="workflow-condition">执行条件（可选）
-            <input :data-testid="`${stage}-condition-${index}`" :value="step.only_if_variable || ''" placeholder="本轮变量名；留空则每次执行" @input="patchStep(index, { only_if_variable: ($event.target as HTMLInputElement).value.trim() || undefined })" />
-            <small>仅当本轮变量有值才执行；未产生任务或查询为空时跳过并记录原因。不替代设备身份和恢复状态校验。</small>
+            <input :data-testid="`${stage}-condition-${index}`" :value="step.only_if_variable || ''" placeholder="变量名；留空时不按此条件跳过" @input="patchStep(index, { only_if_variable: ($event.target as HTMLInputElement).value.trim() || undefined })" />
+            <small>仅当指定变量有值才执行；变量有值不证明属于本次运行。不替代设备身份和恢复状态校验。</small>
             <p v-if="validationErrors?.[`${stepPrefix(index)}.only_if_variable`]" class="inline-error">{{ validationErrors[`${stepPrefix(index)}.only_if_variable`] }}</p>
           </label>
         </div>
         <div v-if="stage === 'setup'" class="workflow-step-preview-actions">
           <div>
             <strong>响应取值校验</strong>
-            <small>执行前置链路到当前步骤，查看真实响应并选择后续需要的变量。</small>
-            <small v-if="!['GET', 'HEAD'].includes(step.request.method)" class="field-warning">当前步骤会真实创建或修改数据，请配置清理步骤并在完整调试后确认回收。</small>
+            <small>会按条件尝试此前启用的前置步骤到当前步骤，查看真实响应并选择后续需要的变量。</small>
+            <small class="field-warning">请求会真实发送，可能创建或修改业务数据；不执行清理，也不保存执行记录。</small>
           </div>
           <button :data-testid="`setup-preview-${index}`" class="secondary-command" type="button" :disabled="!step.enabled || previewLoadingIndex !== null" @click="runPreview(index)"><FlaskConical :size="14" />{{ previewLoadingIndex === index ? '试运行中…' : '试运行到此步骤' }}</button>
         </div>

@@ -23,6 +23,41 @@ describe('InlineWorkflowStepEditor', () => {
     vi.restoreAllMocks()
   })
 
+  it('warns before an enabled cleanup step that resource ownership is not automatically verified', async () => {
+    const wrapper = mount(InlineWorkflowStepEditor, {
+      props: { modelValue: [STEP], stage: 'cleanup' },
+    })
+
+    expect(wrapper.text()).not.toContain('只回收本次运行产生或修改的数据')
+    expect(wrapper.text()).toContain('平台不会自动确认清理目标属于本次运行')
+    expect(wrapper.text()).toContain('创建失败或响应丢失时')
+    expect(wrapper.text()).toContain('生产环境不要运行自动清理')
+
+    await wrapper.setProps({ modelValue: [{ ...STEP, enabled: false }] })
+    expect(wrapper.text()).not.toContain('平台不会自动确认清理目标属于本次运行')
+    await wrapper.setProps({ modelValue: [] })
+    expect(wrapper.text()).not.toContain('平台不会自动确认清理目标属于本次运行')
+    await wrapper.setProps({ modelValue: [STEP], stage: 'setup' })
+    expect(wrapper.text()).not.toContain('平台不会自动确认清理目标属于本次运行')
+  })
+
+  it('explains that a preview executes earlier steps without cleanup or a saved execution', async () => {
+    const writeStep = { ...STEP, name: '创建数据', request: { ...STEP.request, method: 'POST' } }
+    const wrapper = mount(InlineWorkflowStepEditor, {
+      props: { modelValue: [writeStep, STEP], stage: 'setup', environmentRevisionId: 'env', environmentName: '生产环境' },
+    })
+    await wrapper.get('[data-testid="setup-step-toggle-1"]').trigger('click')
+    expect(wrapper.text()).toContain('会按条件尝试此前启用的前置步骤')
+    expect(wrapper.text()).toContain('可能创建或修改业务数据')
+    expect(wrapper.text()).toContain('不执行清理，也不保存执行记录')
+    const post = vi.spyOn(apiClient, 'post')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get('[data-testid="setup-preview-1"]').trigger('click')
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('可能创建或修改业务数据'))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('不执行清理，也不保存执行记录'))
+    expect(post).not.toHaveBeenCalled()
+  })
+
   it('reselects a configured endpoint through the searchable endpoint picker', async () => {
     const wrapper = mount(InlineWorkflowStepEditor, {
       props: { modelValue: [STEP], stage: 'setup', endpointOptions: ENDPOINTS },
