@@ -458,6 +458,109 @@ def test_blind_review_never_retries_with_source_action_diagnostics(monkeypatch,t
     assert all('action' not in e for rows in calls[0]['coverage_checks'].values() for e in rows)
 
 
+@pytest.mark.parametrize('source_variant',['cross_pass','unknown_source'])
+@pytest.mark.parametrize('blind',['motion','delayed'])
+@pytest.mark.parametrize('second_response',['corrected','still_invalid','missing_click','budget_exhausted'])
+def test_blind_cross_source_mapping_retries_without_leaking_prior_hypotheses(monkeypatch,tmp_path,second_response,blind,source_variant):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai,ui_video_delayed_response as delayed
+    frames=[{'frame_id':f'f{i}','timestamp_ms':i*100} for i in range(1,7)]
+    scroll={'action':'aiScroll','target':'私人旧目标','value':{'direction':'down','scrollType':'singleAction'},
+            'frame_refs':['f1','f4'],'start_ms':100,'end_ms':400,'observation':'旧假设用户滑动',
+            'evidence_kind':'inferred','uncertainties':[]}
+    click={'action':'aiTap','target':'确认打印','value':'','frame_refs':['f4','f5','f6'],
+           'start_ms':400,'end_ms':600,'observation':'点击确认打印','evidence_kind':'inferred','uncertainties':[]}
+    observed=[{'action':'aiAssert','target':'弹窗','value':'','frame_refs':['f1','f4'],
+               'observation':'图片自动加载，未见独立用户滚动','uncertainties':[]},
+              {'action':'aiTap','target':'确认打印','value':'','frame_refs':['f4','f5','f6'],
+               'observation':'点击确认打印','uncertainties':[]}]
+    claim={'source_anchor_ids':['first_pass:0','independent_review:0'],
+           'resolution':'same_interaction','reviewed_event_index':0,'evidence':{}}
+    if source_variant=='unknown_source':claim['source_anchor_ids'][1]='unknown_source:0'
+    calls=[]
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    if blind=='delayed':monkeypatch.setattr(delayed,'review_refs',lambda *args:{'f1'})
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        if len(calls)==2:
+            assert all('action' not in a for rows in payload['coverage_checks'].values() for a in rows)
+            assert payload['gesture_hypotheses']==[]
+            assert 'resolution_diagnostics' not in payload and 'unresolved_hypotheses' not in payload
+            assert '私人旧目标' not in repr(payload) and '旧假设用户滑动' not in repr(payload)
+        events=copy.deepcopy(observed if second_response!='missing_click' or len(calls)==1 else observed[:1])
+        claims=[copy.deepcopy(claim)] if len(calls)==1 or second_response=='still_invalid' else []
+        return {'events':events,'coverage_resolutions':claims,'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    checked={'events':copy.deepcopy([scroll,click]),'uncertainties':[],'multiple_scenarios':False}
+    options={'motion_review_refs':{'f1'}} if blind=='motion' else {}
+    if second_response=='corrected':
+        result=vr._repair_window([scroll,click],checked,frames,1000,tmp_path,lambda:False,[],
+                                 {f['frame_id'] for f in frames},attempt_limit=2,**options)
+        assert [e['action'] for e in result['events']]==['aiAssert','aiTap']
+        assert result['reconciliation_audit']['coverage_resolutions']==[]
+    else:
+        with pytest.raises(ValueError):
+            vr._repair_window([scroll,click],checked,frames,1000,tmp_path,lambda:False,[],
+                              {f['frame_id'] for f in frames},attempt_limit=1 if second_response=='budget_exhausted' else 2,**options)
+    assert len(calls)==(1 if second_response=='budget_exhausted' else 2)
+
+
+def test_mapping_reject_reason_distinguishes_other_structural_errors():
+    frames,old,new,claim=fixture()
+    claim['source_anchor_ids']=['first_pass:0','unknown_source:0']
+    with pytest.raises(ValueError) as caught:
+        cr.validate([claim],{'first_pass':old,'independent_review':old},new,frames)
+    assert caught.value.coverage_reason=='merge_requires_same_source_duplicates'
+    claim['reviewed_event_index']=999
+    with pytest.raises(ValueError) as caught:
+        cr.validate([claim],{'first_pass':old,'independent_review':old},new,frames)
+    assert getattr(caught.value,'coverage_reason',None)!='merge_requires_same_source_duplicates'
+
+
+def test_dialog_motion_retries_from_real_reconcile_grouping(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    times=[52900,53500,54133,54233,54467,54867,55900,55967,56200,56233,56300]
+    frames=[{'frame_id':f'frame-{i:03}','timestamp_ms':time} for i,time in zip(range(124,135),times)]
+    opener={'action':'aiTap','target':'确认打印按钮','value':'','frame_refs':['frame-124','frame-125','frame-126'],
+            'start_ms':52900,'end_ms':54133,'observation':'点击后出现确认打印弹窗','uncertainties':[],'evidence_kind':'inferred'}
+    scroll={'action':'aiScroll','target':'确认打印弹窗内容区域','value':{'direction':'down','scrollType':'singleAction'},
+            'frame_refs':['frame-127','frame-130'],'start_ms':54233,'end_ms':55900,
+            'observation':'弹窗内容上移','uncertainties':[],'evidence_kind':'inferred'}
+    tap={'action':'aiTap','target':'检查无误，确认打印按钮','value':'','frame_refs':['frame-130','frame-131','frame-132'],
+         'start_ms':55900,'end_ms':56200,'observation':'点击确认打印按钮','uncertainties':[],'evidence_kind':'inferred'}
+    loading={'action':'aiAssert','target':'打印加载状态','value':'','frame_refs':['frame-132','frame-133','frame-134'],
+             'start_ms':56200,'end_ms':56300,'observation':'页面自动加载','uncertainties':[],'evidence_kind':'inferred'}
+    old=[opener,scroll,tap];review={'events':copy.deepcopy(old+[loading]),'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(windows,'observe_windows',lambda *a,**kw:(copy.deepcopy(review),[]))
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    calls=[];repair_options=[]
+    real_repair=vr._repair_window
+    def inspect_repair(*args,**kwargs):
+        repair_options.append(copy.deepcopy(kwargs))
+        return real_repair(*args,**kwargs)
+    monkeypatch.setattr(vr,'_repair_window',inspect_repair)
+    claim={'source_anchor_ids':['first_pass:0','independent_review:0'],
+           'resolution':'same_interaction','reviewed_event_index':0,'evidence':{}}
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        assert [f['frame_id'] for f in payload['frames']]==[f'frame-{i:03}' for i in range(127,133)]
+        assert 'motion_review_question' in payload
+        assert all('action' not in a for rows in payload['coverage_checks'].values() for a in rows)
+        return {'events':[{'action':'aiAssert','target':'弹窗内容','value':'','frame_refs':['frame-127','frame-130'],
+                           'observation':'图片自动加载，未见独立用户滚动','uncertainties':[]},
+                          {k:v for k,v in tap.items() if k not in {'start_ms','end_ms','evidence_kind'}}],
+                'coverage_resolutions':[copy.deepcopy(claim)] if len(calls)==1 else [],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr.reconcile(old,frames,120000,tmp_path,lambda:False,[])
+    assert len(calls)==2
+    assert len(repair_options)==1 and repair_options[0]['attempt_limit']==2
+    assert repair_options[0]['retry_return_gesture_only'] is False
+    assert repair_options[0]['motion_review_refs']=={'frame-127','frame-130'}
+    assert [e['action'] for e in result['events']]==['aiTap','aiAssert','aiTap','aiAssert']
+    assert result['events'][2]['frame_refs']==tap['frame_refs']
+    assert result['reconciliation_audit']['coverage_resolutions']==[]
+
+
 @pytest.mark.parametrize('blind',['motion','delayed'])
 def test_blind_initial_review_does_not_expose_source_conflict_kind(monkeypatch,tmp_path,blind):
     from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai,ui_video_delayed_response as delayed

@@ -214,7 +214,7 @@ def validate(claims,sources,reviewed,frames,*,allow_unresolved_return=False):
             len(set(ids))!=len(ids) or set(ids)&used or type(index) is not int or not 0<=index<len(reviewed) or index in destinations):_fail()
         if not isinstance(reviewed[index],dict):_fail()
         conflict=claim['resolution']=='tap_return_conflict'
-        if not conflict and not any(sum(aid.startswith(name+':') for aid in ids)>=2 for name in sources):_fail()
+        if not conflict and not any(sum(aid.startswith(name+':') for aid in ids)>=2 for name in sources):_fail('merge_requires_same_source_duplicates')
         if claim['resolution'] not in {'same_interaction','same_interaction_with_action_correction','same_return_gesture','same_scroll_gesture','tap_return_conflict'}:_fail()
         required_evidence={'before_frame','interaction_frame','after_frame','examined_frame_refs','before_state','interaction','after_state','why_not_separate_actions'}
         if claim['resolution']=='same_scroll_gesture':required_evidence.add('gesture_facts')

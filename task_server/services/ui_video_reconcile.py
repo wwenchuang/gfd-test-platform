@@ -693,6 +693,13 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 raise error
         except ValueError as error:
             reason=getattr(error,'coverage_reason',None)
+            if ((motion_review or delayed_review) and not retry_return_gesture_only and
+                attempt+1<attempt_limit and str(error)=='video_coverage_resolution_invalid' and
+                reason=='merge_requires_same_source_duplicates'):
+                # Only state the schema rule. Never reveal the source action,
+                # rejected proposal, or model prose to a blind pixel review.
+                payload['validation_feedback']+=' 上次映射结构不符合要求。请检查来源标识与每来源的锚点数量：普通两轮各一条锚点对应不需要合并声明。重新独立核对原帧并完整解释全部锚点；合并需满足合同的同来源重复锚点规则，特殊冲突按合同处理，无法确认时保留疑问。'
+                continue
             if attempt+1>=attempt_limit or motion_review or delayed_review or (retry_return_gesture_only and reason!='return_gesture_not_explicit'):
                 if str(error)=='video_coverage_resolution_invalid':
                     error.coverage_frame_refs=set(missing_refs)&window_ids
