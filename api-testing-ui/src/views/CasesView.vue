@@ -90,7 +90,7 @@ const aiJobStateLabel = computed(() => {
     completed: '生成完成',
     partial: '部分生成完成',
     failed: '生成失败',
-    failed_gateway: 'AI 服务调用失败',
+    failed_gateway: 'AI 生成失败',
     failed_validation: '生成结果校验失败',
   }[cases.aiJob.state]
 })

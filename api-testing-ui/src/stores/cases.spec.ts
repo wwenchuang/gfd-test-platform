@@ -1205,6 +1205,50 @@ describe('cases store', () => {
     expect(store.aiError).toContain('继续查看')
   })
 
+  it.each([
+    ['gateway_timeout', '模型服务或连接等待超时'],
+    ['enqueue_failed', '任务未能进入执行队列'],
+  ])('shows the saved AI failure category %s after polling', async (errorCode, expected) => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
+      job: {
+        id: 'job-failed', state: 'failed_gateway', endpoint_ids: ['endpoint-1'],
+        requested_model: 'qwen', actual_model: '', fallback_used: false, summary: {},
+        batches: [{
+          id: 'batch-1', sequence: 1, state: 'failed_gateway', endpoint_ids: ['endpoint-1'],
+          requested_model: 'qwen', actual_model: '', fallback_used: false, fallback_reason: '',
+          generated_draft_ids: [], validation_errors: [], error_code: errorCode,
+        }],
+      },
+    } })
+    const store = useCasesStore()
+
+    await store.pollAiJob('job-failed', { maxAttempts: 1, delayMs: 0 })
+
+    expect(store.aiError).toContain(expected)
+  })
+
+  it('does not invent a timeout or queue failure for old or mixed AI failures', async () => {
+    const batch = {
+      id: 'batch-1', sequence: 1, state: 'failed_gateway', endpoint_ids: ['endpoint-1'],
+      requested_model: 'qwen', actual_model: '', fallback_used: false, fallback_reason: '',
+      generated_draft_ids: [], validation_errors: [],
+    }
+    const response = { data: { job: {
+      id: 'job-failed', state: 'failed_gateway', endpoint_ids: ['endpoint-1'],
+      requested_model: 'qwen', actual_model: '', fallback_used: false, summary: {}, batches: [batch],
+    } } }
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue(response)
+    const store = useCasesStore()
+    await store.pollAiJob('job-failed', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiError).toBe('AI 服务调用失败，请稍后重试或检查模型配置')
+
+    get.mockResolvedValue({ data: { job: { ...response.data.job, batches: [
+      { ...batch, error_code: 'gateway_timeout' }, { ...batch, id: 'batch-2', error_code: 'enqueue_failed' },
+    ] } } })
+    await store.pollAiJob('job-failed', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiError).toBe('AI 服务调用失败，请稍后重试或检查模型配置')
+  })
+
   it('keeps a readable validation reason when AI generation ends in failure', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
       job: {

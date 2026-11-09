@@ -1184,6 +1184,15 @@ function delay(milliseconds: number): Promise<void> {
 
 function aiJobFailureMessage(job: AiJob): string {
   if (!['failed', 'failed_gateway', 'failed_validation'].includes(job.state)) return ''
+  if (job.state === 'failed_gateway') {
+    const failedBatches = job.batches.filter(batch => batch.state === 'failed_gateway')
+    if (failedBatches.length && failedBatches.every(batch => batch.error_code === 'enqueue_failed')) {
+      return '任务未能进入执行队列，未发起模型调用；请稍后重试或联系管理员检查任务队列'
+    }
+    if (failedBatches.length && failedBatches.every(batch => batch.error_code === 'gateway_timeout')) {
+      return '模型服务或连接等待超时，本次未生成新草稿；请稍后重试或联系管理员检查模型服务'
+    }
+  }
   const issues = job.batches.flatMap(batch => batch.validation_errors || [])
   const issue = issues.find(item => typeof item.message === 'string')
   if (issue?.code === 'missing_endpoint_coverage') {
