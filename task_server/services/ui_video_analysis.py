@@ -150,7 +150,9 @@ def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=
         if not isinstance(event['uncertainties'],list) or len(event['uncertainties'])>10: raise ValueError('video_model_invalid')
         event['uncertainties']=[_text(q) for q in event['uncertainties']]
         if event['action']=='navigateBack' and (event['target']!='上一页面' or event['value']!=''):
-            raise ValueError('video_action_invalid')
+            error=ValueError('video_action_invalid')
+            error.action_reason='navigate_back_contract'
+            raise error
         if event['action']=='dismissKeyboard' and (event['target']!='当前页面的软键盘' or event['value']!=''):
             raise ValueError('video_action_invalid')
         if event['action']=='aiInput':

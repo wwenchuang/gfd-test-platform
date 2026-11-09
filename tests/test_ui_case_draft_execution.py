@@ -550,3 +550,41 @@ def test_planner_cannot_erase_masked_executable_source_field(draft_env,indexed,f
     edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'steps':proposal['steps'],'questions':[]})
     with pytest.raises(ValueError,match='draft_gate_required'):
         trial(edited,'masked-'+field+'-'+str(indexed))
+
+
+def test_probe_navigation_correction_preserves_first_question_to_trial_gate(draft_env,monkeypatch):
+    from task_server.services import ui_video_touch_targets as targets
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]];calls=[]
+    def model(*a,**kw):
+        calls.append(1)
+        event={'action':'navigateBack','target':'页面名称' if len(calls)==1 else '上一页面',
+               'value':'','frame_refs':['frame-002'],'observation':'返回','uncertainties':[]}
+        return {'events':[event],'uncertainties':['返回方式仍需核对'] if len(calls)==1 else [],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    questions=targets.bind_uncertain_hints([],hints)
+    assert len(calls)==2 and any('返回方式仍需核对' in q for q in questions)
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':questions})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'probe-format-retry-question')
+
+
+def test_probe_invalid_navigation_empty_retry_blocks_actual_trial(draft_env,monkeypatch):
+    from task_server.services import ui_video_touch_targets as targets
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]];calls=[]
+    def model(*a,**kw):
+        calls.append(1)
+        event={'action':'navigateBack','target':'页面名','value':'','frame_refs':['frame-002'],'observation':'返回','uncertainties':[]}
+        return {'events':[event] if len(calls)==1 else [],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    questions=targets.bind_uncertain_hints([],targets.probe(frames,[detail],assets,1000,lambda:False))
+    assert len(calls)==2 and questions
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':questions})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'probe-invalid-first-candidate')
