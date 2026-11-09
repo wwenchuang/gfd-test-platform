@@ -2865,6 +2865,14 @@ def _get_week2_real(handler, qs):
         handler._json({'ok': True, 'results': week2_real.list_results(actor[0], username=actor[1])})
 
 
+@route_get("/api/platform/practice-cleanup-evidence")
+def _get_practice_cleanup_evidence(handler, qs):
+    from task_server.services import practice_cleanup_evidence
+    actor = _week2_real_actor(handler)
+    if actor:
+        handler._json({'ok': True, 'evidence': practice_cleanup_evidence.get_evidence(*actor)})
+
+
 @route_post("/api/platform/week2-real")
 def _post_week2_real(handler, qs):
     from task_server.services import week2_real

@@ -101,7 +101,8 @@ class ResponseMixin:
         self.send_response(code)
         self._cors()
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        if getattr(self, "_access_path", "").startswith("/api/ui-executions"):
+        if (getattr(self, "_access_path", "").startswith("/api/ui-executions") or
+                getattr(self, "_access_path", "") == "/api/platform/practice-cleanup-evidence"):
             self.send_header("Cache-Control", "private, no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
