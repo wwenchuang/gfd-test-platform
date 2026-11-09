@@ -171,6 +171,10 @@ class SkillSchemaError(ValueError):
         self.model_feedback = f"输出结构错误：{path} {reason}。按 schema 重新输出完整对象。"
 
 
+class TouchTargetProviderTimeoutError(RuntimeError):
+    """Exact completed Gateway timeout response for the touch-target probe only."""
+
+
 def validate_json_schema_minimal(value, schema, path="$"):
     """最小化 JSON Schema 校验。"""
     expected = schema.get("type")
@@ -492,8 +496,9 @@ def run_ai_skill(
                     image_assets=image_assets,
                     runtime_trace=runtime_trace,
                     max_tokens=max_tokens,
+                    version=version,
                     **({"video_stage": video_stage, "output_schema": output_schema,
-                        "raw_receipt": raw_receipt, "version": version,
+                        "raw_receipt": raw_receipt,
                         "request_proof_hook": request_proof_hook} if stage else {}),
                 ),
                 timeout,
@@ -555,6 +560,9 @@ def run_ai_skill(
                 if isinstance(repair_meta, dict):
                     repair_meta["succeeded"] = True
             return validated
+        except TouchTargetProviderTimeoutError:
+            runtime_trace.update({"source": "ai_gateway", "error": "touch_target_provider_timeout"})
+            raise
         except TimeoutError:
             runtime_trace.update({"source": "ai_gateway", "error": f"AI Gateway skill {skill_name} timeout"})
             raise
@@ -794,6 +802,9 @@ def ai_gateway_skill_content(
             error_text = str(error_data.get("error") or error_data.get("message") or "AI Gateway skill 调用失败")
         except RuntimeError as decode_exc:
             error_text = str(decode_exc)
+        if skill_name == 'ui_video_observe' and version == 'touch-target' and exc.code == 500 and error_text == 'Request timed out.':
+            exc.close()
+            raise TouchTargetProviderTimeoutError('touch_target_provider_timeout') from None
         raise RuntimeError(f"AI Gateway HTTP {exc.code}：{error_text}") from exc
     except TimeoutError:
         if stage:

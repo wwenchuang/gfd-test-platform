@@ -71,6 +71,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
     size=30 if len(frames)>60 else 60
     windows=[frames[i:i+size] for i in range(0,max(1,len(frames)-4),size-4)]
     events=[];questions=[];secrets=list(prior_secrets);multi=False;previous_end=-1
+    touch_target_timeout_retry_budget={'used':False}
     def preserve_new_questions(old,event):
         from .ui_video_business_inputs import _MANUAL
         questions.extend(f"片段 {event['start_ms']/1000:g}–{event['end_ms']/1000:g} 秒：{q}"
@@ -104,7 +105,8 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         from .ui_video_touch_detail import append_details
         payload['detail_frames']=append_details(images,root,assets,cancelled,current_ids)
         from .ui_video_touch_targets import probe,conflict,bind_uncertain_hints
-        payload['touch_targets']=probe(images,payload['detail_frames'],assets,duration,cancelled)
+        payload['touch_targets']=probe(images,payload['detail_frames'],assets,duration,cancelled,
+                                       touch_target_timeout_retry_budget)
         for attempt in range(2):
             if cancelled():raise ValueError('video_cancelled')
             try:

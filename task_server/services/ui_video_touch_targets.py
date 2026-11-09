@@ -3,8 +3,9 @@ import re
 from . import ai_skill_service as ai
 
 
-def probe(frames, details, assets, duration, cancelled):
+def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=None):
     from .ui_video_analysis import _bind_whole_evidence, validate_analysis
+    timeout_retry_budget = timeout_retry_budget if isinstance(timeout_retry_budget, dict) else {'used': False}
     by_name = {asset['name']: asset for asset in assets}
     hints = []
     schema_correction_used = False
@@ -24,16 +25,22 @@ def probe(frames, details, assets, duration, cancelled):
                    'detail_frames':[detail], 'duration_ms':duration}
         # One extra schema correction for the entire probe, not per detail.
         # Never turn malformed output into an empty successful observation.
-        for attempt in range(2):
+        while True:
             if cancelled():raise ValueError('video_cancelled')
             try:
                 result = ai.run_ai_skill('ui_video_observe', payload, version='touch-target',
                     image_assets=[by_name[f['frame_id']] for f in selected]+[by_name[detail['frame_id']]],
                     timeout=120, retry_count=0, max_tokens=5000, repair_invalid_json=False)
                 break
+            except ai.TouchTargetProviderTimeoutError:
+                if cancelled():raise ValueError('video_cancelled') from None
+                if timeout_retry_budget.get('used'):
+                    raise
+                timeout_retry_budget['used'] = True
+                continue
             except ai.SkillSchemaError as error:
                 if cancelled():raise ValueError('video_cancelled') from None
-                if schema_correction_used or attempt:raise
+                if schema_correction_used:raise
                 schema_correction_used = True
                 payload['validation_feedback'] = error.model_feedback + ' 重新核对同一组原帧，按规定JSON结构输出；不补造操作，不省略events字段。'
         if cancelled():

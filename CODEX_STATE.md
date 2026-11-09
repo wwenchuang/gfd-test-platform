@@ -14476,3 +14476,10 @@ git diff --check
 
 - 修正 `ui_video_windows.py` 的观察重试反馈：根对象需同时输出 `events`、`uncertainties`、`multiple_scenarios`，且后者需按画面判断；事件字段限定与根字段分开表述。保留真实当前窗帧引用、时间排序、完整操作、上下文帧不可作为事件证据及禁止模型输出时间/证据类型字段。未改验证、重试数量或模型安全门禁。
 - 新增真实第二次渲染 prompt 的合同测试，先复现旧反馈缺陷再修复。新增测试及相邻引用/触点回归 83 项通过，py_compile 与 diff check 通过。仅本地修改，未提交、未推送。
+
+## 2026-11-09 触点探针 Gateway 超时有界重试（本地）
+
+- 仅在 `ui_video_observe` 的 `touch-target` Gateway 调用中，将 HTTP 500 且 JSON `error` 精确为 `Request timed out.` 映射为专用超时类型；大小写、文本、状态码或版本不匹配均不归类。普通本地 `TimeoutError` 不重试。
+- `probe` 对该类型至多重试一次同一帧，并接受共享预算；单次 `observe_windows` 的全部窗口共用一次预算。原 schema 修正预算及取消检查保留，不产生默认/空触点。
+- 新增分类、异常链及预算测试；新增测试、touch-target/schema/reference 相邻回归 97 项通过，相关三模块 py_compile 与 diff check 通过。仅本地修改，未提交或推送。
+- 复核修正：专用 Gateway 结束请求超时异常继承 `RuntimeError`，且 `run_ai_skill` 显式透传，避免 Python 3.11+ 中 `concurrent.futures.TimeoutError` 与 `TimeoutError` 同一导致硬超时误分类。新增完整HTTPError→Gateway→run_ai_skill→probe测试及仍运行后台线程的普通本地超时不重试测试。当前容器 Python 3.9.6；建议在 Python 3.12.5 复跑 `python3.12 -m pytest -q tests/test_ui_video_touch_target_timeout_retry.py tests/test_ui_video_touch_targets.py tests/test_ui_video_schema_recovery.py tests/test_ui_video_reference_feedback.py`。
