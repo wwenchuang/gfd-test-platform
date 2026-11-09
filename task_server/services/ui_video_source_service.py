@@ -18,6 +18,8 @@ from pathlib import Path
 MAX_BYTES = 200 * 1024 * 1024
 MAX_DURATION_MS = 600000
 MAX_FRAMES = 360
+MAX_ORDINARY_FRAMES = 384
+MAX_WEAK_EVIDENCE_FRAMES = MAX_ORDINARY_FRAMES - MAX_FRAMES
 MAX_EXTRACTED_FRAME_BYTES = 32 * 1024 * 1024
 MAX_VIDEO_LIBRARY_BYTES = 4 * 1024 ** 3
 _ADMISSION = threading.Lock()
@@ -398,12 +400,37 @@ def _select_micro_motion(groups, times, base, limit, cancelled=lambda:False, cha
     return result,count
 
 
-def _check_extracted_frame_bytes(files):
+def _check_extracted_frame_bytes(files, error='video_frames_invalid'):
     if sum(path.stat().st_size for path in files)>MAX_EXTRACTED_FRAME_BYTES:
+        raise ValueError(error)
+
+
+def _add_weak_evidence(times, changes, original, extra_limit, cancelled=lambda: False):
+    """Retain bounded weak visual changes, not presumed user actions."""
+    from math import isfinite
+    if cancelled():raise ValueError('video_cancelled')
+    if (len(times)!=len(changes) or type(extra_limit) is not int or extra_limit<0 or
+        any(not isfinite(t) or not isfinite(c) or (i and t<=times[i-1])
+            for i,(t,c) in enumerate(zip(times,changes)))):
         raise ValueError('video_frames_invalid')
+    required=set(original)
+    for i in range(1,len(times)-1):
+        # The worker cancellation callback reads the store; amortize it across
+        # bounded CPU-only scan batches instead of querying once per frame.
+        if i%256==0 and cancelled():raise ValueError('video_cancelled')
+        if not (.04<=changes[i]<.08 and .04<=changes[i+1]<.08 and
+                30<=times[i+1]-times[i]<=150 and changes[i-1]<.03):continue
+        response=next((j for j in range(i+2,min(len(times),i+20))
+                       if times[j]-times[i]<=500 and .08<=changes[j]<12),None)
+        if response is None or any(c>=12 for c in changes[i+2:response]):continue
+        required.update((times[i-1],times[i],times[i+1],times[response]))
+        if len(required-set(original))>extra_limit:
+            raise ValueError('video_weak_evidence_limit')
+    if cancelled():raise ValueError('video_cancelled')
+    return required
 
 
-def decode_video(video, output, cancelled):
+def decode_video(video, output, cancelled, weak_evidence=False):
     if cancelled(): raise ValueError('video_cancelled')
     probe, _ = _process([_tool('ffprobe'), '-v', 'error', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-show_format', '-show_streams', '-of', 'json', str(video)], cancelled, 20)
     try:
@@ -494,6 +521,9 @@ def decode_video(video, output, cancelled):
         return "("+expression(items[:middle])+"+"+expression(items[middle:])+")"
     base_times={all_times[i] for i in indexes}
     combined,sampled_groups=_select_micro_motion(micro_groups,micro_times,base_times,MAX_FRAMES-1,cancelled,changes=micro_changes)
+    original_times=set(combined)
+    if weak_evidence:
+        combined=_add_weak_evidence(micro_times,micro_changes,combined,MAX_WEAK_EVIDENCE_FRAMES,cancelled)
     expected_times=sorted(combined)
     if combined-base_times:
         # Select by original timestamps: sensitive-pass indexes are not indexes
@@ -512,16 +542,20 @@ def decode_video(video, output, cancelled):
     times = [_timestamp_ms(t) for t in re.findall(rb'\bn:\s*\d+.*?pts_time:([\d.e+\-]+)', log)]
     files = sorted(output.glob('frame-*.jpg'))
     if not files or len(times) != len(files) or times!=expected_times: raise ValueError('video_frames_invalid')
-    _check_extracted_frame_bytes(files)
+    byte_error='video_frame_bytes_limit' if weak_evidence else 'video_frames_invalid'
+    _check_extracted_frame_bytes(files,byte_error)
     # Always decode a last-frame anchor to expose missing endings rather than
     # representing an earlier frame as the end of the recording.
     tail = output/'frame-end.jpg'
     _process([_tool('ffmpeg'), '-nostdin', '-v', 'error', '-threads', '1', '-sseof', '-0.08', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', str(video), '-xerror', '-an', '-sn', '-dn', '-vf', scale, '-frames:v', '1', '-threads', '1', '-pix_fmt', 'yuvj420p', '-y', str(tail)], cancelled, 20)
+    original_tail=tail.exists() and duration-80>max(original_times)
     if tail.exists() and duration-80>times[-1]:
         files.append(tail);times.append(duration-80)
-    elif tail.exists():tail.unlink()
-    if len(files)>MAX_FRAMES: raise ValueError('video_split_required')
-    _check_extracted_frame_bytes(files)
+    elif tail.exists():
+        if weak_evidence and original_tail:raise ValueError('video_weak_evidence_limit')
+        tail.unlink()
+    if len(files)>(MAX_ORDINARY_FRAMES if weak_evidence else MAX_FRAMES): raise ValueError('video_split_required')
+    _check_extracted_frame_bytes(files,byte_error)
     from PIL import Image, ImageChops, ImageStat
     signatures = []
     black = True

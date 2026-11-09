@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiClient } from '../api/client'
+import { ApiClient, apiClient } from '../api/client'
 import type { ApiEndpoint, ApiTestTask, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
@@ -698,6 +698,266 @@ describe('WorkbenchView debug workflow', () => {
     expect(context.sourceRevisionId).toBe('source-old')
     expect(tasks.task?.id).toBe('task-old')
     expect(wrapper.text()).toContain('已保存 1 个接口')
+  })
+
+  it('does not debug after the confirmed production environment changes and changes back during save', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    let finish!: (version: CaseVersion) => void
+    const prepare = vi.spyOn(cases, 'saveForDebug').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { props: ['endpoints'], emits: ['activate'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises()
+    context.environmentRevisions = []
+    confirm.mockReturnValueOnce(false)
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringMatching(/无法确认.*环境.*可能.*生产.*真实发送/))
+    context.environmentRevisions = [{ id: 'environment-1', environment_id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }]
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*真实发送/))
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(confirm).toHaveBeenCalledTimes(2)
+    context.selectEnvironmentRevision('environment-2')
+    context.selectEnvironmentRevision('environment-1')
+    finish({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    await flushPromises()
+    expect(saveTask).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/草稿已保存.*调试未开始.*范围.*变化/)
+    wrapper.unmount()
+  })
+
+  it('does not save a task or debug when the environment changes while saving workspace', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    let finishContext!: () => void
+    vi.spyOn(context, 'saveContext').mockImplementation(() => new Promise(resolve => { finishContext = resolve }))
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { props: ['endpoints'], emits: ['activate'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click'); await flushPromises()
+    context.selectEnvironmentRevision('environment-2')
+    finishContext(); await flushPromises()
+    expect(saveTask).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/草稿已保存.*调试未开始/)
+    wrapper.unmount()
+  })
+
+  it('does not write the confirmed task when another same-scope task is selected while saving workspace', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    let finishContext!: () => void
+    vi.spyOn(context, 'saveContext').mockImplementation(() => new Promise(resolve => { finishContext = resolve }))
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { props: ['endpoints'], emits: ['activate'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click'); await flushPromises()
+    tasks.task = { id: 'task-b', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1', selected_endpoint_ids: [], name: 'B' } as unknown as ApiTestTask
+    tasks.task = null
+    finishContext(); await flushPromises()
+    expect(saveTask).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/草稿已保存.*调试未开始/)
+    wrapper.unmount()
+  })
+
+  it.each(['debug-task-save', 'run-workspace-save'])('does not execute when production scope changes during %s', async phase => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    let finishWorkspace!: () => void
+    const saveContext = vi.spyOn(context, 'saveContext').mockImplementation(() => phase === 'run-workspace-save' ? new Promise(resolve => { finishWorkspace = resolve }) : Promise.resolve())
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    let finishTask!: (value: never) => void
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockImplementation(() => phase === 'debug-task-save' ? new Promise(resolve => { finishTask = resolve }) : Promise.resolve({ id: 'task-1' } as never))
+    const run = vi.spyOn(tasks, 'runCurrent').mockResolvedValue({ id: 'execution-1' } as never)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }, { path: '/runs', name: 'runs', component: { template: '<div />' } }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: { name: 'TaskStatusStrip', emits: ['run'], template: `<button data-testid="run-task" @click="$emit('run')">run</button>` },
+      EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { name: 'EndpointTree', props: ['endpoints'], emits: ['activate', 'selection-change'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0]); $emit('selection-change', [endpoints[0].id])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises()
+    await wrapper.get(phase === 'debug-task-save' ? '[data-testid="editor-debug"]' : '[data-testid="run-task"]').trigger('click'); await flushPromises()
+    await wrapper.get(phase === 'debug-task-save' ? '[data-testid="editor-debug"]' : '[data-testid="run-task"]').trigger('click')
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(saveContext).toHaveBeenCalledTimes(1)
+    context.selectEnvironmentRevision('environment-2'); context.selectEnvironmentRevision('environment-1')
+    if (phase === 'debug-task-save') finishTask({ id: 'task-1' } as never)
+    else finishWorkspace()
+    await flushPromises()
+    if (phase === 'run-workspace-save') expect(saveTask).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(phase === 'debug-task-save' ? /草稿已保存.*调试未开始/ : /范围已变化.*任务未保存/)
+    wrapper.unmount()
+  })
+
+  it('does not debug an older saved draft when editing continues during task save', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    let finishTask!: (value: never) => void
+    vi.spyOn(tasks, 'saveSelection').mockImplementation(() => new Promise(resolve => { finishTask = resolve }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { name: 'EndpointTree', props: ['endpoints'], emits: ['activate', 'selection-change'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0]); $emit('selection-change', [endpoints[0].id])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click'); await flushPromises()
+    cases.updateDraft(ENDPOINT.id, { ...JSON.parse(JSON.stringify(cases.drafts[ENDPOINT.id])), name: 'new edit' })
+    finishTask({ id: 'task-1' } as never); await flushPromises()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/草稿已保存.*调试未开始/)
+    wrapper.unmount()
+  })
+
+  it('reports a submitted debug instead of restoring the new scope after a late scope change', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    let finishDebug!: () => void
+    const debug = vi.spyOn(cases, 'debug').mockImplementation(() => new Promise(resolve => { finishDebug = resolve }))
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); const restore = vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { props: ['endpoints'], emits: ['activate'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises(); restore.mockClear()
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click'); await flushPromises()
+    expect(debug).toHaveBeenCalledWith(expect.objectContaining({ environmentRevisionId: 'environment-1' }))
+    context.selectEnvironmentRevision('environment-2')
+    finishDebug(); await flushPromises()
+    expect(restore).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/调试请求已提交.*范围已变化.*执行记录/)
+    wrapper.unmount()
+  })
+
+  it('keeps the newly selected task when a real task-save response finishes late', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const taskA = { id: 'task-a', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1', selected_endpoint_ids: [ENDPOINT.id], name: 'A' } as ApiTestTask
+    const taskB = { ...taskA, id: 'task-b', name: 'B' }
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'put').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { props: ['endpoints'], emits: ['activate'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); tasks.task = taskA
+    await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click'); await flushPromises()
+    tasks.task = taskB
+    finish({ data: { task: taskA } }); await flushPromises()
+    expect(tasks.task?.id).toBe('task-b')
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/草稿已保存.*调试未开始/)
+    wrapper.unmount()
+  })
+
+  it('does not overwrite another page’s task after leaving while task save is in flight', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue({ id: 'version-new', endpoint_id: ENDPOINT.id, version: 2 } as CaseVersion)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const taskA = { id: 'task-a', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1', selected_endpoint_ids: [ENDPOINT.id], name: 'A' } as ApiTestTask
+    const taskB = { ...taskA, id: 'task-b', name: 'B' }
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'put').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, AiAssistant: true, DebugDrawer: true,
+      EndpointTree: { props: ['endpoints'], emits: ['activate'], template: `<button data-testid="activate" @click="$emit('activate', endpoints[0])">activate</button>` },
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises(); tasks.task = taskA
+    await wrapper.get('[data-testid="activate"]').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="editor-debug"]').trigger('click'); await flushPromises()
+    wrapper.unmount()
+    tasks.task = taskB
+    finish({ data: { task: taskA } }); await flushPromises()
+    expect(tasks.task?.id).toBe('task-b')
+    expect(debug).not.toHaveBeenCalled()
   })
 
   it('saves the current draft and debugs the exact version returned by that save', async () => {
@@ -1509,7 +1769,7 @@ describe('WorkbenchView debug workflow', () => {
     await wrapper.get('[data-testid="run-task"]').trigger('click')
     await flushPromises()
 
-    expect(run).toHaveBeenCalledWith('environment-current')
+    expect(run).toHaveBeenCalledWith('environment-current', { isCurrent: expect.any(Function), expectedTaskId: 'task-old' })
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*3D 家用基线回归.*真实发送/))
     expect(router.currentRoute.value.name).toBe('runs')
     expect(router.currentRoute.value.query.executionId).toBe('execution-1')

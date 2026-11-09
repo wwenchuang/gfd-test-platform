@@ -37,7 +37,9 @@ describe('CaseEvidence', () => {
     const guide = wrapper.get('[data-testid="cleanup-verification-guide"]')
     expect(guide.attributes('open')).toBeUndefined()
     expect(guide.text()).toContain('核对本次清理')
-    expect(guide.text()).toContain('唯一资源标识')
+    expect(guide.text()).toContain('响应和提取变量中的资源标识仅是线索')
+    expect(guide.text()).toContain('可信证据确认资源属于本轮')
+    expect(guide.text()).toContain('无法确认时，停止重试和删除')
     expect(guide.text()).toContain('不要按最新记录或批量删除')
     expect(guide.text()).toContain('不代表物理删除或关联资源已清理')
 
@@ -100,6 +102,7 @@ describe('CaseEvidence', () => {
     expect(wrapper.find('[data-testid="cleanup-evidence-warning"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="cleanup-evidence-passed"]').text()).toContain('清理步骤已记录为通过')
     expect(wrapper.get('[data-testid="cleanup-evidence-passed"]').text()).toContain('实际资源状态仍需核对')
+    expect(wrapper.get('[data-testid="cleanup-evidence-passed"]').text()).toContain('不代表资源及关联对象已清除')
   })
 
   it('marks skipped cleanup as unconfirmed, even when other cleanup steps passed', () => {

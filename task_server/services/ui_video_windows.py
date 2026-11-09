@@ -65,11 +65,15 @@ def _same_scroll_direction_conflict(old,event):
             {k:v for k,v in left.items() if k!='direction'}=={k:v for k,v in right.items() if k!='direction'})
 
 
+def observation_windows(frames):
+    size=30 if len(frames)>60 else 60
+    return [frames[i:i+size] for i in range(0,max(1,len(frames)-4),size-4)]
+
+
 def observe_windows(frames,duration,root,cancelled,progress=None,review_events=None,prior_secrets=()):
     from . import ai_skill_service as ai
     from .ui_video_analysis import _bind_whole_evidence,validate_analysis
-    size=30 if len(frames)>60 else 60
-    windows=[frames[i:i+size] for i in range(0,max(1,len(frames)-4),size-4)]
+    windows=observation_windows(frames)
     events=[];questions=[];secrets=list(prior_secrets);multi=False;previous_end=-1
     touch_target_timeout_retry_budget={'used':False}
     def preserve_new_questions(old,event):

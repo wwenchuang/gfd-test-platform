@@ -320,6 +320,116 @@ describe('CasesView', () => {
     expect(wrapper.text()).not.toContain('项目选项 503')
   })
 
+  it.each(['editor', 'saved-version'])('stops %s debugging when the confirmed production scope changes and changes back', async mode => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', environment_id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); const version = savedCase('version-1', '收藏'); cases.registerVersion(version, false)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    let finish!: (version: CaseVersion) => void
+    const prepare = vi.spyOn(cases, 'saveForDebug').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1' } as never)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: {
+      ContextBar: true, EndpointDetail: true, DebugDrawer: true,
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises()
+    if (mode === 'editor') {
+      wrapper.findComponent(CaseListPanel).vm.$emit('edit-version', version)
+      await flushPromises()
+      await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    } else wrapper.findComponent(CaseListPanel).vm.$emit('run-version', version)
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*真实发送/))
+    if (mode === 'editor') await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    else wrapper.findComponent(CaseListPanel).vm.$emit('run-version', version)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(confirm).toHaveBeenCalledTimes(1)
+    context.selectEnvironmentRevision('environment-2'); context.selectEnvironmentRevision('environment-1')
+    finish(version); await flushPromises()
+    expect(saveTask).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/草稿已保存.*调试未开始.*范围.*变化/)
+    wrapper.unmount()
+  })
+
+  it.each(['editor', 'saved-version'])('does not start %s debug when a draft changes during task save', async mode => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', environment_id: 'environment-1', project_id: 'project-1', name: 'production', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue(); vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); const version = savedCase('version-1', 'original'); cases.registerVersion(version, false)
+    cases.draftSourceRevisionId = 'source-1'; cases.draftScopeReady = true
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(cases, 'saveForDebug').mockResolvedValue(version)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    let finishTask!: (task: never) => void
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockImplementation(() => new Promise(resolve => { finishTask = resolve }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: {
+      ContextBar: true, EndpointDetail: true, DebugDrawer: true,
+      CaseEditor: { emits: ['debug'], template: `<button data-testid="editor-debug" @click="$emit('debug')">debug</button>` },
+    } } })
+    await flushPromises()
+    if (mode === 'editor') {
+      wrapper.findComponent(CaseListPanel).vm.$emit('edit-version', version); await flushPromises()
+      await wrapper.get('[data-testid="editor-debug"]').trigger('click')
+    } else wrapper.findComponent(CaseListPanel).vm.$emit('run-version', version)
+    await flushPromises()
+    expect(saveTask).toHaveBeenCalledOnce()
+    cases.updateDraft(ENDPOINT.id, { ...JSON.parse(JSON.stringify(cases.drafts[ENDPOINT.id])), name: 'edited after save' })
+    finishTask({ id: 'task-1' } as never); await flushPromises()
+    expect(debug).not.toHaveBeenCalled()
+    expect(cases.drafts[ENDPOINT.id].name).toBe('edited after save')
+    expect(wrapper.text()).toMatch(/调试未开始/)
+    wrapper.unmount()
+  })
+
+  it.each(['workspace', 'task', 'workspace-task-switch'])('does not debug when production scope changes during %s save', async phase => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1', environmentRevisions: [{ id: 'environment-1', environment_id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    let finishWorkspace!: () => void
+    vi.spyOn(context, 'saveContext').mockImplementation(() => phase !== 'task' ? new Promise(resolve => { finishWorkspace = resolve }) : Promise.resolve())
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); const version = savedCase('version-1', '收藏'); cases.registerVersion(version, false)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const prepare = vi.spyOn(cases, 'saveForDebug').mockResolvedValue(version)
+    const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    let finishTask!: (task: never) => void
+    const saveTask = vi.spyOn(tasks, 'saveSelection').mockImplementation(() => phase === 'task' ? new Promise(resolve => { finishTask = resolve }) : Promise.resolve({ id: 'task-1' } as never))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { ContextBar: true, EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises()
+    wrapper.findComponent(CaseListPanel).vm.$emit('run-version', version)
+    await flushPromises()
+    wrapper.findComponent(CaseListPanel).vm.$emit('run-version', version)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(confirm).toHaveBeenCalledTimes(1)
+    if (phase === 'workspace-task-switch') {
+      tasks.task = { id: 'task-b', project_id: 'project-1', source_revision_id: 'source-1', environment_revision_id: 'environment-1', selected_endpoint_ids: [], name: 'B' } as never
+      tasks.task = null
+    } else { context.selectEnvironmentRevision('environment-2'); context.selectEnvironmentRevision('environment-1') }
+    if (phase !== 'task') finishWorkspace()
+    else finishTask({ id: 'task-1' } as never)
+    await flushPromises()
+    if (phase !== 'task') expect(saveTask).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+    expect(wrapper.text()).toMatch(/草稿已保存.*调试未开始/)
+    wrapper.unmount()
+  })
+
   it('shows case management as an independent page and edits a saved case', async () => {
     const context = useContextStore()
     Object.assign(context, {
@@ -349,7 +459,10 @@ describe('CasesView', () => {
     const loadCases = vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
     vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
     const moveCases = vi.spyOn(cases, 'updateVersionGroups').mockResolvedValue([])
-    const saveForDebug = vi.spyOn(cases, 'saveForDebug').mockResolvedValue(version)
+    const saveForDebug = vi.spyOn(cases, 'saveForDebug').mockImplementation(async endpointId => {
+      delete cases.dirtyDrafts[endpointId]
+      return version
+    })
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue({} as never)
 
     const tasks = useTasksStore()
@@ -444,6 +557,7 @@ describe('CasesView', () => {
     let preparedName = ''
     saveForDebug.mockImplementationOnce(async endpointId => {
       preparedName = cases.drafts[endpointId].name
+      delete cases.dirtyDrafts[endpointId]
       return version
     })
     confirm.mockReturnValue(true)

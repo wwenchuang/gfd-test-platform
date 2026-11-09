@@ -410,12 +410,53 @@ def _bind_whole_evidence(result, frames):
     return bound
 
 
+def _check_extended_whole_assets(frames, root, cancelled):
+    """Before extended analyses, verify every original asset is available."""
+    from PIL import Image, UnidentifiedImageError
+    from .ui_video_source_service import MAX_EXTRACTED_FRAME_BYTES
+    from .ui_video_windows import observation_windows,temporal_context_frames
+    total=0;last=-1;names=set();sizes={}
+    for index,frame in enumerate(frames):
+        if index%32==0 and cancelled():raise ValueError('video_cancelled')
+        if not isinstance(frame,dict):raise ValueError('video_vision_limit')
+        name=frame.get('frame_id');timestamp=frame.get('timestamp_ms')
+        if (not isinstance(name,str) or not re.fullmatch(r'frame-(?:[0-9]{3,6}|end)',name)
+            or name in names or type(timestamp) is not int or timestamp<=last):
+            raise ValueError('video_vision_limit')
+        names.add(name);last=timestamp
+        path=root/'frames'/(name+'.jpg')
+        try:
+            size=path.stat().st_size
+            if not path.is_file() or not 0<size<=8*1024*1024:raise ValueError('video_vision_limit')
+            total+=size
+            if total>MAX_EXTRACTED_FRAME_BYTES:raise ValueError('video_frame_bytes_limit')
+            with Image.open(path) as image:
+                if (image.format!='JPEG' or not 1<=image.width<=4096 or
+                    not 1<=image.height<=4096 or image.width*image.height>9000000):
+                    raise ValueError('video_vision_limit')
+                image.load()
+            sizes[name]=size
+        except (OSError,UnidentifiedImageError,Image.DecompressionBombError):
+            raise ValueError('video_vision_limit') from None
+    # Match the initial observation path's actual window and temporal context.
+    # Review-only context depends on later model output and is checked at use.
+    windows=observation_windows(frames)
+    for window in windows:
+        if cancelled():raise ValueError('video_cancelled')
+        temporal=temporal_context_frames(window,frames) if len(windows)>1 else []
+        ids={frame['frame_id'] for frame in window+temporal}
+        if sum(4*((sizes[name]+2)//3) for name in ids)>10*1024*1024:
+            raise ValueError('video_vision_limit')
+    if cancelled():raise ValueError('video_cancelled')
+
+
 def analyze_whole_frames(document, root, cancelled, progress=None):
     """One full-context observation, one bounded plan, at most one correction."""
     frames=document['media']['frames'];duration=document['media']['duration_ms']
     if cancelled():raise ValueError('video_cancelled')
-    from .ui_video_source_service import MAX_FRAMES
-    if not 2<=len(frames)<=MAX_FRAMES:raise ValueError('video_vision_limit')
+    from .ui_video_source_service import MAX_FRAMES,MAX_ORDINARY_FRAMES
+    if not 2<=len(frames)<=MAX_ORDINARY_FRAMES:raise ValueError('video_vision_limit')
+    if len(frames)>MAX_FRAMES:_check_extended_whole_assets(frames,root,cancelled)
     from .ui_video_windows import observe_windows
     observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress)
     first_pass=copy.deepcopy(observed['events'])
