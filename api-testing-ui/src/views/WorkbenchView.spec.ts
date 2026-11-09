@@ -370,10 +370,13 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(context, 'loadOptions').mockResolvedValue()
 
     const assets = useAssetsStore()
+    const lightweight = { ...ENDPOINT, operation: {} }
+    const detailed = { ...lightweight, operation: { responses: { '200': { description: '合同响应' } } } }
     vi.spyOn(assets, 'load').mockImplementation(async () => {
-      assets.endpoints = [ENDPOINT]
+      assets.endpoints = [lightweight]
       assets.state = 'ready'
     })
+    const loadDetail = vi.spyOn(assets, 'ensureEndpointDetail').mockResolvedValue(detailed)
 
     const cases = useCasesStore()
     vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
@@ -409,14 +412,15 @@ describe('WorkbenchView debug workflow', () => {
           DebugDrawer: true,
           EndpointDetail: {
             props: ['endpoint'],
-            template: '<div data-testid="active-endpoint">{{ endpoint?.summary || "未选择" }}</div>',
+            template: '<div data-testid="active-endpoint">{{ endpoint?.summary || "未选择" }} {{ endpoint?.operation?.responses?.[200]?.description }}</div>',
           },
         },
       },
     })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="active-endpoint"]').text()).toBe('我的收藏列表')
+    expect(loadDetail).toHaveBeenCalledWith(ENDPOINT.id, expect.anything())
+    expect(wrapper.get('[data-testid="active-endpoint"]').text()).toBe('我的收藏列表 合同响应')
     expect(wrapper.get('[data-testid="endpoint-tree-tab"]').text()).toBe('selected')
   })
 
@@ -619,6 +623,163 @@ describe('WorkbenchView debug workflow', () => {
     expect(context.sourceRevisionId).toBe('source-old')
     expect(tasks.task?.id).toBe('task-old')
     expect(wrapper.text()).toContain('已保存 1 个接口')
+  })
+
+  it('keeps the newer selection while a multi-endpoint task restores its first contract', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-old', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [
+        { id: 'source-old', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 7, endpoint_count: 1007 },
+        { id: 'source-new', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 10, endpoint_count: 1025 },
+      ],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 29 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async sourceRevisionId => {
+      assets.endpoints = sourceRevisionId === 'source-old' ? [ENDPOINT, { ...ENDPOINT, id: 'endpoint-second', summary: 'second' }] : [{ ...ENDPOINT, id: 'endpoint-new' }]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const oldTask = {
+      id: 'task-old', project_id: 'project-1', source_revision_id: 'source-old', environment_revision_id: 'environment-1',
+      name: '3D家用接口测试', state: 'ready', selected_endpoint_ids: [ENDPOINT.id, 'endpoint-second'], runnable_baseline_count: 1,
+      latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockImplementation(async () => {
+      tasks.task = oldTask
+      tasks.tasks = [oldTask]
+      return oldTask
+    })
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', name: 'workbench', component: WorkbenchView },
+      { path: '/tasks', name: 'tasks', component: { template: '<div />' } },
+    ] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: {
+            emits: ['update:sourceRevisionId'],
+            template: '<div><button data-testid="switch-new" @click="$emit(\'update:sourceRevisionId\', \'source-new\')">v10</button><button data-testid="switch-old" @click="$emit(\'update:sourceRevisionId\', \'source-old\')">v7</button></div>',
+          },
+          EndpointDetail: { name: 'EndpointDetail', props: ['endpoint'], template: '<div />' }, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: { name: 'EndpointTree', emits: ['activate'], template: '<div />' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('3D家用接口测试')
+    await wrapper.get('[data-testid="switch-new"]').trigger('click')
+    await flushPromises()
+    expect(context.sourceRevisionId).toBe('source-new')
+    expect(tasks.task).toBeNull()
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v7')
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v10')
+
+    let finishOld!: (endpoint: ApiEndpoint) => void
+    const second = { ...ENDPOINT, id: 'endpoint-second', summary: 'second' }
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async id => id === ENDPOINT.id
+      ? new Promise(resolve => { finishOld = resolve }) : second)
+    await wrapper.get('[data-testid="switch-old"]').trigger('click')
+    await flushPromises()
+    expect(typeof finishOld).toBe('function')
+    wrapper.findComponent({ name: 'EndpointTree' }).vm.$emit('activate', second)
+    await flushPromises()
+    finishOld(ENDPOINT)
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'EndpointDetail' }).props('endpoint')).toEqual(second)
+    expect(context.sourceRevisionId).toBe('source-old')
+    expect(tasks.task?.id).toBe('task-old')
+    expect(wrapper.text()).toContain('已保存 2 个接口')
+  })
+
+  it('does not restore old task detail after a same-project login change during AI history loading', async () => {
+    sessionStorage.setItem('sessionToken', 'account-a')
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-old', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [
+        { id: 'source-old', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 7, endpoint_count: 1007 },
+        { id: 'source-new', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 10, endpoint_count: 1025 },
+      ],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 29 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async sourceRevisionId => {
+      assets.endpoints = sourceRevisionId === 'source-old' ? [ENDPOINT, { ...ENDPOINT, id: 'endpoint-second', summary: 'second' }] : [{ ...ENDPOINT, id: 'endpoint-new' }]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const oldTask = {
+      id: 'task-old', project_id: 'project-1', source_revision_id: 'source-old', environment_revision_id: 'environment-1',
+      name: '3D家用接口测试', state: 'ready', selected_endpoint_ids: [ENDPOINT.id, 'endpoint-second'], runnable_baseline_count: 1,
+      latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockImplementation(async () => {
+      tasks.task = oldTask
+      tasks.tasks = [oldTask]
+      return oldTask
+    })
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', name: 'workbench', component: WorkbenchView },
+      { path: '/tasks', name: 'tasks', component: { template: '<div />' } },
+    ] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: {
+            emits: ['update:sourceRevisionId'],
+            template: '<div><button data-testid="switch-new" @click="$emit(\'update:sourceRevisionId\', \'source-new\')">v10</button><button data-testid="switch-old" @click="$emit(\'update:sourceRevisionId\', \'source-old\')">v7</button></div>',
+          },
+          EndpointDetail: { name: 'EndpointDetail', props: ['endpoint'], template: '<div />' }, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: { name: 'EndpointTree', emits: ['activate'], template: '<div />' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('3D家用接口测试')
+    await wrapper.get('[data-testid="switch-new"]').trigger('click')
+    await flushPromises()
+    expect(context.sourceRevisionId).toBe('source-new')
+    expect(tasks.task).toBeNull()
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v7')
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v10')
+
+    let finishHistory!: () => void
+    vi.mocked(cases.restoreLatestAiJob).mockImplementationOnce(() => new Promise<void>(resolve => { finishHistory = resolve }))
+    const loadDetail = vi.spyOn(assets, 'ensureEndpointDetail')
+    await wrapper.get('[data-testid="switch-old"]').trigger('click')
+    await flushPromises()
+    expect(typeof finishHistory).toBe('function')
+    const selectionBefore = context.selectionGeneration
+    sessionStorage.removeItem('sessionToken')
+    sessionStorage.setItem('sessionToken', 'account-b')
+    expect(context.selectionGeneration).toBe(selectionBefore)
+    finishHistory()
+    await flushPromises()
+    expect(loadDetail).not.toHaveBeenCalled()
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
   })
 
   it('does not restore task AI history after the environment changes during task loading', async () => {
@@ -1496,9 +1657,12 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(context, 'saveContext').mockResolvedValue()
 
     const assets = useAssetsStore()
-    assets.endpoints = [ENDPOINT]
+    const lightweight = { ...ENDPOINT, operation: {} }
+    const detailed = { ...lightweight, operation: { responses: { '200': { description: '合同响应' } } } }
+    assets.endpoints = [lightweight]
     assets.state = 'ready'
     vi.spyOn(assets, 'load').mockResolvedValue()
+    vi.spyOn(assets, 'ensureEndpointDetail').mockResolvedValue(detailed)
 
     const cases = useCasesStore()
     vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
@@ -1540,7 +1704,7 @@ describe('WorkbenchView debug workflow', () => {
         stubs: {
           ContextBar: true,
           TaskStatusStrip: true,
-          EndpointDetail: true,
+          EndpointDetail: { name: 'EndpointDetail', props: ['endpoint'], template: '<div data-testid="endpoint-contract">{{ endpoint?.operation?.responses?.[200]?.description }}</div>' },
           CaseEditor: true,
           DebugDrawer: true,
           EndpointTree: {
@@ -1565,6 +1729,7 @@ describe('WorkbenchView debug workflow', () => {
     expect(cases.activeGeneratedPreviewId).toBe('basic-positive-endpoint-1')
     expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBeUndefined()
     expect(cases.drafts[ENDPOINT.id].name).toBe('我的收藏列表 - 基础正向流程')
+    expect(wrapper.get('[data-testid="endpoint-contract"]').text()).toBe('合同响应')
   })
 
   it('does not replace unsaved work when a basic preview finishes', async () => {
@@ -1651,6 +1816,266 @@ describe('WorkbenchView debug workflow', () => {
     expect(cases.activeGeneratedPreviewId).toBe('')
     expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBeUndefined()
     expect(cases.drafts[ENDPOINT.id].name).toBe('unsaved current')
+  })
+
+
+  it('does not replace work edited while basic preview detail is loading', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(context, 'saveContext').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    assets.endpoints = [ENDPOINT]
+    assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    let finishDetail!: (endpoint: ApiEndpoint) => void
+    let detailCalls = 0
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async () => {
+      detailCalls += 1
+      if (detailCalls === 1) return ENDPOINT
+      return new Promise(resolve => { finishDetail = resolve })
+    })
+
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const basicPreview = generatedPreview('basic-positive-endpoint-1', ENDPOINT.id, '我的收藏列表 - 基础正向流程')
+    const previewBasic = vi.spyOn(cases, 'previewBasicPositive').mockImplementation(async () => {
+      cases.generatedPreviews = [basicPreview]
+      return [basicPreview]
+    })
+
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({
+      id: 'task-1',
+      name: '3D 家用接口测试',
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1',
+      selected_endpoint_ids: [ENDPOINT.id],
+      state: 'draft',
+      runnable_baseline_count: 0,
+      latest_ai_job_id: null,
+      latest_execution_id: null,
+      summary: {},
+      created_at: '',
+      updated_at: '',
+    })
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          CaseEditor: true,
+          DebugDrawer: true,
+          EndpointTree: {
+            props: ['endpoints'],
+            emits: ['activate', 'selection-change'],
+            template: '<button data-testid="select-endpoint" @click="$emit(\'selection-change\', [endpoints[0].id]); $emit(\'activate\', endpoints[0])">选择接口</button>',
+          },
+          AiAssistant: {
+            emits: ['generate-basic'],
+            template: '<button data-testid="generate-basic" @click="$emit(\'generate-basic\')">基础生成</button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="select-endpoint"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="generate-basic"]').trigger('click')
+    await flushPromises()
+    expect(detailCalls).toBe(2)
+    cases.updateDraft(ENDPOINT.id, { ...JSON.parse(JSON.stringify(cases.drafts[ENDPOINT.id])), name: 'unsaved current' })
+    finishDetail(ENDPOINT)
+    await flushPromises()
+
+    expect(previewBasic).toHaveBeenCalledWith([ENDPOINT.id], 'environment-1', 'task-1')
+    expect(cases.activeGeneratedPreviewId).toBe('')
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBeUndefined()
+    expect(cases.drafts[ENDPOINT.id].name).toBe('unsaved current')
+  })
+
+
+  it('does not open a basic preview after the source changes while detail is loading', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(context, 'saveContext').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    assets.endpoints = [ENDPOINT]
+    assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    let finishDetail!: (endpoint: ApiEndpoint) => void
+    let detailCalls = 0
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async () => {
+      detailCalls += 1
+      if (detailCalls === 1) return ENDPOINT
+      return new Promise(resolve => { finishDetail = resolve })
+    })
+
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const basicPreview = generatedPreview('basic-positive-endpoint-1', ENDPOINT.id, '我的收藏列表 - 基础正向流程')
+    const previewBasic = vi.spyOn(cases, 'previewBasicPositive').mockImplementation(async () => {
+      cases.generatedPreviews = [basicPreview]
+      return [basicPreview]
+    })
+
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({
+      id: 'task-1',
+      name: '3D 家用接口测试',
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1',
+      selected_endpoint_ids: [ENDPOINT.id],
+      state: 'draft',
+      runnable_baseline_count: 0,
+      latest_ai_job_id: null,
+      latest_execution_id: null,
+      summary: {},
+      created_at: '',
+      updated_at: '',
+    })
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          CaseEditor: true,
+          DebugDrawer: true,
+          EndpointTree: {
+            props: ['endpoints'],
+            emits: ['activate', 'selection-change'],
+            template: '<button data-testid="select-endpoint" @click="$emit(\'selection-change\', [endpoints[0].id]); $emit(\'activate\', endpoints[0])">选择接口</button>',
+          },
+          AiAssistant: {
+            emits: ['generate-basic'],
+            template: '<button data-testid="generate-basic" @click="$emit(\'generate-basic\')">基础生成</button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="select-endpoint"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="generate-basic"]').trigger('click')
+    await flushPromises()
+    expect(detailCalls).toBe(2)
+    context.selectSourceRevision('source-other')
+    finishDetail(ENDPOINT)
+    await flushPromises()
+
+    expect(previewBasic).toHaveBeenCalledWith([ENDPOINT.id], 'environment-1', 'task-1')
+    expect(cases.activeGeneratedPreviewId).toBe('')
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBeUndefined()
+    expect(context.sourceRevisionId).toBe('source-other')
+    expect(cases.drafts[ENDPOINT.id].name).not.toBe('我的收藏列表 - 基础正向流程')
+  })
+
+  it('does not open an old-account preview when detail finishes after a same-project login change', async () => {
+    sessionStorage.setItem('sessionToken', 'account-a')
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(context, 'saveContext').mockResolvedValue()
+    const assets = useAssetsStore()
+    assets.endpoints = [ENDPOINT]
+    assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    let finishDetail!: (endpoint: ApiEndpoint) => void
+    let detailCalls = 0
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async () => {
+      if (++detailCalls === 1) return ENDPOINT
+      return new Promise(resolve => { finishDetail = resolve })
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const preview = generatedPreview('basic-positive-endpoint-1', ENDPOINT.id, '旧账号候选')
+    vi.spyOn(cases, 'previewBasicPositive').mockImplementation(async () => {
+      cases.generatedPreviews = [preview]
+      return [preview]
+    })
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({
+      id: 'task-1', name: '接口测试', project_id: 'project-1', source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1', selected_endpoint_ids: [ENDPOINT.id], state: 'draft',
+      runnable_baseline_count: 0, latest_ai_job_id: null, latest_execution_id: null,
+      summary: {}, created_at: '', updated_at: '',
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, DebugDrawer: true,
+      EndpointTree: { props: ['endpoints'], emits: ['activate', 'selection-change'], template: '<button data-testid="select-endpoint" @click="$emit(\'selection-change\', [endpoints[0].id]); $emit(\'activate\', endpoints[0])">选择接口</button>' },
+      AiAssistant: { emits: ['generate-basic'], template: '<button data-testid="generate-basic" @click="$emit(\'generate-basic\')">基础生成</button>' },
+    } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="select-endpoint"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="generate-basic"]').trigger('click')
+    await flushPromises()
+    expect(detailCalls).toBe(2)
+    const selectionBefore = context.selectionGeneration
+    sessionStorage.removeItem('sessionToken')
+    sessionStorage.setItem('sessionToken', 'account-b')
+    expect(context.selectionGeneration).toBe(selectionBefore)
+    finishDetail(ENDPOINT)
+    await flushPromises()
+    expect(cases.activeGeneratedPreviewId).toBe('')
+    expect(cases.drafts[ENDPOINT.id].name).not.toBe('旧账号候选')
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
   })
 
 

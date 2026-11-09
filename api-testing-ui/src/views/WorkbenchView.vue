@@ -110,6 +110,10 @@ const aiGeneratedCases = computed(() => {
   return [...ids].map(id => cases.versions[id]).filter((item): item is CaseVersion => Boolean(item))
 })
 const workspaceRestoreClient = new ApiClient(8_000)
+// Keep the credential out of reactive state and reject results from a previous login.
+function sessionIdentity(): string | null {
+  try { return globalThis.sessionStorage?.getItem('sessionToken') || null } catch { return null }
+}
 
 watch(() => context.environmentRevisionId, revisionId => {
   const client = workspaceRestoring.value ? workspaceRestoreClient : apiClient
@@ -220,13 +224,14 @@ async function loadSource(
   throwOnError = false,
 ): Promise<boolean> {
   const generation = ++sourceLoadGeneration
+  const session = sessionIdentity()
   localError.value = ''
   try {
     const results = await Promise.all([
       assets.load(sourceRevisionId, client),
       cases.loadSavedCases(sourceRevisionId, client),
     ])
-    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return false
+    if (!pageActive || session !== sessionIdentity() || generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return false
     if (results.includes(false)) {
       activeEndpoint.value = null
       localError.value = '读取期间数据发生变化，请重新读取用例。'
@@ -243,7 +248,7 @@ async function loadSource(
     }
     return true
   } catch (error) {
-    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return false
+    if (!pageActive || session !== sessionIdentity() || generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return false
     activeEndpoint.value = null
     localError.value = error instanceof Error ? error.message : '无法读取已保存接口和用例'
     if (throwOnError) throw new Error(localError.value)
@@ -331,6 +336,7 @@ function changeEnvironment(environmentRevisionId: string | null): void {
 }
 
 async function selectTask(taskId: string): Promise<void> {
+  const session = sessionIdentity()
   if (!rawEditorGuard.confirmDiscardRaw()) return
   localError.value = ''
   const task = tasks.select(taskId)
@@ -355,15 +361,20 @@ async function selectTask(taskId: string): Promise<void> {
   const loading = loadSource(task.source_revision_id, task.selected_endpoint_ids)
   const generation = sourceLoadGeneration
   const loaded = await loading
-  if (!loaded || generation !== sourceLoadGeneration || context.selectionGeneration !== selectionGeneration || context.projectId !== task.project_id
+  if (!loaded || !pageActive || session !== sessionIdentity() || generation !== sourceLoadGeneration || context.selectionGeneration !== selectionGeneration || context.projectId !== task.project_id
       || context.sourceRevisionId !== task.source_revision_id || tasks.task?.id !== task.id) return
   const activationGeneration = endpointActivationGeneration
   await cases.restoreLatestAiJob(task.project_id, task.source_revision_id)
-  if (generation !== sourceLoadGeneration || context.selectionGeneration !== selectionGeneration || context.projectId !== task.project_id
+  if (!pageActive || session !== sessionIdentity() || generation !== sourceLoadGeneration || context.selectionGeneration !== selectionGeneration || context.projectId !== task.project_id
       || context.sourceRevisionId !== task.source_revision_id || tasks.task?.id !== task.id
       || activationGeneration !== endpointActivationGeneration) return
   const endpoint = assets.endpoints.find(item => task.selected_endpoint_ids.includes(item.id))
-  activeEndpoint.value = endpoint || null
+  if (endpoint && selectedIds.value.length > 1) {
+    await activate(endpoint, apiClient, () => session === sessionIdentity() && generation === sourceLoadGeneration
+      && context.selectionGeneration === selectionGeneration && tasks.task?.id === task.id
+      && selectedIds.value.length === task.selected_endpoint_ids.length
+      && selectedIds.value.every(id => task.selected_endpoint_ids.includes(id)))
+  }
 }
 
 async function activate(
@@ -376,9 +387,11 @@ async function activate(
   const assetsGeneration = assets.loadGeneration
   const projectId = context.projectId
   const sourceRevisionId = context.sourceRevisionId
+  const session = sessionIdentity()
   localError.value = ''
   const detailed = await assets.ensureEndpointDetail(endpoint.id, client)
-  if (generation !== endpointActivationGeneration || sourceGeneration !== sourceLoadGeneration
+  if (!pageActive || session !== sessionIdentity()
+      || generation !== endpointActivationGeneration || sourceGeneration !== sourceLoadGeneration
       || assetsGeneration !== assets.loadGeneration
       || projectId !== context.projectId || sourceRevisionId !== context.sourceRevisionId) return false
   if (!detailed) {
@@ -513,22 +526,33 @@ async function generate(intent: string): Promise<void> {
   }
 }
 async function generateBasicPositive(): Promise<void> {
+  const session = sessionIdentity()
   if (!context.environmentRevisionId) { localError.value = '请先选择执行环境'; return }
   const task = await saveCurrentTask()
-  if (!task) return
+  if (!task || !pageActive || session !== sessionIdentity()) return
   localError.value = ''
   try {
     const previews = await cases.previewBasicPositive([...task.selected_endpoint_ids], context.environmentRevisionId, task.id)
     const firstPreview = previews[0]
     const endpoint = assets.endpoints.find(item => item.id === firstPreview?.endpoint_id)
-    if (endpoint && firstPreview && !rawEditorGuard.hasRaw() && !cases.dirtyDrafts[endpoint.id]
-        && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) {
-      endpointActivationGeneration += 1
-      activeEndpoint.value = endpoint
-      cases.setDraftFromGeneratedPreview(firstPreview.id)
-      mobilePane.value = 'editor'
+    if (endpoint && firstPreview) {
+      const scope = captureApiExecutionScope(context)
+      const canOpen = () => Boolean(session === sessionIdentity() && scope && isExecutionScopeCurrent(scope)
+        && scope.projectId === task.project_id && scope.sourceRevisionId === task.source_revision_id
+        && scope.environmentRevisionId === task.environment_revision_id
+        && taskSelectionGeneration === task.executionSelectionGeneration
+        && selectedIds.value.length === task.selected_endpoint_ids.length
+        && selectedIds.value.every(id => task.selected_endpoint_ids.includes(id))
+        && cases.generatedPreviews.some(item => item.id === firstPreview.id)
+        && !rawEditorGuard.hasRaw() && !cases.dirtyDrafts[endpoint.id]
+        && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id]))
+      if (canOpen() && await activate(endpoint, apiClient, canOpen) && canOpen()) {
+        cases.setDraftFromGeneratedPreview(firstPreview.id)
+        mobilePane.value = 'editor'
+      }
     }
   } catch (error) {
+    if (!pageActive || session !== sessionIdentity()) return
     localError.value = error instanceof Error ? error.message : '基础正向用例生成失败'
   }
 }
