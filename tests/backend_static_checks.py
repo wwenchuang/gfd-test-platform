@@ -8,6 +8,7 @@ import re
 import sys
 import tempfile
 import time
+from functools import wraps
 from pathlib import Path
 
 
@@ -12422,6 +12423,27 @@ def check_agent_prepared_figma_context_reuse():
         yaml_service.ASSET_DIR = old_asset_dir
 
 
+def isolated_agent_risk_check(check):
+    """Keep risk-check fixtures out of the configured Agent history and audit log."""
+    @wraps(check)
+    def run():
+        from task_server.services import agent_service
+
+        old_runs_file = agent_service.AGENT_RUNS_FILE
+        old_log_tool_call = agent_service._log_tool_call
+        with tempfile.TemporaryDirectory(prefix="agent-risk-static-") as temp_dir:
+            try:
+                agent_service.AGENT_RUNS_FILE = os.path.join(temp_dir, "agent-runs.json")
+                agent_service._log_tool_call = lambda *_args, **_kwargs: None
+                return check()
+            finally:
+                agent_service.AGENT_RUNS_FILE = old_runs_file
+                agent_service._log_tool_call = old_log_tool_call
+
+    return run
+
+
+@isolated_agent_risk_check
 def check_agent_risk_detail_explains_source():
     from task_server.services import agent_service
 
@@ -12485,6 +12507,7 @@ def check_agent_risk_detail_explains_source():
     )
 
 
+@isolated_agent_risk_check
 def check_agent_requirement_background_delete_is_not_high_risk():
     from task_server.services import agent_service
 
