@@ -23,7 +23,7 @@ SIGNATURE_DIGESTS = {bytes.fromhex(value) for value in (
     '34b6f01726e5b22702722604d8038d403c2d342018c1967fc57b95923f41ea6c',
     '963208870b0d028d7fbf3782101f845b3701d4bb9affe0e52206cb001750af61',
 )}
-UUID = re.compile(rb'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+UUID = re.compile(rb'(?=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))')
 MAX_FILE = 32 * 1024 * 1024
 MAX_DECODED = 64 * 1024 * 1024
 MAX_ENTRIES = 20000
@@ -31,7 +31,7 @@ MAX_ENTRIES = 20000
 
 def contains_signature(data):
     data = data.lower()
-    if any(hashlib.sha256(match.group()).digest() in SIGNATURE_DIGESTS for match in UUID.finditer(data)):
+    if any(hashlib.sha256(match.group(1)).digest() in SIGNATURE_DIGESTS for match in UUID.finditer(data)):
         return True
     # The known non-UUID signature is an ASCII path of length 39 beginning /.
     return any(hashlib.sha256(data[i:i + 39]).digest() in SIGNATURE_DIGESTS

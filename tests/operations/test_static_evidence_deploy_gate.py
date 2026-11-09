@@ -98,3 +98,18 @@ def test_scanner_rejects_signature_in_filename_and_malformed_gzip(tmp_path, monk
     named.unlink()
     (source / 'corrupted.js.gz').write_bytes(b'\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03garbage')
     assert module.main([str(source)]) != 0
+
+
+def test_scanner_detects_known_uuid_overlapping_another_uuid(tmp_path, monkeypatch):
+    import hashlib
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('evidence_guard', ROOT / 'deploy/static_evidence_guard.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    token = b'11111111-1111-1111-1111-111111111111'
+    monkeypatch.setattr(module, 'SIGNATURE_DIGESTS', {hashlib.sha256(token).digest()})
+    # The first UUID occupies bytes 0..35; the known UUID starts at byte 28.
+    prefix = b'aaaaaaaa-aaaa-aaaa-aaaa-aaaa'
+    source = tmp_path / 'overlap.js'
+    source.write_bytes(prefix + token)
+    assert module.main([str(source)]) != 0
