@@ -252,7 +252,7 @@ async function loadSource(
 }
 
 function changeProject(projectId: string | null): void {
-  if (projectId !== context.projectId && !rawEditorGuard.confirmDiscardRaw()) return
+  if (projectId === context.projectId || !rawEditorGuard.confirmDiscardRaw()) return
   endpointActivationGeneration += 1
   sourceLoadGeneration += 1
   assets.invalidateLoad()
@@ -274,7 +274,7 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
-  if (sourceRevisionId !== context.sourceRevisionId && !rawEditorGuard.confirmDiscardRaw()) return
+  if (sourceRevisionId === context.sourceRevisionId || !rawEditorGuard.confirmDiscardRaw()) return
   endpointActivationGeneration += 1
   activeEndpoint.value = null
   sourceLoadGeneration += 1
@@ -331,7 +331,7 @@ function changeEnvironment(environmentRevisionId: string | null): void {
 }
 
 async function selectTask(taskId: string): Promise<void> {
-  if (taskId !== tasks.task?.id && !rawEditorGuard.confirmDiscardRaw()) return
+  if (!rawEditorGuard.confirmDiscardRaw()) return
   localError.value = ''
   const task = tasks.select(taskId)
   if (!task) return

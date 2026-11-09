@@ -1295,7 +1295,7 @@ describe('WorkbenchView debug workflow', () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
     await router.push('/'); await router.isReady()
     const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
-      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, DebugDrawer: true,
+      ContextBar: { name: 'ContextBar', emits: ['update:sourceRevisionId', 'update:projectId'], template: '<div />' }, TaskStatusStrip: true, EndpointDetail: true, DebugDrawer: true,
       EndpointTree: { name: 'EndpointTree', emits: ['selection-change', 'activate'], template: '<div />' },
       AiAssistant: { name: 'AiAssistant', emits: ['open-generated'], template: '<div />' },
     } } })
@@ -1305,6 +1305,11 @@ describe('WorkbenchView debug workflow', () => {
     await wrapper.get('[data-testid="raw-tab"]').trigger('click')
     const raw = wrapper.get<HTMLTextAreaElement>('.raw-editor textarea')
     await raw.setValue('{ invalid raw'); await raw.trigger('blur')
+    const bar = wrapper.findComponent({ name: 'ContextBar' })
+    bar.vm.$emit('update:sourceRevisionId', 's'); await flushPromises()
+    bar.vm.$emit('update:projectId', 'p'); await flushPromises()
+    expect(wrapper.get<HTMLTextAreaElement>('.raw-editor textarea').element.value).toBe('{ invalid raw')
+    expect(confirm).not.toHaveBeenCalled()
     wrapper.findComponent({ name: 'AiAssistant' }).vm.$emit('open-generated', generated); await flushPromises()
     expect(confirm).toHaveBeenCalledOnce()
     expect(raw.element.value).toBe('{ invalid raw')
