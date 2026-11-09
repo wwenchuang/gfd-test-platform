@@ -12,6 +12,7 @@ import re
 import socket
 from types import MappingProxyType
 from typing import Any, List, Mapping, Optional, Tuple
+from uuid import uuid4
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -86,7 +87,7 @@ class AiJobInputError(ValueError):
 class AiGatewayError(RuntimeError):
     def __init__(self, message, code="gateway_error"):
         super().__init__(message)
-        self.code = code if code in {"gateway_error", "gateway_timeout"} else "gateway_error"
+        self.code = code if code in {"gateway_error", "gateway_timeout", "thinking_route_unsupported", "thinking_mode_unconfirmed"} else "gateway_error"
 
 
 class AiCandidateValidationError(ValueError):
@@ -109,6 +110,7 @@ class AiBatchView:
     generated_draft_ids: List[str]
     validation_errors: Tuple[Mapping[str, Any], ...]
     error_code: str
+    correlation_id: str
 
     def __post_init__(self):
         object.__setattr__(self, "endpoint_ids", tuple(self.endpoint_ids))
@@ -156,7 +158,7 @@ class AiGatewayClient:
             base_url or os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8090")
         ).rstrip("/")
 
-    def chat(self, *, messages, provider_id, model, timeout_seconds):
+    def chat(self, *, messages, provider_id, model, timeout_seconds, thinking_mode='default', correlation_id=None):
         payload = {
             "messages": copy.deepcopy(list(messages)),
             "providerId": provider_id,
@@ -164,6 +166,10 @@ class AiGatewayClient:
             "temperature": 0.2,
             "timeoutMs": int(timeout_seconds * 1000),
         }
+        if thinking_mode != 'default':
+            payload['thinkingMode'] = thinking_mode
+        if correlation_id is not None:
+            payload['correlationId'] = correlation_id
         request = urllib.request.Request(
             self.base_url + "/ai/api-case-generation",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -189,6 +195,8 @@ class AiGatewayClient:
                 body = {}
             if exc.code == 500 and isinstance(body, dict) and body.get("error_code") == "provider_timeout":
                 raise AiGatewayError("AI provider timed out", "gateway_timeout") from None
+            if exc.code == 400 and isinstance(body, dict) and body.get("error_code") == "thinking_route_unsupported":
+                raise AiGatewayError("AI thinking mode is not supported by the configured route", "thinking_route_unsupported") from None
             raise AiGatewayError(f"AI Gateway HTTP {exc.code}") from None
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, (TimeoutError, socket.timeout)):
@@ -200,6 +208,8 @@ class AiGatewayClient:
             raise AiGatewayError("AI Gateway returned invalid JSON") from exc
         if not isinstance(parsed, dict) or parsed.get("success") is not True:
             raise AiGatewayError("AI Gateway returned an unsuccessful response")
+        if thinking_mode != "default" and parsed.get("thinkingModeSent") != thinking_mode:
+            raise AiGatewayError("AI Gateway did not confirm the requested thinking mode", "thinking_mode_unconfirmed")
         return parsed
 
 
@@ -317,12 +327,14 @@ class AiCaseService:
         actor_id,
         model_config=None,
         intent="",
+        thinking_mode="default",
     ):
         access.require_permission(actor_id, "api.edit")
         identifiers = self._endpoint_ids(endpoint_ids)
         actor = self._text(actor_id, "actor id", 128)
         intent_text = self._text(intent, "intent", 10_000, allow_empty=True)
         provider_id, model = self._model_config(model_config)
+        thinking_mode = self._thinking_mode(thinking_mode)
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)
             endpoints = repository.get_endpoints(identifiers)
@@ -361,6 +373,7 @@ class AiCaseService:
                 intent=intent_text,
                 actor_id=actor,
             )
+            job.summary = {**job.summary, "thinking_mode": thinking_mode}
             for sequence, offset in enumerate(range(0, len(identifiers), self.batch_size), 1):
                 repository.create_batch(
                     job_id=job.id,
@@ -371,6 +384,12 @@ class AiCaseService:
                     actor_id=actor,
                 )
             return self._job_view(repository, job)
+
+    @staticmethod
+    def _thinking_mode(value):
+        if not isinstance(value, str) or value not in ("default", "on", "off"):
+            raise AiJobInputError("invalid AI thinking mode")
+        return value
 
     def process(self, job_id):
         lock_session = self.session_factory()
@@ -608,11 +627,16 @@ class AiCaseService:
                 raise AiJobNotFoundError("AI case generation batch was not found")
             if batch.state in TERMINAL_BATCH_STATES or batch.state == "running":
                 return
+            job = repository.get_job(job_id)
+            thinking_mode = self._thinking_mode((job.summary or {}).get("thinking_mode", "default"))
+            correlation_id = str(uuid4())
+            result = copy.deepcopy(batch.result or {})
+            result["generation_attempt_ids"] = (result.get("generation_attempt_ids", []) + [correlation_id])[-20:]
             repository.update_batch(
                 batch,
                 state="running",
                 actual_model=batch.actual_model,
-                result=batch.result,
+                result=result,
                 error={},
                 actor_id=actor_id,
             )
@@ -626,6 +650,8 @@ class AiCaseService:
                 provider_id=requested_provider_id,
                 model=requested_model,
                 timeout_seconds=self.gateway_timeout_seconds,
+                thinking_mode=thinking_mode,
+                correlation_id=correlation_id,
             )
             evidence = self._model_evidence(
                 response, requested_provider_id, requested_model
@@ -1696,8 +1722,9 @@ class AiCaseService:
             generated_draft_ids=list(result.get("draft_version_ids", [])),
             validation_errors=tuple(result.get("validation_errors", [])),
             error_code=(batch.error["code"] if batch.state == "failed_gateway" and isinstance(batch.error, dict)
-                        and batch.error.get("code") in {"gateway_timeout", "enqueue_failed"}
+                        and batch.error.get("code") in {"gateway_timeout", "enqueue_failed", "thinking_route_unsupported", "thinking_mode_unconfirmed"}
                         else "gateway_error" if batch.state == "failed_gateway" else ""),
+            correlation_id=(result.get("generation_attempt_ids") or [""])[-1],
         )
 
     @classmethod

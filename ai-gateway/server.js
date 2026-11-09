@@ -602,6 +602,22 @@ function routeSupportsQwenHybridThinking(route) {
   return baseUrl.includes('dashscope.aliyuncs.com') && /^qwen3\.(?:5|6|7|8)(?:-|$)/.test(model);
 }
 
+function apiThinkingRouteSupported(route) {
+  try {
+    const url = new URL(String(route?.baseUrl || ''));
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port &&
+      !url.search && !url.hash &&
+      ['dashscope.aliyuncs.com', 'dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com'].includes(url.hostname) &&
+      String(route?.model || '').trim().toLowerCase() === 'qwen3.8-max';
+  } catch {
+    return false;
+  }
+}
+
+function isApiCorrelationId(value) {
+  return typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
+}
+
 // Stage capabilities are server invocation parameters, never a public response_format.
 function videoSemanticContract() {
   const text = () => ({type: 'string'});
@@ -931,6 +947,10 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
       {role: 'user', content: imageParts.length ? (videoStage ? [...imageParts, {type: 'text', text: userText}] : [{type: 'text', text: userText}, ...imageParts]) : userText},
     ],
   };
+  if (route.action === 'api_case_generation' && ['on', 'off'].includes(body?.thinkingMode)) {
+    if (!apiThinkingRouteSupported(route)) throw new Error('api_thinking_route_unsupported');
+    completionOptions.enable_thinking = body.thinkingMode === 'on';
+  }
   if (route.temperatureLocked) {
     completionOptions.temperature = typeof route.fixedTemperature === 'number' ? route.fixedTemperature : 1;
   } else {
@@ -1160,7 +1180,25 @@ async function callAi(action, body, options = {}) {
   if (videoStage && options.messages) throw new Error('video_stage_messages_invalid');
   const id = uuidv4();
   const prompt = options.promptOverride ?? await readPrompt(action);
-  const routes = await routeCandidatesForCall(action, body, options);
+  let routes;
+  try {
+    routes = await routeCandidatesForCall(action, body, options);
+    if (action === 'api_case_generation' && ['on', 'off'].includes(body?.thinkingMode) &&
+        (!routes.length || routes.some(route => !apiThinkingRouteSupported(route)))) {
+      const error = new Error('api_thinking_route_unsupported');
+      error.code = 'thinking_route_unsupported';
+      throw error;
+    }
+  } catch (error) {
+    if (action === 'api_case_generation') {
+      await appendAiLog({id, time: new Date().toISOString(), action, success: false,
+        error: 'api_route_unavailable', inputPreview: '[api content omitted]', outputPreview: '[api content omitted]',
+        ...(isApiCorrelationId(body.correlationId) ? {correlationId: body.correlationId} : {}),
+        ...(['on', 'off'].includes(body.thinkingMode) ? {thinkingMode: body.thinkingMode} : {}),
+      }).catch(() => {});
+    }
+    throw error;
+  }
   if (videoStage) {
     if (routes.length !== 1) throw new Error('video_stage_fallback_invalid');
     validateVideoStage(body, routes[0]);
@@ -1176,6 +1214,13 @@ async function callAi(action, body, options = {}) {
     if (remainingMs <= 0) {
       const timeout = new Error(`AI call timeout after ${totalTimeoutMs}ms`);
       timeout.code = 'provider_timeout';
+      if (action === 'api_case_generation') {
+        await appendAiLog({id, time: new Date().toISOString(), action, success: false,
+          error: 'provider_timeout', inputPreview: '[api content omitted]', outputPreview: '[api content omitted]',
+          ...(isApiCorrelationId(body.correlationId) ? {correlationId: body.correlationId} : {}),
+          ...(['on', 'off'].includes(body.thinkingMode) ? {thinkingMode: body.thinkingMode} : {}),
+        }).catch(() => {});
+      }
       throw timeout;
     }
     const remainingFallbacks = routes.length - index - 1;
@@ -1191,6 +1236,7 @@ async function callAi(action, body, options = {}) {
     const startedAt = Date.now();
     let success = false;
     let errorText = null;
+    let apiFailureCategory = null;
     let videoFailure = null;
     let finishReason = '';
     let usage = {};
@@ -1241,6 +1287,9 @@ async function callAi(action, body, options = {}) {
       if (videoStage && completion.model !== videoStageConfig(videoStage)[3]) throw new Error('video_stage_actual_model_invalid');
       const choice = completion.choices?.[0] || {};
       finishReason = String(choice?.finish_reason || choice?.finishReason || '');
+      if (action === 'api_case_generation' && !['stop', 'length', 'content_filter', 'tool_calls', 'function_call'].includes(finishReason)) {
+        finishReason = '';
+      }
       if (videoStage === 'perception') {
         const rawUsage = completion?.usage || {};
         const rawDetails = [rawUsage.completion_tokens_details, rawUsage.completionTokensDetails];
@@ -1284,6 +1333,7 @@ async function callAi(action, body, options = {}) {
       };
     } catch (error) {
       if (videoStage) videoFailure = videoFailureDiagnostics(error);
+      if (action === 'api_case_generation') apiFailureCategory = error instanceof OpenAI.APIConnectionTimeoutError ? 'provider_timeout' : 'api_provider_failed';
       errorText = videoStage ? (/^video_[a-z_]+$/.test(error?.message || '') ? error.message : 'video_stage_provider_failed') : sanitizeError(error);
       lastErrorText = errorText;
       fallbackErrors.push({
@@ -1301,9 +1351,9 @@ async function callAi(action, body, options = {}) {
         id,
         time: new Date().toISOString(),
         action,
-        providerId: route.providerId,
-        provider: route.providerName || route.provider,
-        model: route.model,
+        providerId: action === 'api_case_generation' ? '[omitted]' : route.providerId,
+        provider: action === 'api_case_generation' ? '[omitted]' : (route.providerName || route.provider),
+        model: action === 'api_case_generation' ? (route.model === 'qwen3.8-max' ? 'qwen3.8-max' : '[omitted]') : route.model,
         success,
         durationMs: Date.now() - startedAt,
         fallbackIndex: index,
@@ -1312,9 +1362,11 @@ async function callAi(action, body, options = {}) {
         totalTimeoutMs,
         finishReason,
         usage,
-        inputPreview: videoStage ? '[video stage content omitted]' : preview(body),
-        outputPreview: videoStage ? '[video stage content omitted]' : preview(output),
-        error: videoStage && errorText ? videoLogError(errorText) : errorText,
+        inputPreview: action === 'api_case_generation' ? '[api content omitted]' : (videoStage ? '[video stage content omitted]' : preview(body)),
+        outputPreview: action === 'api_case_generation' ? '[api content omitted]' : (videoStage ? '[video stage content omitted]' : preview(output)),
+        error: action === 'api_case_generation' ? apiFailureCategory : (videoStage && errorText ? videoLogError(errorText) : errorText),
+        ...(action === 'api_case_generation' && isApiCorrelationId(body.correlationId) ? {correlationId: body.correlationId} : {}),
+        ...(action === 'api_case_generation' && ['on', 'off'].includes(body.thinkingMode) ? {thinkingMode: body.thinkingMode} : {}),
         ...(videoFailure || {}),
       }).catch(() => {});
     }
@@ -1794,11 +1846,19 @@ app.post('/ai/api-case-generation', asyncRoute(async (req, res) => {
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({error: 'messages required'});
   }
+  if (Object.hasOwn(req.body, 'thinkingMode') && !['on', 'off'].includes(req.body.thinkingMode)) {
+    return res.status(400).json({error: 'invalid thinkingMode'});
+  }
+  if (Object.hasOwn(req.body, 'correlationId') && !isApiCorrelationId(req.body.correlationId)) {
+    return res.status(400).json({error: 'invalid correlationId'});
+  }
   const body = {
     messages,
     providerId: providerId || provider || '',
     model: model || '',
     timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
+    ...(Object.hasOwn(req.body, 'thinkingMode') ? {thinkingMode: req.body.thinkingMode} : {}),
+    ...(Object.hasOwn(req.body, 'correlationId') ? {correlationId: req.body.correlationId} : {}),
   };
   let output, route;
   try {
@@ -1808,8 +1868,9 @@ app.post('/ai/api-case-generation', asyncRoute(async (req, res) => {
       temperature,
     }));
   } catch (error) {
-    return res.status(500).json({success: false,
-      error_code: error?.code === 'provider_timeout' ? 'provider_timeout' : 'gateway_error',
+    const unsupported = error?.code === 'thinking_route_unsupported';
+    return res.status(unsupported ? 400 : 500).json({success: false,
+      error_code: unsupported ? 'thinking_route_unsupported' : (error?.code === 'provider_timeout' ? 'provider_timeout' : 'gateway_error'),
       error: 'AI provider request failed'});
   }
   res.json({
@@ -1819,7 +1880,8 @@ app.post('/ai/api-case-generation', asyncRoute(async (req, res) => {
     model: route.model,
     fallbackUsed: Boolean(route.fallbackUsed),
     fallbackIndex: Number(route.fallbackIndex || 0),
-    fallbackReason: route.fallbackReason || '',
+    fallbackReason: route.fallbackUsed ? 'api_provider_failed' : '',
+    ...(!route.mock && ['on', 'off'].includes(body.thinkingMode) ? {thinkingModeSent: body.thinkingMode} : {}),
     ...completionAuditResponse(route),
   });
 }));

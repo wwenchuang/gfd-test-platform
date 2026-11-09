@@ -74,3 +74,50 @@ def test_five_second_receipt_grace_is_limited_to_generation_client(monkeypatch):
         with pytest.raises(AiGatewayError):
             client.chat(messages=[{'role': 'user', 'content': 'test'}], provider_id='', model='', timeout_seconds=20)
     assert captured == [25, 20]
+
+
+def test_generation_client_sends_scoped_thinking_and_random_correlation(monkeypatch):
+    captured = {}
+    def respond(request, timeout):
+        captured.update(json.loads(request.data))
+        return io.BytesIO(b'{"success":true,"thinkingModeSent":"off"}')
+    monkeypatch.setattr('urllib.request.urlopen', respond)
+    client = AiGatewayClient('http://127.0.0.1:8090')
+    client.chat(messages=[{'role':'user','content':'sensitive'}], provider_id='', model='',
+                timeout_seconds=20, thinking_mode='off', correlation_id='1db47cfa-0d88-48e4-b2cc-35500085dd16')
+    assert captured['thinkingMode'] == 'off'
+    assert captured['correlationId'] == '1db47cfa-0d88-48e4-b2cc-35500085dd16'
+
+
+@pytest.mark.parametrize('mode', ['off', 'on', 'default'])
+def test_generation_thinking_mode_allowed(mode):
+    assert AiCaseService._thinking_mode(mode) == mode
+
+
+@pytest.mark.parametrize('mode', ['', True, 'false', 'OFF', {}, None])
+def test_generation_thinking_mode_invalid_fails_closed(mode):
+    from task_server.api_testing.services.ai_service import AiJobInputError
+    with pytest.raises(AiJobInputError):
+        AiCaseService._thinking_mode(mode)
+
+
+def test_unsupported_thinking_route_is_not_misreported_as_provider_failure(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise http_error(b'{"error_code":"thinking_route_unsupported", "error":"sensitive provider detail"}', 400)
+    monkeypatch.setattr('urllib.request.urlopen', fail)
+    with pytest.raises(AiGatewayError) as caught:
+        call()
+    assert caught.value.code == 'thinking_route_unsupported'
+    assert 'sensitive' not in str(caught.value)
+    batch = SimpleNamespace(id='b', sequence=1, state='failed_gateway', endpoint_ids=[], requested_model='', actual_model='', result={}, error={'code':'thinking_route_unsupported'})
+    assert AiCaseService._batch_view(batch).error_code == 'thinking_route_unsupported'
+
+
+@pytest.mark.parametrize('receipt', [{}, {'thinkingModeSent':'on'}, {'thinkingModeSent': False}])
+def test_explicit_mode_rejects_old_or_inconsistent_gateway_receipt(monkeypatch, receipt):
+    def respond(_request, timeout):
+        return io.BytesIO(json.dumps({'success':True, **receipt}).encode())
+    monkeypatch.setattr('urllib.request.urlopen', respond)
+    with pytest.raises(AiGatewayError) as caught:
+        AiGatewayClient().chat(messages=[{'role':'user','content':'test'}], provider_id='', model='', timeout_seconds=20, thinking_mode='off')
+    assert caught.value.code == 'thinking_mode_unconfirmed'

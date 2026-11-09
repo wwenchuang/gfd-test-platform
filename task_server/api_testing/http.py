@@ -927,7 +927,8 @@ def _post(segments, payload, actor, settings, *, session_digest=None):
             ):
                 raise TestTaskScopeError("AI request does not match this task")
         service = AiCaseService(factory)
-        job = service.submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", ""))
+        job = service.submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", ""),
+                             thinking_mode=payload.get("thinking_mode", "default"))
         if task_id:
             task_service.attach_ai_job(task_id, job.id, actor)
         try:
