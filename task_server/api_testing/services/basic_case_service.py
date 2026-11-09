@@ -11,6 +11,7 @@ from ..repositories.ai_job_repository import AiJobRepository
 from .ai_service import AiCaseService, SENSITIVE_KEY
 from .case_service import CaseService
 from .response_assertion_policy import ResponseAssertionPolicy
+from .response_schema_draft import response_schema_draft
 from .workflow_policy import (
     PRINT_TASK_VARIABLE_NAMES,
     classify_endpoint_workflow,
@@ -32,7 +33,7 @@ class BasicCaseService:
 
     def preview(self, endpoint_ids, environment_revision_id, actor_id):
         access.require_permission(actor_id, "api.edit")
-        ordered_endpoints, environment_revision, variables, endpoint_catalog = self._generation_context(
+        ordered_endpoints, environment_revision, variables, endpoint_catalog, openapi_version = self._generation_context(
             endpoint_ids,
             environment_revision_id,
             actor_id,
@@ -44,6 +45,7 @@ class BasicCaseService:
                 environment_revision,
                 variables,
                 endpoint_catalog=endpoint_catalog,
+                openapi_version=openapi_version,
             )
             AiCaseService._assert_no_literal_secrets(payload)
             previews.append(
@@ -103,7 +105,9 @@ class BasicCaseService:
             access.require_resource(session, environment, actor_id, "api.edit")
             variables = repository.get_environment_variables(environment_revision.id)
             endpoint_catalog = repository.get_revision_endpoints(source_revision.id)
-        return ordered_endpoints, environment_revision, variables, endpoint_catalog
+            document = source_revision.normalized_document
+            openapi_version = document.get('openapi') if isinstance(document, Mapping) else None
+        return ordered_endpoints, environment_revision, variables, endpoint_catalog, openapi_version
 
     @classmethod
     def build_case_payload(
@@ -113,17 +117,21 @@ class BasicCaseService:
         environment_variables,
         *,
         endpoint_catalog=(),
+        openapi_version=None,
     ):
         operation = endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
         request = cls._request_for_endpoint(
             endpoint, environment_revision, environment_variables
         )
         assertions = cls._assertions(operation)
+        schema_assertion, schema_note = response_schema_draft(operation, openapi_version)
+        if schema_assertion is not None:
+            assertions.append(schema_assertion)
         title = str(getattr(endpoint, "summary", "") or "").strip() or f"{request['method']} {request['path']}"
         app_package, app_name = cls._application_identity()
         payload = {
             "name": f"{title[:260]} - 基础正向流程",
-            "purpose": f"验证{title}接口在平台环境鉴权与基础参数下可以成功返回",
+            "purpose": f"验证{title}接口在平台环境鉴权与基础参数下可以成功返回。{schema_note}",
             "priority": "P1",
             "app_package": app_package,
             "app_name": app_name,

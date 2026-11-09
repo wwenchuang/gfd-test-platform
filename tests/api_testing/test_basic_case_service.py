@@ -98,6 +98,7 @@ def test_basic_positive_preview_exposes_endpoint_workflow_assessment(monkeypatch
             _environment_revision(),
             _variables("ZXBToken"),
             [endpoint],
+            '3.0.3',
         ),
     )
 
@@ -224,7 +225,7 @@ def test_basic_positive_payload_prefers_json_body_example_and_success_flag():
 
     assert payload["request"]["method"] == "POST"
     assert payload["request"]["body"] == {"targetId": "synthetic-model-001", "favoriteType": "MODEL"}
-    assert payload["assertions"] == [
+    assert [item for item in payload["assertions"] if item["enabled"]] == [
         {"type": "status_code", "operator": "equals", "expected": 201, "timeout_ms": 0, "enabled": True},
         {"type": "json_path", "path": "$.success", "operator": "equals", "expected": True, "timeout_ms": 0, "enabled": True},
     ]
@@ -289,7 +290,7 @@ def test_basic_positive_payload_uses_platform_code_assertion_for_json_object_res
         _variables("ZXBToken"),
     )
 
-    assert payload["assertions"] == [
+    assert [item for item in payload["assertions"] if item["enabled"]] == [
         {"type": "status_code", "operator": "equals", "expected": 200, "timeout_ms": 0, "enabled": True},
         {"type": "json_path", "path": "$.code", "operator": "equals", "expected": 0, "timeout_ms": 0, "enabled": True},
     ]
@@ -319,7 +320,7 @@ def test_basic_positive_payload_does_not_add_platform_code_assertion_for_array_r
         _variables("ZXBToken"),
     )
 
-    assert payload["assertions"] == [
+    assert [item for item in payload["assertions"] if item["enabled"]] == [
         {"type": "status_code", "operator": "equals", "expected": 200, "timeout_ms": 0, "enabled": True},
     ]
 

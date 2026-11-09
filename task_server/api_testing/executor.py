@@ -979,14 +979,18 @@ class HttpExecutor:
 
     @staticmethod
     def _render_assertion_expected(assertion, runtime):
+        enabled = getattr(assertion, "enabled", True)
+        # Disabled assertions must not cause resolution errors or otherwise
+        # affect a request. Enabled assertions retain existing variable behavior.
+        literal = not enabled
         return SimpleNamespace(
             type=assertion.type,
             operator=assertion.operator,
-            expected=runtime.render(assertion.expected),
-            path=runtime.render(getattr(assertion, "path", None)),
+            expected=assertion.expected if literal else runtime.render(assertion.expected),
+            path=getattr(assertion, "path", None) if literal else runtime.render(getattr(assertion, "path", None)),
             name=getattr(assertion, "name", None),
             timeout_ms=getattr(assertion, "timeout_ms", 0),
-            enabled=getattr(assertion, "enabled", True),
+            enabled=enabled,
             sequence=getattr(assertion, "sequence", 0),
         )
 

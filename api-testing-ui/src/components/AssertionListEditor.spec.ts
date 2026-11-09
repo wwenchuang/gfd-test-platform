@@ -10,6 +10,19 @@ function latestAssertions(wrapper: ReturnType<typeof mount>): Array<Record<strin
 }
 
 describe('AssertionListEditor', () => {
+  it('shows a disabled structure assertion in an editable multiline field with review guidance', async () => {
+    const wrapper = mount(AssertionListEditor, {
+      props: { modelValue: [{ type: 'schema', operator: 'equals', expected: { type: 'object' }, enabled: false }] },
+    })
+    const input = wrapper.get('[data-testid="assertion-expected-0"]')
+    expect(input.element.tagName).toBe('TEXTAREA')
+    expect(wrapper.text()).toContain('审核')
+    expect(wrapper.text()).toContain('整个 JSON 响应')
+    expect(wrapper.find('[data-testid="assertion-path-0"]').exists()).toBe(false)
+    expect((wrapper.get('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
+    await input.setValue('{"type":"array"}')
+    expect(latestAssertions(wrapper)[0].expected).toEqual({ type: 'array' })
+  })
   it('keeps HTTP status expectations numeric', async () => {
     const wrapper = mount(AssertionListEditor, {
       props: { modelValue: [{ type: 'status_code', operator: 'equals', expected: 200, enabled: true }] },

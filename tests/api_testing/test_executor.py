@@ -75,6 +75,10 @@ class _TargetHandler(BaseHTTPRequestHandler):
             self._send(200, {"code": 0, "data": [{"id": "favorite-1"}]})
         elif self.path.startswith("/nullable"):
             self._send(200, {"code": 0, "data": None})
+        elif self.path.startswith("/rendered-schema"):
+            self._send(200, {"value": "replacement"})
+        elif self.path.startswith("/json-null"):
+            self._send(200, None)
         elif self.path.startswith("/business-fail"):
             self._send(200, {"code": 4009, "message": "not logged in"})
         elif self.path.startswith("/business-line-fail"):
@@ -91,6 +95,8 @@ class _TargetHandler(BaseHTTPRequestHandler):
             self._send(400, {"code": 4001, "message": "invalid request"})
         elif self.path.startswith("/text"):
             self._send(200, b"plain response", "text/plain")
+        elif self.path.startswith("/malformed-json"):
+            self._send(200, b'{"code":', "application/json")
         elif self.path.startswith("/large"):
             self._send(200, b"x" * 4096, "text/plain")
         elif self.path.startswith("/slow"):
@@ -306,6 +312,39 @@ def _executor(target_server, case, *, values=None, limits=None, cancel=None):
 
 def test_default_executor_timeout_covers_slow_ai_endpoints():
     assert ExecutorLimits().timeout_seconds == 30
+
+
+def test_disabled_schema_draft_cannot_break_http_execution_by_rendering_literals(target_server):
+    rule = _assertion('schema', 'equals', {'type': 'string', 'const': '{{recipient}}'})
+    rule.enabled = False
+    result = _executor(target_server, _case('/ok', assertions=[rule])).execute_case(
+        'case-version-1', 'environment-revision-1', {})
+    assert result.status == 'PASSED'
+    assert result.sanitized_response['status_code'] == 200
+
+
+def test_enabled_schema_preserves_existing_variable_rendering(target_server):
+    rule = _assertion('schema', 'equals', {'type': 'object', 'required': ['value'],
+        'properties': {'value': {'const': '{{recipient}}'}}})
+    result = _executor(target_server, _case('/rendered-schema', assertions=[rule]),
+        values={'recipient': 'replacement'}).execute_case('case-version-1', 'environment-revision-1', {})
+    assert result.status == 'PASSED'
+    assert result.assertion_results[0]['expected']['properties']['value']['const'] == 'replacement'
+
+
+def test_top_level_null_draft_is_not_installed_and_real_http_still_runs(target_server):
+    from task_server.api_testing.services.response_schema_draft import response_schema_draft
+    operation = {'responses': {'200': {'content': {'application/json': {
+        'schema': {'anyOf': [{'type': 'string'}, {'type': 'null'}]},
+    }}}}}
+    draft, explanation = response_schema_draft(operation, '3.1.0')
+    assert draft is None
+    assert '顶层 JSON null' in explanation
+    rule = _assertion('status_code', 'equals', 200)
+    result = _executor(target_server, _case('/json-null', assertions=[rule])).execute_case(
+        'case-version-1', 'environment-revision-1', {})
+    assert result.status == 'PASSED'
+    assert result.sanitized_response['status_code'] == 200
 
 
 @pytest.mark.parametrize("stage", ["main", "setup_steps", "cleanup_steps"])
@@ -1226,6 +1265,17 @@ def test_non_json_is_allowed_until_json_operation_requires_it(target_server):
     assert plain.status == "PASSED"
     assert parsed.status == "BROKEN"
     assert parsed.failure_category == "parser"
+
+
+def test_malformed_json_content_is_a_parser_error_when_json_asserted(target_server):
+    result = _executor(
+        target_server,
+        _case('/malformed-json', assertions=[_assertion('json_path', 'equals', 0, '$.code')]),
+    ).execute_case('case-version-1', 'environment-revision-1', {})
+
+    assert result.status == 'BROKEN'
+    assert result.failure_category == 'parser'
+    assert result.sanitized_response['status_code'] == 200
 
 
 def test_extraction_runs_only_after_assertions_pass(target_server):
