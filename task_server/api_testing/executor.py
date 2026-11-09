@@ -651,6 +651,10 @@ class HttpExecutor:
         for step in steps:
             if step.get("enabled", True):
                 preview_targets.update(self._extraction_targets(step.get("extractions", [])))
+        unavailable_outputs = set(preview_targets)
+        preview_aliases = self._processing_aliases(processing_pre or [])
+        unavailable_outputs.update(alias for alias, sources in preview_aliases.items()
+                                   if sources & preview_targets)
         trace = []
         target_outcome = None
         missing_variables = []
@@ -659,8 +663,18 @@ class HttpExecutor:
         for index, step in enumerate(steps[: target_index + 1]):
             if not step.get("enabled", True):
                 continue
+            controls = set(step.get("required_variables", ())) | {step.get("only_if_variable")}
+            controls.discard(None)
+            blocked_controls = self._expanded_variable_references(controls, variables) & unavailable_outputs
+            if blocked_controls:
+                message = "流程条件引用来源不可确认的变量：" + ", ".join(sorted(blocked_controls))
+                target_outcome = _HttpStepOutcome("BROKEN", "environment", {}, {}, (), {}, message, ())
+                self._emit_workflow_step(None, trace, "setup", index, step, target_outcome)
+                executed_index = index
+                break
             skipped = self._skip_conditional_step(None, trace, "setup", index, step, variables)
             if skipped:
+                unavailable_outputs.update(self._extraction_targets(step.get("extractions", [])))
                 executed_index = index
                 target_outcome = skipped
                 continue
@@ -691,6 +705,7 @@ class HttpExecutor:
                 lambda _phase: False,
                 None,
                 trace,
+                unavailable_outputs=unavailable_outputs,
                 configured_source_unavailable=preview_targets | set(variables),
             )
             executed_index = index
@@ -698,9 +713,16 @@ class HttpExecutor:
             if outcome.status != "PASSED":
                 break
             variables.update(copy.deepcopy(outcome.extracted))
+            targets = self._extraction_targets(step.get("extractions", []))
+            actual = self._actual_output_targets(step.get("extractions", []), outcome)
+            unavailable_outputs.update(targets - actual)
+            unavailable_outputs.difference_update(actual)
             for name in outcome.extracted:
                 if name in overrides:
+                    # Explicit preview substitutions remain user-provided inputs;
+                    # they are not evidence that the response produced this value.
                     variables[name] = copy.deepcopy(overrides[name])
+                    unavailable_outputs.discard(name)
 
         if target_outcome is None:
             raise ValueError("没有可执行的前置步骤")
@@ -821,14 +843,22 @@ class HttpExecutor:
                 variables,
                 service_name=request.get("service", "default"),
             )
-            rendered_request_headers = runtime.render(request.get("headers") or {})
-            overridden_names = {
-                name.lower() for name, value in rendered_request_headers.items()
-                if isinstance(name, str) and value is not None
-                and (not isinstance(value, str) or value.strip())
-            }
+            raw_request_headers = request.get("headers") or {}
+            # Match render-then-merge semantics: exact rendered keys collapse first,
+            # then HTTP header names override case-insensitively. Keep every name
+            # reference because it can determine which actual header wins.
+            rendered_header_entries = {}
+            for raw_name, raw_value in raw_request_headers.items():
+                name = runtime.render(raw_name)
+                rendered_header_entries[name] = (raw_value, runtime.render(raw_value))
+            effective_header_values = {}
+            for name, (raw_value, value) in rendered_header_entries.items():
+                if isinstance(name, str) and value is not None and (not isinstance(value, str) or value.strip()):
+                    effective_header_values[name.lower()] = raw_value
+            overridden_names = set(effective_header_values)
             if runtime.render(request.get("cookies") or {}):
                 overridden_names.add("cookie")
+                effective_header_values.pop("cookie", None)
             header_map = getattr(runtime, "default_header_reference_map", None)
             if header_map is None:
                 header_refs = set(getattr(runtime, "default_header_references", ()))
@@ -836,7 +866,9 @@ class HttpExecutor:
                 header_refs = set().union(*(refs for name, refs in header_map.items()
                     if name.lower() not in overridden_names)) if header_map else set()
             references = header_refs | self._request_references(runtime, {
-                "request": request,
+                "request": {**request, "headers": {}},
+                "request_header_names": list(raw_request_headers),
+                "effective_request_header_values": list(effective_header_values.values()),
                 "assertions": [
                     {"expected": item.expected, "path": getattr(item, "path", None)}
                     for item in assertion_views if getattr(item, "enabled", True)

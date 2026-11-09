@@ -2678,3 +2678,115 @@ def test_setup_preview_allows_configured_url_without_preview_variable_collision(
         initial_variables={'resourceSn': 'this-run'})
     assert result['status'] == 'PASSED'
     assert ('GET', '/workflow/setup', None) in handler.workflow_calls
+
+
+@pytest.mark.parametrize('usage', ['body', 'condition', 'required', 'pre_alias', 'nested_alias'])
+@pytest.mark.parametrize('target_index', [0, 1])
+def test_setup_preview_rejects_old_value_before_future_output(target_server, usage, target_index):
+    _, handler = target_server
+    target = 'oldAlias' if usage in ('pre_alias', 'nested_alias') else 'resourceSn'
+    first = _workflow_step('提前使用旧值', 'POST', '/workflow/cancel', body={'target': '{{' + target + '}}'} if usage in ('body', 'pre_alias', 'nested_alias') else {'target': 'fixed'})
+    if usage == 'condition':
+        first['only_if_variable'] = target
+    if usage == 'required':
+        first['required_variables'] = [target]
+    later = _workflow_step('之后获得本轮输出', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
+    pre = [{'action': 'copy_variable', 'source': 'resourceSn', 'target': 'oldAlias'}] if usage == 'pre_alias' else []
+    values = {'resourceSn': 'another-run'}
+    if usage == 'nested_alias':
+        values['oldAlias'] = '{{resourceSn}}'
+    handler.workflow_calls = []
+    result = _executor(target_server, _case()).preview_setup_steps('env', [first, later], target_index,
+        initial_variables=values, processing_pre=pre)
+    assert result['status'] != 'PASSED'
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_setup_preview_accepts_actual_prior_extraction_for_next_step(target_server):
+    _, handler = target_server
+    first = _workflow_step('获得本轮输出', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
+    second = _workflow_step('使用本轮输出', 'POST', '/workflow/cancel', body={'target': '{{resourceSn}}'})
+    handler.workflow_calls = []
+    result = _executor(target_server, _case()).preview_setup_steps('env', [first, second], 1,
+        initial_variables={'resourceSn': 'another-run'})
+    assert result['status'] == 'PASSED'
+    assert ('POST', '/workflow/cancel', {'target': 'resource-1'}) in handler.workflow_calls
+
+
+@pytest.mark.parametrize('override_header', [False, True])
+def test_setup_preview_guards_default_header_until_future_output(target_server, override_header):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    base_url, handler = target_server
+    class Env:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            resolver = _PlaceholderResolver({'resourceSn': 'another-run', **overrides})
+            return ResolvedEnvironment(revision_id='env', environment_id='env', name='test',
+                base_urls={'default': base_url}, public_variables=resolver.resolve_all(), secrets={},
+                headers={'X-Scope': resolver.render('{{resourceSn}}')}, service_metadata={},
+                unresolved_services=(), _renderer=resolver.render, _reference_finder=resolver.referenced_variables,
+                default_header_references=frozenset({'resourceSn'}),
+                default_header_reference_map={'X-Scope': frozenset({'resourceSn'})},
+                service_base_url_references={'default': frozenset()})
+    first = _workflow_step('带默认头的请求', 'POST', '/workflow/cancel', body={'target': 'fixed'})
+    if override_header:
+        first['request']['headers'] = {'x-scope': 'literal'}
+    later = _workflow_step('后续输出', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
+    executor = _executor(target_server, _case())
+    executor.environment_service = Env()
+    handler.workflow_calls = []
+    result = executor.preview_setup_steps('env', [first, later], 0, initial_variables={'resourceSn': 'another-run'})
+    if override_header:
+        assert result['status'] == 'PASSED'
+        assert any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+    else:
+        assert result['status'] == 'BROKEN'
+        assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_setup_preview_optional_default_does_not_become_response_output(target_server):
+    _, handler = target_server
+    first = _workflow_step('未提取到本轮值', 'GET', '/ok', extractions=[{**_json_extraction('resourceSn', '$.data.missing'), 'required': False, 'default': 'another-run'}])
+    second = _workflow_step('使用旧默认值', 'POST', '/workflow/cancel', body={'target': '{{resourceSn}}'})
+    handler.workflow_calls = []
+    result = _executor(target_server, _case()).preview_setup_steps('env', [first, second], 1)
+    assert result['status'] == 'BROKEN'
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+@pytest.mark.parametrize('header_name', ['Cookie', 'cookie', 'COoKiE'])
+@pytest.mark.parametrize('cookie_value', ['literal', '{{resourceSn}}'])
+def test_setup_or_main_uses_effective_cookie_before_provenance_check(target_server, header_name, cookie_value):
+    _, handler = target_server
+    case = _case('/capture', headers={header_name: '{{resourceSn}}'})
+    case.request['cookies'] = {'session': cookie_value}
+    handler.workflow_calls = []
+    handler.captured_cookie = None
+    result = _executor(target_server, case, values={'resourceSn': 'another-run'}).execute_case(
+        'v', 'env', {}, unavailable_dependency_exports={'resourceSn'})
+    if cookie_value == 'literal':
+        assert result.status == 'PASSED'
+        assert handler.captured_cookie == 'session=literal'
+    else:
+        assert result.status == 'BROKEN'
+        assert not handler.workflow_calls
+
+
+@pytest.mark.parametrize(('headers', 'expect_pass'), [
+    ({'X-Scope': '{{resourceSn}}', 'x-scope': 'literal'}, True),
+    ({'X-Scope': 'literal', 'x-scope': '{{resourceSn}}'}, False),
+    ({'X-Scope': '{{resourceSn}}', 'x-scope': ''}, False),
+    ({'{{resourceSn}}': 'literal', 'X-Scope': 'literal'}, False),
+])
+def test_header_provenance_tracks_effective_duplicate_values_and_all_names(target_server, headers, expect_pass):
+    _, handler = target_server
+    handler.workflow_calls = []
+    handler.captured_scope_values = None
+    result = _executor(target_server, _case('/capture', headers=headers), values={'resourceSn': 'another-run'}).execute_case(
+        'v', 'env', {}, unavailable_dependency_exports={'resourceSn'})
+    if expect_pass:
+        assert result.status == 'PASSED'
+        assert handler.captured_scope_values == ['literal']
+    else:
+        assert result.status == 'BROKEN'
+        assert not handler.workflow_calls
