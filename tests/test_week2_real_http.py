@@ -1,4 +1,5 @@
 import json
+import http.client
 import subprocess
 import threading
 
@@ -230,5 +231,28 @@ def test_http_history_scope_revoked_after_authorization_hides_existing_result(id
         encoded = json.dumps(payload)
         assert week2_real.EXECUTION_ID not in encoded and week2_real.CASE_ID not in encoded
         assert 'private' not in encoded
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+
+def test_http_evidence_get_and_post_are_never_cacheable(identity_db, tmp_path, monkeypatch):
+    _, store = identity_db
+    monkeypatch.setenv('TASK_OPERATION_DB', str(tmp_path / 'operations.sqlite3'))
+    store.create_role('admin', {'id': 'reader-api', 'name': 'reader', 'permissions': ['platform.configure', 'api.view']})
+    create_member(store, username='reader', role_ids=['reader-api'], scope=ALL_SCOPE)
+    activate(store, 'reader')
+    monkeypatch.setattr(week2_real, '_invoke_worker', lambda *args, **kwargs: (False, None))
+    server = app.ThreadingHTTPServer(('127.0.0.1', 0), app.TaskHTTPHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    try:
+        token = auth.create_session_token('reader')
+        for method, current_token in (('GET', token), ('POST', token), ('GET', 'invalid-token')):
+            connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
+            connection.request(method, '/api/platform/week2-real', body='{}' if method == 'POST' else None,
+                               headers={'Authorization':'Bearer '+current_token, 'Content-Type':'application/json'})
+            response = connection.getresponse()
+            assert response.status == (401 if current_token == 'invalid-token' else 200)
+            assert response.getheader('Cache-Control') == 'private, no-store'
+            response.read(); connection.close()
     finally:
         server.shutdown(); server.server_close(); thread.join(timeout=2)
