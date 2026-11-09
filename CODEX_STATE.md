@@ -14416,3 +14416,4 @@ git diff --check
 - 现有接口分析与证据区新增默认收起的三条真实执行记录及权限控制链接，分别为生产单次标记删除、只读基线通过、临时变量缺失导致请求前失败；明确各自时间、清理边界及未完成项。打开该区不请求业务接口，详情仍由现有项目和环境权限控制。
 - 2026-11-06 第一版已定向更新主机及静态容器，HTTP 文件哈希核对一致；真实网页展开三条记录，点击只读通过记录可打开正确执行详情。相关页面 150 项、前端静态 84 项通过。
 - 随后修正反馈分析中的过时文案，明确写入清理仅完成单次验证，异常恢复和关联资源清理仍待验证；新缓存版本为 `20261106-practice-evidence-v2`，尚未部署及线上验收。用户要求之后由其自行部署。
+- Source version 6 failed terminal eligibility on a named task card disappearing. Tested trial matcher recognizes the recorded terminal, and targeted Qwen replanning succeeded once with 29 events and three review questions. Full generation and device runs remain pending.
