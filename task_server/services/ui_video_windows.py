@@ -141,7 +141,15 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                     payload.update(image_frames=window,context_frame_ids=[],temporal_context_frame_ids=[])
                     assets=load_assets(window,root,cancelled)
                     payload['detail_frames']=append_details(window,root,assets,cancelled)
-                payload['validation_feedback']=getattr(error,'model_feedback','')+' 本窗口输出未通过格式或证据检查。重新核对当前frames，仅输出action/target/value/frame_refs/observation及可选uncertainties，不输出start_ms/end_ms/evidence_kind或其它字段。只引用当前窗真实帧且按时间排序，完整保留当前窗操作。'
+                payload['validation_feedback']=(getattr(error,'model_feedback','')+
+                    ' 本窗口输出未通过格式或证据检查。重新核对当前frames。'
+                    '根对象必须同时包含events数组、uncertainties数组和multiple_scenarios布尔值；'
+                    'multiple_scenarios必须根据画面判断，不得照抄示例值。'
+                    'events数组中的每个事件仅包含action、target、value、frame_refs、observation及可选uncertainties；'
+                    '不得把根字段当作事件字段，也不得遗漏根字段。'
+                    '事件不输出start_ms/end_ms/evidence_kind或其它字段。'
+                    'frame_refs只引用当前窗frames中的真实帧，按时间排序，完整保留当前窗操作；'
+                    'context_frame_ids仅供理解上下文，不能作为事件证据。')
         previous_window_events=list(events)
         for event in checked['events']:
             # Only identical evidence in an overlap is a duplicate. Never erase
