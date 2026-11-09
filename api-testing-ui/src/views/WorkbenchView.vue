@@ -32,6 +32,7 @@ const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
 let sourceLoadGeneration = 0
+let endpointActivationGeneration = 0
 const workspaceRestoring = ref(true)
 const workspaceRestoreFailed = ref(false)
 const taskNameDraft = ref('')
@@ -204,7 +205,7 @@ async function loadSource(
   restoredSelection: string[] = [],
   client: Pick<ApiClient, 'get'> = apiClient,
   throwOnError = false,
-): Promise<void> {
+): Promise<boolean> {
   const generation = ++sourceLoadGeneration
   localError.value = ''
   try {
@@ -212,7 +213,7 @@ async function loadSource(
       assets.load(sourceRevisionId, client),
       cases.loadSavedCases(sourceRevisionId, client),
     ])
-    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId || results.includes(false)) return
+    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId || results.includes(false)) return false
     if (assets.error) throw new Error(assets.error)
     activeEndpoint.value = null
     const available = new Set(assets.endpoints.map(item => item.id))
@@ -220,18 +221,22 @@ async function loadSource(
     endpointTreeTab.value = selectedIds.value.length ? 'selected' : 'all'
     if (selectedIds.value.length === 1) {
       const endpoint = assets.endpoints.find(item => item.id === selectedIds.value[0])
-      if (endpoint) await activate(endpoint, client)
+      if (endpoint && !await activate(endpoint, client)) return false
     }
+    return true
   } catch (error) {
-    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return
+    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return false
     localError.value = error instanceof Error ? error.message : '无法读取已保存接口和用例'
     if (throwOnError) throw new Error(localError.value)
+    return false
   }
 }
 
 function changeProject(projectId: string | null): void {
+  endpointActivationGeneration += 1
   sourceLoadGeneration += 1
   assets.invalidateLoad()
+  assets.endpoints = []
   cases.invalidateLoad()
   context.selectProject(projectId)
   tasks.clear()
@@ -248,8 +253,11 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
+  endpointActivationGeneration += 1
+  activeEndpoint.value = null
   sourceLoadGeneration += 1
   assets.invalidateLoad()
+  assets.endpoints = []
   cases.invalidateLoad()
   const recoverableTask = tasks.task || outdatedRestoredTask.value
   context.selectSourceRevision(sourceRevisionId)
@@ -272,8 +280,14 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
     if (recoverableTask && recoverableTask.project_id === context.projectId) {
       outdatedRestoredTask.value = recoverableTask
     }
-    await loadSource(sourceRevisionId)
-    if (context.projectId) await cases.restoreLatestAiJob(context.projectId, sourceRevisionId)
+    const projectId = context.projectId
+    const selectionGeneration = context.selectionGeneration
+    const loading = loadSource(sourceRevisionId)
+    const generation = sourceLoadGeneration
+    const loaded = await loading
+    if (!loaded || generation !== sourceLoadGeneration || context.selectionGeneration !== selectionGeneration || context.projectId !== projectId
+        || context.sourceRevisionId !== sourceRevisionId) return
+    if (projectId) await cases.restoreLatestAiJob(projectId, sourceRevisionId)
   }
   else {
     assets.endpoints = []
@@ -297,6 +311,9 @@ async function selectTask(taskId: string): Promise<void> {
   localError.value = ''
   const task = tasks.select(taskId)
   if (!task) return
+  endpointActivationGeneration += 1
+  activeEndpoint.value = null
+  assets.endpoints = []
   outdatedRestoredTask.value = null
   cases.clearDebug()
   cases.clearAiJob()
@@ -310,8 +327,17 @@ async function selectTask(taskId: string): Promise<void> {
     source_revision_id: task.source_revision_id,
     environment_revision_id: runtimeEnvironmentId,
   })
-  await loadSource(task.source_revision_id, task.selected_endpoint_ids)
+  const selectionGeneration = context.selectionGeneration
+  const loading = loadSource(task.source_revision_id, task.selected_endpoint_ids)
+  const generation = sourceLoadGeneration
+  const loaded = await loading
+  if (!loaded || generation !== sourceLoadGeneration || context.selectionGeneration !== selectionGeneration || context.projectId !== task.project_id
+      || context.sourceRevisionId !== task.source_revision_id || tasks.task?.id !== task.id) return
+  const activationGeneration = endpointActivationGeneration
   await cases.restoreLatestAiJob(task.project_id, task.source_revision_id)
+  if (generation !== sourceLoadGeneration || context.selectionGeneration !== selectionGeneration || context.projectId !== task.project_id
+      || context.sourceRevisionId !== task.source_revision_id || tasks.task?.id !== task.id
+      || activationGeneration !== endpointActivationGeneration) return
   const endpoint = assets.endpoints.find(item => task.selected_endpoint_ids.includes(item.id))
   activeEndpoint.value = endpoint || null
 }
@@ -319,16 +345,25 @@ async function selectTask(taskId: string): Promise<void> {
 async function activate(
   endpoint: ApiEndpoint,
   client: Pick<ApiClient, 'get'> = apiClient,
-): Promise<void> {
+): Promise<boolean> {
+  const generation = ++endpointActivationGeneration
+  const sourceGeneration = sourceLoadGeneration
+  const assetsGeneration = assets.loadGeneration
+  const projectId = context.projectId
+  const sourceRevisionId = context.sourceRevisionId
   localError.value = ''
   const detailed = await assets.ensureEndpointDetail(endpoint.id, client)
+  if (generation !== endpointActivationGeneration || sourceGeneration !== sourceLoadGeneration
+      || assetsGeneration !== assets.loadGeneration
+      || projectId !== context.projectId || sourceRevisionId !== context.sourceRevisionId) return false
   if (!detailed) {
-    localError.value = assets.error || '接口详情读取失败，请重试'
-    return
+    localError.value = assets.detailError || '接口详情读取失败，请重试'
+    return false
   }
   activeEndpoint.value = detailed
   cases.draftFor(detailed)
   mobilePane.value = 'editor'
+  return true
 }
 
 async function openAiGenerated(version: CaseVersion): Promise<void> {
@@ -341,8 +376,7 @@ async function openAiGenerated(version: CaseVersion): Promise<void> {
     localError.value = '生成用例对应的接口不在当前接口版本中'
     return
   }
-  await activate(endpoint)
-  if (!activeEndpoint.value) return
+  if (!await activate(endpoint)) return
   cases.setActiveVersion(version.endpoint_id, version.id)
 }
 
@@ -359,6 +393,7 @@ function openEndpointHistory(endpointId: string, endpointKey?: string): void {
 }
 
 function startNewTask(): void {
+  endpointActivationGeneration += 1
   tasks.clear()
   outdatedRestoredTask.value = null
   cases.clearDebug()
@@ -448,6 +483,7 @@ async function generateBasicPositive(): Promise<void> {
     const firstPreview = previews[0]
     const endpoint = assets.endpoints.find(item => item.id === firstPreview?.endpoint_id)
     if (endpoint && firstPreview) {
+      endpointActivationGeneration += 1
       activeEndpoint.value = endpoint
       cases.setDraftFromGeneratedPreview(firstPreview.id)
       mobilePane.value = 'editor'

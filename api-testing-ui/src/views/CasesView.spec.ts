@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { apiClient } from '../api/client'
 import type { ApiEndpoint, CaseVersion } from '../api/contracts'
 import CaseListPanel from '../components/CaseListPanel.vue'
 import { useAssetsStore } from '../stores/assets'
@@ -32,6 +33,92 @@ describe('CasesView', () => {
       enabled: true,
       business_lines: [{ id: 'home', name: '家用', enabled: true }],
     }])
+  })
+
+  it('does not open an old manual draft after switching projects during detail loading', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'old-project', sourceRevisionId: 'old-source' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    const lightweight = { ...ENDPOINT, operation: {} }
+    assets.endpoints = [lightweight]
+    let finishOld!: (result: any) => void
+    vi.spyOn(apiClient, 'get').mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }) as never)
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: {
+      ContextBar: { name: 'ContextBar', emits: ['update:projectId'], template: '<div />' },
+      EndpointDetail: true, DebugDrawer: true,
+      CaseEndpointPicker: { name: 'CaseEndpointPicker', emits: ['create-manual'], template: '<div />' },
+    } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="open-case-endpoint-picker"]').trigger('click')
+    wrapper.findComponent({ name: 'CaseEndpointPicker' }).vm.$emit('create-manual', lightweight)
+    wrapper.findComponent({ name: 'ContextBar' }).vm.$emit('update:projectId', 'new-project')
+    await flushPromises()
+    finishOld({ data: { endpoint: { ...lightweight, operation: { description: 'old' } } } }); await flushPromises()
+    expect(cases.drafts[ENDPOINT.id]).toBeUndefined()
+    expect(wrapper.findComponent({ name: 'EndpointDetail' }).props('endpoint')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('does not open a manual draft after the endpoint picker is closed', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'old-project', sourceRevisionId: 'old-source' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    let finishOld!: (endpoint: ApiEndpoint) => void
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(() => new Promise(resolve => { finishOld = resolve }))
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: {
+      ContextBar: { name: 'ContextBar', emits: ['update:projectId'], template: '<div />' },
+      EndpointDetail: true, DebugDrawer: true,
+      CaseEndpointPicker: { name: 'CaseEndpointPicker', emits: ['create-manual', 'close'], template: '<div />' },
+    } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="open-case-endpoint-picker"]').trigger('click')
+    wrapper.findComponent({ name: 'CaseEndpointPicker' }).vm.$emit('create-manual', ENDPOINT)
+    wrapper.findComponent({ name: 'CaseEndpointPicker' }).vm.$emit('close')
+    await flushPromises()
+    finishOld(ENDPOINT); await flushPromises()
+    expect(cases.drafts[ENDPOINT.id]).toBeUndefined()
+    expect(wrapper.findComponent({ name: 'EndpointDetail' }).props('endpoint')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('does not restore AI history after the environment changes while loading a source', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'p', sourceRevisionId: 'initial', environmentRevisionId: 'e' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    let finishOld!: (value: undefined) => void
+    vi.spyOn(assets, 'load').mockImplementation(async source => {
+      if (source === 'old') return new Promise<void>(resolve => { finishOld = resolve })
+      assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    })
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    const restoreAi = vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: {
+      ContextBar: { emits: ['update:sourceRevisionId', 'update:environmentRevisionId'], template: `<div><button data-testid="old" @click="$emit('update:sourceRevisionId', 'old')">old</button><button data-testid="env" @click="$emit('update:environmentRevisionId', 'new-environment')">env</button></div>` },
+      EndpointDetail: true, DebugDrawer: true,
+    } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="old"]').trigger('click')
+    await wrapper.get('[data-testid="env"]').trigger('click')
+    finishOld(undefined); await flushPromises()
+    expect(restoreAi).not.toHaveBeenCalledWith('p', 'old')
+    expect(context.environmentRevisionId).toBe('new-environment')
+    wrapper.unmount()
   })
 
   it('shows an endpoint fetch failure instead of presenting an empty case list', async () => {
