@@ -639,3 +639,54 @@ def test_exhausted_probe_survives_whole_window_and_blocks_trial(draft_env,monkey
     edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':observed['uncertainties']})
     with pytest.raises(ValueError,match='draft_gate_required'):
         trial(edited,'whole-window-exhausted-probe')
+
+
+def test_ordinary_selected_state_omission_blocks_actual_trial(draft_env,monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as reconcile
+    from test_ui_video_multi_gap_budget import fixture
+    frames,events=fixture(6)
+    state={'action':'aiAssert','target':'页面已更新','value':'','frame_refs':['f5'],
+           'start_ms':500,'end_ms':500,'observation':'页面显示结果',
+           'uncertainties':[],'evidence_kind':'inferred'}
+    reviewed=copy.deepcopy(events);reviewed.insert(1,state)
+    def fake(original,local,group,*args,**kwargs):
+        return {'events':[copy.deepcopy(e) for e in local['events'] if e['action']!='aiAssert'],
+                'uncertainties':[],'multiple_scenarios':False,
+                'reconciliation_audit':{'coverage_resolutions':[],'model_attempts':1}}
+    monkeypatch.setattr(reconcile,'_repair_window',fake)
+    result=reconcile._repair_coverage(events,{'events':reviewed,'uncertainties':[],'multiple_scenarios':False},
+        frames,11000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in events})
+    assert any('状态证据未完整保留' in q for q in result['uncertainties'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':result['uncertainties']})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'ordinary-selected-state-omission')
+
+
+def test_real_repair_overlapping_scrolls_block_trial(draft_env,monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as rec,ui_video_windows as windows,ui_video_touch_detail as details,ai_skill_service as ai
+    from test_ui_video_multi_gap_budget import fixture
+    frames,events=fixture(6)
+    state={'action':'aiAssert','target':'状态','value':'','frame_refs':['f5','f15'],'start_ms':500,'end_ms':1500,
+           'observation':'状态可见','uncertainties':[],'evidence_kind':'inferred'}
+    scroll={'action':'aiScroll','target':'列表','value':{'direction':'down','scrollType':'singleAction'},
+            'frame_refs':['f12','f17'],'start_ms':1200,'end_ms':1700,'observation':'列表滚动','uncertainties':[],'evidence_kind':'inferred'}
+    extra={**copy.deepcopy(scroll),'frame_refs':['f14'],'start_ms':1400,'end_ms':1400}
+    source=copy.deepcopy(events)+[state,scroll];source.sort(key=lambda e:(e['start_ms'],e['end_ms']))
+    monkeypatch.setattr(windows,'load_assets',lambda fs,*a:[{'name':f['frame_id']} for f in fs])
+    monkeypatch.setattr(details,'append_details',lambda *a,**kw:[])
+    def model(skill,payload,**kw):
+        ids={f['frame_id'] for f in payload['frames']};local=[copy.deepcopy(e) for e in source if set(e['frame_refs'])<=ids]
+        if 'f14' in ids:local.append(copy.deepcopy(extra))
+        local.sort(key=lambda e:(e['start_ms'],e['end_ms']))
+        return {'events':[{k:v for k,v in e.items() if k not in {'start_ms','end_ms','evidence_kind'}} for e in local],
+                'uncertainties':[],'multiple_scenarios':False,'coverage_resolutions':[]}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=rec._repair_coverage(source,{'events':copy.deepcopy(source),'uncertainties':[],'multiple_scenarios':False},
+        frames,11000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in events})
+    assert len([e for e in result['events'] if e['action']=='aiScroll'])==2
+    assert any('交互时间重叠' in q for q in result['uncertainties'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':result['uncertainties']})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'overlapping-repair-scrolls')

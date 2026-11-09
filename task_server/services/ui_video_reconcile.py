@@ -296,6 +296,34 @@ def _gap_frames(frames,events,missing_refs):
     return [f for i,f in enumerate(frames) if i in selected]
 
 
+def _validate_repair_group_ownership(events,groups):
+    """Every event assigned for replacement must belong to one group."""
+    group_ids=[{frame['frame_id'] for frame in group} for group in groups]
+    selected=set().union(*group_ids)
+    for event in events:
+        refs=set(event['frame_refs'])
+        touched=sum(bool(refs & ids) for ids in group_ids)
+        # A preserved neighbor may share a single boundary frame. No event,
+        # including an assertion, may silently straddle two repair groups.
+        if touched>1 or (refs<=selected and touched and sum(refs<=ids for ids in group_ids)!=1):
+            raise ValueError('video_required_action_missing')
+
+
+def _repair_interaction_overlap(replacements,preserved):
+    """Overlapping actions are hypotheses, never automatically deduplicated."""
+    actions={'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
+    events=list(replacements)+list(preserved)
+    for index,first in enumerate(replacements):
+        if first['action'] not in actions:continue
+        for second in events[index+1:]:
+            if second['action'] not in actions:continue
+            if first['action']!=second['action'] and {first['action'],second['action']} not in ({'aiTap','aiScroll'},{'aiTap','navigateBack'}):continue
+            a,b=first['start_ms'],first['end_ms'];c,d=second['start_ms'],second['end_ms']
+            if max(a,c)<min(b,d) or a==c or (a<b and a<c<b and c==d) or (c<d and c<a<d and a==b):
+                return True
+    return False
+
+
 def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,missing_refs):
     """Keep distant conflicts separate with at most one targeted sixth call."""
     import copy
@@ -309,6 +337,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
               if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} and set(e['frame_refs'])&missing_refs]
     positions={f['frame_id']:i for i,f in enumerate(frames)}
     selected={positions[r] for r in missing_refs}
+    seed_positions=set(selected)
     for source in (original,checked['events']):
         for group in _input_rounds(source):
             if all(set(e['frame_refs'])<=missing_refs for e in group):
@@ -319,8 +348,11 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     # Include same-action/target overlapping evidence from both passes. A
     # partial duplicate outside the gap competes with its repaired counterpart
     # when the windows are joined, despite each local coverage check passing.
+    bridge_frames=set()
     while True:
+        if cancelled():raise ValueError('video_cancelled')
         expanded=set(selected)
+        newly_bridged=set()
         for event in original+checked['events']:
             indexes=[positions[r] for r in event['frame_refs']]
             related=any(other['action']==event['action'] and other['target']==event['target']
@@ -336,10 +368,34 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
                 max(other['start_ms'],event['start_ms'])<min(other['end_ms'],event['end_ms']) and
                 all(positions[r] in selected for r in other['frame_refs'])
                 for other in counterpart)
-            if event['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} and selected.intersection(indexes) and (related or scroll_overlap):
-                expanded.update(range(min(indexes),max(indexes)+1))
+            interaction=event['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}
+            bridge_overlap=interaction and any(min(indexes)<=i<=max(indexes) for i in bridge_frames)
+            if interaction and (bridge_overlap or (selected.intersection(indexes) and (related or scroll_overlap))):
+                interval=set(range(min(indexes),max(indexes)+1))
+                expanded.update(interval)
+                if bridge_overlap:newly_bridged.update(interval-selected)
+        # A state observation spanning separate selected groups must stay
+        # whole. Bridge only that observation, not every long loading state
+        # touching a single boundary, then repeat interaction expansion.
+        owners={};last=None;group_no=-1
+        for index in sorted(selected):
+            if last is None or index!=last+1:group_no+=1
+            owners[index]=group_no;last=index
+        for source in (original,checked['events']):
+            for event in source:
+                if event['action']!='aiAssert':continue
+                indexes=[positions[r] for r in event['frame_refs']]
+                if len({owners[i] for i in indexes if i in owners})>1:
+                    interval=set(range(min(indexes),max(indexes)+1))
+                    expanded.update(interval)
+                    newly_bridged.update(interval-selected)
+        # Once a bridge is present, every concurrent expansion participates
+        # in the same closure, including one caused by related observations.
+        if bridge_frames or newly_bridged:
+            newly_bridged.update(expanded-seed_positions)
         if len(expanded)>160:raise ValueError('video_required_action_missing')
         if expanded==selected:break
+        bridge_frames.update(newly_bridged)
         selected=expanded
     # A shared hold frame can be the last sampled anchor. Supply one later
     # decoded state for visual review; it is not evidence of a merge by itself.
@@ -367,15 +423,16 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     for frame in window:
         if not groups or positions[frame['frame_id']]!=positions[groups[-1][-1]['frame_id']]+1:groups.append([])
         groups[-1].append(frame)
-    if len(groups)>5 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
+    if len(groups)>8 or len(window)>160 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
+    _validate_repair_group_ownership(original+checked['events'],groups)
     result=copy.deepcopy(checked);resolutions=[];replacements=[];redundant_claims=[];redundant_tap_claims=[];frame_role_audit=[]
     all_ids={f['frame_id'] for f in window}
     replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
     boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} for r in e['frame_refs']}
     all_ids={f['frame_id'] for f in window}
-    return_retry_only=len(groups)==5
-    calls_remaining=6 if return_retry_only else 4
+    return_retry_only=len(groups)>=5
+    calls_remaining=(len(groups)+1 if len(groups)>5 else 6) if return_retry_only else 4
     for group_index,group in enumerate(groups):
         if cancelled():raise ValueError('video_cancelled')
         ids={f['frame_id'] for f in group}
@@ -384,11 +441,20 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         local_original=[original[i] for i in indexes['first_pass']]
         local_checked={**checked,'events':[checked['events'][i] for i in indexes['independent_review']]}
         # Reserve one call for each later gap; extra attempts share the same
-        # bounded ceiling; five gaps share one return-specific extra attempt.
+        # bounded ceiling; five to eight gaps share one return-specific retry.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
         repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only,preserved_interactions=preserved)
         frame_role_audit.extend(repaired.get('frame_role_audit',[]))
         calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)
+        # State observations are not covered by the interaction boundary gate.
+        # A preserved neighbor sharing its evidence with a new local state
+        # cannot safely be duplicated or silently replaced.
+        state_actions={'aiAssert','aiWaitFor'}
+        if any(new.get('action') in state_actions and old.get('action') in state_actions and
+               (set(new['frame_refs']) & set(old['frame_refs']) or
+                max(new['start_ms'],old['start_ms'])<=min(new['end_ms'],old['end_ms']))
+               for new in repaired['events'] for old in preserved):
+            raise ValueError('video_required_action_missing')
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
             raise ValueError('video_required_action_missing')
@@ -414,6 +480,31 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     result['events']=preserved+replacements
     result['events'].sort(key=lambda e:(e['start_ms'],e['end_ms']))
     result=validate_analysis(result,frames,duration,secrets,max_events=120)
+    # A selected state omitted or altered by a re-observation is not verified.
+    # Keep an independent platform-owned blocker; do not invent a replacement.
+    missing_state=False
+    for source in (original,checked['events']):
+        used=set()
+        for old in source:
+            if old['action'] not in {'aiAssert','aiWaitFor'} or not set(old['frame_refs'])<=all_ids:continue
+            matches=[i for i,new in enumerate(result['events']) if i not in used and
+                     new['action']==old['action'] and new['target']==old['target'] and
+                     new['observation']==old['observation'] and
+                     set(old['frame_refs'])<=set(new['frame_refs']) and
+                     set(old['uncertainties'])<=set(new['uncertainties'])]
+            if len(matches)!=1:
+                missing_state=True
+                continue
+            used.add(matches[0])
+    blockers=[]
+    if missing_state:
+        blockers.append('局部状态证据未完整保留，请对照完整原视频核对所有相关画面后再试跑。')
+    if _repair_interaction_overlap(replacements,preserved):
+        blockers.append('局部重审的交互时间重叠，请对照完整原视频逐项核对是否存在独立操作后再试跑。')
+    if blockers:
+        result['uncertainties']=list(dict.fromkeys(result['uncertainties']+blockers))
+        from .ui_video_analysis import _check_question_count
+        _check_question_count(result['uncertainties'],30)
     resolutions=_redact_audit(resolutions,secrets)
     check_coverage(original,result['events'],duration,resolutions,'first_pass')
     check_coverage(checked['events'],result['events'],duration,resolutions,'independent_review')
