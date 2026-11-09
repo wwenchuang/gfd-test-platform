@@ -128,11 +128,11 @@ function toggleBlock(key: string): void {
     <p v-else-if="!loading && cleanupEvidence === 'failed'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">清理步骤未通过，请同时查看主体与清理步骤，核对本次数据。</p>
     <p v-else-if="!loading && cleanupEvidence === 'skipped'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">清理步骤被跳过，不能据此确认数据已清理，请核对跳过原因及本次数据。</p>
     <p v-else-if="!loading && cleanupEvidence === 'missing'" data-testid="cleanup-evidence-warning" class="field-warning" role="status">当前未能确认清理步骤证据，请核对本次数据的实际状态。</p>
-    <p v-else-if="!loading && cleanupEvidence === 'passed'" data-testid="cleanup-evidence-passed" role="status">清理步骤已记录为通过；其他步骤及实际资源状态仍需核对。</p>
+    <p v-else-if="!loading && cleanupEvidence === 'passed'" data-testid="cleanup-evidence-passed" role="status">清理步骤已记录为通过，不代表资源及关联对象已清除；其他步骤及实际资源状态仍需核对。</p>
     <details v-if="!loading && !error && cleanupEvidence" :key="result.execution_case_id" data-testid="cleanup-verification-guide">
       <summary>如何核对本次清理</summary>
       <ol>
-        <li>查看主体响应和提取变量，确认本次创建资源的唯一资源标识；无法确定归属时，不要按最新记录或批量删除。</li>
+        <li>响应和提取变量中的资源标识仅是线索；需用可信证据确认资源属于本轮。无法确认时，停止重试和删除，不要按最新记录或批量删除。</li>
         <li>如果有“分阶段执行证据”，核对清理请求的标识、响应和断言是否对应本次资源。</li>
         <li>使用已有查询或详情接口核对资源状态；标记删除或查询不可见不代表物理删除或关联资源已清理。</li>
       </ol>

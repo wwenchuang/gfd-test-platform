@@ -18,6 +18,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
     listLoading: false,
     restoreLoading: false,
     saving: false,
+    savingOperations: 0,
     running: false,
     error: '',
     errorSource: '' as '' | 'list' | 'restore' | 'operation',
@@ -25,8 +26,18 @@ export const useTasksStore = defineStore('api-test-tasks', {
     readErrors: { list: '', restore: '' },
     listGeneration: 0,
     restoreGeneration: 0,
+    saveOperationGeneration: 0,
+    runOperationGeneration: 0,
   }),
   actions: {
+    beginSaving(): void {
+      this.savingOperations += 1
+      this.saving = true
+    },
+    endSaving(): void {
+      this.savingOperations = Math.max(0, this.savingOperations - 1)
+      this.saving = this.savingOperations > 0
+    },
     async list(projectId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<ApiTestTask[]> {
       const generation = ++this.listGeneration
       this.listLoading = true
@@ -95,9 +106,11 @@ export const useTasksStore = defineStore('api-test-tasks', {
         }
       }
     },
-    async saveSelection(context: TaskContext, endpointIds: string[], name: string): Promise<ApiTestTask> {
+    async saveSelection(context: TaskContext, endpointIds: string[], name: string, options: { isCurrent?: () => boolean } = {}): Promise<ApiTestTask> {
       if (!endpointIds.length) throw new Error('请至少选择一个接口')
-      this.saving = true
+      const generation = ++this.saveOperationGeneration
+      const isCurrent = () => generation === this.saveOperationGeneration && options.isCurrent?.() !== false
+      this.beginSaving()
       this.error = ''
       this.errorSource = ''
       try {
@@ -117,22 +130,24 @@ export const useTasksStore = defineStore('api-test-tasks', {
             payload,
           )
           : await apiClient.post<{ task: ApiTestTask }>('/api/api-testing/v1/tasks', payload)
+        if (!isCurrent()) throw new Error('任务已保存，但范围或当前任务已变化，请重新确认。')
         this.task = response.data.task
         this.upsertTask(this.task)
         return this.task
       } catch (error) {
+        if (!isCurrent()) throw error
         this.error = error instanceof Error ? error.message : '测试任务保存失败'
         this.errorSource = 'operation'
         this.operationError = this.error
         throw error
       } finally {
-        this.saving = false
+        this.endSaving()
       }
     },
     async createSelection(context: TaskContext, endpointIds: string[], name: string): Promise<ApiTestTask> {
       const selectedEndpointIds = [...new Set(endpointIds)]
       if (!selectedEndpointIds.length) throw new Error('请至少选择一个接口')
-      this.saving = true
+      this.beginSaving()
       this.error = ''
       this.errorSource = ''
       try {
@@ -152,13 +167,13 @@ export const useTasksStore = defineStore('api-test-tasks', {
         this.operationError = this.error
         throw error
       } finally {
-        this.saving = false
+        this.endSaving()
       }
     },
     async rename(taskId: string, name: string): Promise<ApiTestTask> {
       const nextName = name.trim()
       if (!nextName) throw new Error('任务名称不能为空')
-      this.saving = true
+      this.beginSaving()
       this.error = ''
       this.errorSource = ''
       try {
@@ -175,11 +190,14 @@ export const useTasksStore = defineStore('api-test-tasks', {
         this.operationError = this.error
         throw error
       } finally {
-        this.saving = false
+        this.endSaving()
       }
     },
-    async runCurrent(environmentRevisionId?: string): Promise<ExecutionView> {
+    async runCurrent(environmentRevisionId?: string, options: { isCurrent?: () => boolean; expectedTaskId?: string } = {}): Promise<ExecutionView> {
       if (!this.task) throw new Error('请先保存本次测试任务')
+      if (options.expectedTaskId && this.task.id !== options.expectedTaskId) throw new Error('当前任务已变化，未执行；请重新确认。')
+      const generation = ++this.runOperationGeneration
+      const isCurrent = () => generation === this.runOperationGeneration && options.isCurrent?.() !== false
       this.running = true
       this.error = ''
       this.errorSource = ''
@@ -190,20 +208,22 @@ export const useTasksStore = defineStore('api-test-tasks', {
           `/api/api-testing/v1/tasks/${encodeURIComponent(this.task.id)}/run`,
           payload,
         )
+        if (!isCurrent()) throw new Error('任务执行请求已提交，请前往执行记录核对结果。')
         this.task = response.data.task
         this.upsertTask(this.task)
         return response.data.execution
       } catch (error) {
+        if (!isCurrent()) throw error
         this.error = error instanceof Error ? error.message : '测试任务执行失败'
         this.errorSource = 'operation'
         this.operationError = this.error
         throw error
       } finally {
-        this.running = false
+        if (generation === this.runOperationGeneration) this.running = false
       }
     },
     async remove(taskId: string): Promise<ApiTestTask> {
-      this.saving = true
+      this.beginSaving()
       this.error = ''
       this.errorSource = ''
       try {
@@ -219,7 +239,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
         this.operationError = this.error
         throw error
       } finally {
-        this.saving = false
+        this.endSaving()
       }
     },
     clear(): void {

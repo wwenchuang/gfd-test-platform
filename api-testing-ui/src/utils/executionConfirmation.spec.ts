@@ -35,6 +35,12 @@ describe('execution confirmation', () => {
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/生产环境.*每日发版回归.*12 条.*真实发送/))
   })
 
+  it.each(['任务保存环境', '未选择环境'])('warns before executing with an unresolved environment name: %s', name => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    expect(confirmApiExecution({ action: '调试用例', environmentName: name, targetName: '接口 A' })).toBe(false)
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/无法确认.*环境.*可能.*生产.*真实发送/))
+  })
+
   it('uses a concise confirmation for non-production execution', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
