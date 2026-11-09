@@ -1249,6 +1249,43 @@ describe('cases store', () => {
     expect(store.aiError).toBe('AI 服务调用失败，请稍后重试或检查模型配置')
   })
 
+  it('shows timeout and validation failure together for a mixed batch job', async () => {
+    const batch = {
+      id: 'batch-1', sequence: 1, state: 'failed_gateway', endpoint_ids: ['endpoint-1'],
+      requested_model: 'qwen', actual_model: '', fallback_used: false, fallback_reason: '',
+      generated_draft_ids: [], validation_errors: [], error_code: 'gateway_timeout',
+    }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: {
+      id: 'job-mixed', state: 'failed_gateway', endpoint_ids: ['endpoint-1', 'endpoint-2'],
+      requested_model: 'qwen', actual_model: '', fallback_used: false, summary: {}, batches: [
+        batch, { ...batch, id: 'batch-2', state: 'failed_validation', error_code: '', validation_errors: [{ code: 'missing_endpoint_coverage', message: 'missing endpoint coverage' }] },
+      ],
+    } } })
+    const store = useCasesStore()
+    await store.pollAiJob('job-mixed', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiError).toContain('超时')
+    expect(store.aiError).toContain('校验')
+  })
+
+  it('does not claim no model calls for an enqueue failure mixed with a validation failure', async () => {
+    const batch = {
+      id: 'batch-1', sequence: 1, state: 'failed_gateway', endpoint_ids: ['endpoint-1'],
+      requested_model: 'qwen', actual_model: '', fallback_used: false, fallback_reason: '',
+      generated_draft_ids: [], validation_errors: [], error_code: 'enqueue_failed',
+    }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: {
+      id: 'job-mixed', state: 'failed_gateway', endpoint_ids: ['endpoint-1', 'endpoint-2'],
+      requested_model: 'qwen', actual_model: '', fallback_used: false, summary: {}, batches: [
+        batch, { ...batch, id: 'batch-2', state: 'failed_validation', error_code: '', validation_errors: [{ code: 'output_validation_error', message: 'invalid' }] },
+      ],
+    } } })
+    const store = useCasesStore()
+    await store.pollAiJob('job-mixed', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiError).toContain('队列')
+    expect(store.aiError).toContain('校验')
+    expect(store.aiError).not.toContain('未发起模型调用')
+  })
+
   it('keeps a readable validation reason when AI generation ends in failure', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
       job: {
