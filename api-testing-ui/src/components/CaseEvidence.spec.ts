@@ -22,6 +22,14 @@ const result: ExecutionCaseResult = {
 }
 
 describe('CaseEvidence', () => {
+  it('does not infer missing assertion configuration from an interrupted execution', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: {
+      ...result, status: 'BROKEN', failure_category: 'environment', evidence_loaded: true,
+      sanitized_result: { error_message: '环境变量 week2_request_id 未配置', assertion_results: [] },
+    } } })
+    expect(wrapper.text()).toContain('本次没有断言结果')
+    expect(wrapper.text()).not.toContain('本用例没有配置断言')
+  })
   it('offers a collapsed cleanup verification guide only when cleanup needs review', async () => {
     const wrapper = mount(CaseEvidence, { props: { result: { ...result, sanitized_result: {
       ...result.sanitized_result, trace: [{ phase: 'workflow_step', stage: 'cleanup', index: 0, status: 'FAILED' }],

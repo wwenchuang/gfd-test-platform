@@ -200,7 +200,7 @@ function toggleBlock(key: string): void {
           </span>
         </div>
       </div>
-      <p v-else class="state-message">本用例没有配置断言</p>
+      <p v-else class="state-message">本次没有断言结果，请检查用例配置和执行过程。</p>
     </details>
     <details><summary>执行轨迹（{{ trace.length }}）</summary><pre>{{ traceBlock.text }}</pre><div v-if="traceBlock.oversized" class="evidence-preview-actions"><span>轨迹共 {{ traceBlock.length.toLocaleString('zh-CN') }} 个字符</span><button data-testid="expand-trace-evidence" class="text-command" type="button" @click="toggleBlock('trace')">{{ traceBlock.expanded ? '恢复精简预览' : '显示完整轨迹' }}</button></div></details>
     </template>

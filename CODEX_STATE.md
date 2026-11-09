@@ -14417,3 +14417,7 @@ git diff --check
 - 2026-11-06 第一版已定向更新主机及静态容器，HTTP 文件哈希核对一致；真实网页展开三条记录，点击只读通过记录可打开正确执行详情。相关页面 150 项、前端静态 84 项通过。
 - 随后修正反馈分析中的过时文案，明确写入清理仅完成单次验证，异常恢复和关联资源清理仍待验证；新缓存版本为 `20261106-practice-evidence-v2`，尚未部署及线上验收。用户要求之后由其自行部署。
 - Source version 6 failed terminal eligibility on a named task card disappearing. Tested trial matcher recognizes the recorded terminal, and targeted Qwen replanning succeeded once with 29 events and three review questions. Full generation and device runs remain pending.
+
+## 2026-11-09 第四周补充
+- 真实失败记录 `43b09e5e-d879-47a2-bde5-2d462d48e988` 在请求前因缺少临时变量而中断，断言结果为空；结果页原先将空结果误称为“没有配置断言”。已改为提示核对用例配置和执行过程，本地组件 24 项、前端静态 84 项通过；尚未部署或线上验收。
+- 新增 `docs/runbooks/api-test-data-and-cleanup.md`，按现有平台记录造数、执行、归属确认、清理与失败处置；单次标记删除不可证明关联资源清除或并发隔离。生产写入仍仅有此前授权的单次证据。
