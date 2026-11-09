@@ -2398,7 +2398,6 @@ def test_missing_optional_dependency_does_not_override_earlier_actual_export(mis
     assert ExecutionService._unavailable_dependency_exports(snapshot, outcomes) == set()
 
 
-@pytest.mark.xfail(strict=True, reason='unscoped existing ID and a future cleanup output do not establish ownership')
 def test_unscoped_environment_alias_of_future_cleanup_output_is_not_yet_guarded(target_server):
     from task_server.api_testing.contracts.environment import ResolvedEnvironment
     from task_server.api_testing.services.environment_service import _PlaceholderResolver
@@ -2418,4 +2417,49 @@ def test_unscoped_environment_alias_of_future_cleanup_output_is_not_yet_guarded(
     executor.environment_service = NestedEnvironment()
     handler.workflow_calls = []
     executor.execute_case('v', 'env', {'resourceSn': 'another-run'})
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+@pytest.mark.parametrize('producer', ['main', 'earlier_cleanup'])
+def test_future_cleanup_output_allows_previously_produced_response_value(target_server, producer):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+
+    base_url, handler = target_server
+    class NestedEnvironment:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            resolver = _PlaceholderResolver({'environmentAlias': '{{resourceSn}}', **overrides})
+            return ResolvedEnvironment(
+                revision_id='env', environment_id='env', name='test', base_urls={'default': base_url},
+                public_variables=resolver.resolve_all(), secrets={}, headers={}, service_metadata={},
+                unresolved_services=(), _renderer=resolver.render,
+                _reference_finder=resolver.referenced_variables,
+            )
+    extraction = _json_extraction('resourceSn', '$.data.resourceSn')
+    cancel = _workflow_step('使用已有本轮响应', 'POST', '/workflow/cancel', body={'target': '{{environmentAlias}}'})
+    later = _workflow_step('后续再次读取', 'GET', '/workflow/setup', extractions=[extraction])
+    steps = [cancel, later]
+    main_extractions = []
+    main_path = '/ok'
+    if producer == 'main':
+        main_path = '/workflow/setup'
+        main_extractions = [_extraction('resourceSn', 'json_path', '$.data.resourceSn')]
+    else:
+        steps.insert(0, _workflow_step('先读取本轮响应', 'GET', '/workflow/setup', extractions=[extraction]))
+    executor = _executor(target_server, _case(main_path, extractions=main_extractions, processing=_workflow_processing(cleanup_steps=steps)))
+    executor.environment_service = NestedEnvironment()
+    handler.workflow_calls = []
+    result = executor.execute_case('v', 'env', {'resourceSn': 'another-run'})
+    assert result.status == 'PASSED'
+    assert ('POST', '/workflow/cancel', {'target': 'resource-1'}) in handler.workflow_calls
+
+
+def test_future_cleanup_output_cannot_trust_setup_default_overwriting_earlier_response(target_server):
+    _, handler = target_server
+    fresh = _workflow_step('本轮输出', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
+    defaulted = _workflow_step('缺失时默认旧值', 'GET', '/ok', extractions=[{**_json_extraction('resourceSn', '$.data.missing'), 'required': False, 'default': 'another-run'}])
+    cancel = _workflow_step('错误清理', 'POST', '/workflow/cancel', body={'target': '{{resourceSn}}'})
+    later = _workflow_step('后续重新读取', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
+    case = _case('/ok', processing=_workflow_processing(setup_steps=[fresh, defaulted], cleanup_steps=[cancel, later]))
+    handler.workflow_calls = []
+    _executor(target_server, case).execute_case('v', 'env', {})
     assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)

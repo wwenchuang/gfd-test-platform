@@ -373,6 +373,7 @@ class HttpExecutor:
             has_workflow = bool(setup_steps or cleanup_steps)
             setup_failure = None
             all_secrets = []
+            current_response_outputs = set()
 
             for index, step in enumerate(setup_steps):
                 if not step.get("enabled", True):
@@ -422,9 +423,10 @@ class HttpExecutor:
                     setup_failure = outcome
                     break
                 variables.update(copy.deepcopy(outcome.extracted))
-                unavailable_outputs.difference_update(
-                    self._actual_output_targets(step.get("extractions", []), outcome)
-                )
+                actual_setup_outputs = self._actual_output_targets(step.get("extractions", []), outcome)
+                current_response_outputs.difference_update(self._extraction_targets(step.get("extractions", [])))
+                current_response_outputs.update(actual_setup_outputs)
+                unavailable_outputs.difference_update(actual_setup_outputs)
 
             main_outcome = None
             if setup_failure is None:
@@ -445,6 +447,9 @@ class HttpExecutor:
                 extracted = copy.deepcopy(main_outcome.extracted)
                 main_targets = self._extraction_targets(case.extractions)
                 actual_main_targets = self._actual_output_targets(case.extractions, main_outcome)
+                current_response_outputs.difference_update(main_targets)
+                if main_outcome.status == "PASSED":
+                    current_response_outputs.update(actual_main_targets)
                 unavailable_outputs.update(main_targets - actual_main_targets)
                 unavailable_outputs.difference_update(actual_main_targets)
                 self._apply_processing(case.processing.get("post", []), extracted)
@@ -516,11 +521,19 @@ class HttpExecutor:
                         cleanup_output_failed = True
                         failed_cleanup_step = True
                     continue
+                # Future cleanup outputs cannot validate an older value, including
+                # through nested environment aliases. Already produced response
+                # outputs remain usable as source evidence, not ownership proof.
+                future_cleanup_targets = set()
+                for later in cleanup_steps[index + 1:]:
+                    if later.get("enabled", True):
+                        future_cleanup_targets.update(self._extraction_targets(later.get("extractions", [])))
+                future_cleanup_targets.difference_update(current_response_outputs)
                 outcome, step_secrets = self._execute_inline_step(
                     "cleanup", index, step, environment_revision_id, variables,
                     lambda _phase: False, callback, trace,
                     require_outputs=protects_downstream,
-                    unavailable_outputs=unavailable_outputs,
+                    unavailable_outputs=unavailable_outputs | future_cleanup_targets,
                     require_independent_literal=cleanup_output_failed,
                     fresh_cleanup_outputs=fresh_cleanup_outputs,
                 )
@@ -528,12 +541,15 @@ class HttpExecutor:
                 if outcome.status == "PASSED":
                     variables.update(copy.deepcopy(outcome.extracted))
                     actual = self._actual_output_targets(step.get("extractions", []), outcome)
+                    current_response_outputs.difference_update(targets)
+                    current_response_outputs.update(actual)
                     unavailable_outputs.update(targets - actual)
                     unavailable_outputs.difference_update(actual)
                     fresh_cleanup_outputs.difference_update(targets)
                     fresh_cleanup_outputs.update(actual)
                 else:
                     actual = set()
+                    current_response_outputs.difference_update(targets)
                     unavailable_outputs.update(targets)
                     fresh_cleanup_outputs.difference_update(targets)
                     cleanup_problem = cleanup_problem or outcome
