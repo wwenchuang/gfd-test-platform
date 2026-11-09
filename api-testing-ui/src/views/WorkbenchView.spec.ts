@@ -1280,6 +1280,38 @@ describe('WorkbenchView debug workflow', () => {
     wrapper.unmount()
   })
 
+  it('keeps invalid raw JSON when cancelling a generated case switch', async () => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p', sourceRevisionId: 's', environmentRevisionId: 'e' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue(); vi.spyOn(assets, 'ensureEndpointDetail').mockResolvedValue(ENDPOINT)
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const original = savedCase('version-a', 'case-a', 'original', {})
+    const generated = savedCase('version-b', 'case-b', 'generated', {})
+    cases.registerVersion(original); cases.registerVersion(generated, false)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, DebugDrawer: true,
+      EndpointTree: { name: 'EndpointTree', emits: ['selection-change', 'activate'], template: '<div />' },
+      AiAssistant: { name: 'AiAssistant', emits: ['open-generated'], template: '<div />' },
+    } } })
+    await flushPromises()
+    const tree = wrapper.findComponent({ name: 'EndpointTree' })
+    tree.vm.$emit('selection-change', [ENDPOINT.id]); tree.vm.$emit('activate', ENDPOINT); await flushPromises()
+    await wrapper.get('[data-testid="raw-tab"]').trigger('click')
+    const raw = wrapper.get<HTMLTextAreaElement>('.raw-editor textarea')
+    await raw.setValue('{ invalid raw'); await raw.trigger('blur')
+    wrapper.findComponent({ name: 'AiAssistant' }).vm.$emit('open-generated', generated); await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(raw.element.value).toBe('{ invalid raw')
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(original.id)
+    wrapper.unmount()
+  })
+
   it('hides a restored AI job outside the saved task scope and blocks opening its draft', async () => {
     const context = useContextStore()
     Object.assign(context, {

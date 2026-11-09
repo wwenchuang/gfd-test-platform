@@ -19,6 +19,7 @@ import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
 import { captureApiExecutionScope, confirmApiExecution, matchesApiExecutionScope, type ApiExecutionScope } from '../utils/executionConfirmation'
+import { useRawEditorGuard } from '../utils/rawEditorGuard'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -44,7 +45,13 @@ const workspaceRestoreFailed = ref(false)
 const taskNameDraft = ref('')
 const outdatedRestoredTask = ref<ApiTestTask | null>(null)
 const mobilePane = ref<'scope' | 'editor' | 'ai'>('scope')
-const caseEditor = ref<{ editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void> } | null>(null)
+const caseEditor = ref<{ editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void>; hasUnappliedRaw(): boolean; discardUnappliedRaw(): void } | null>(null)
+const rawEditorGuard = useRawEditorGuard(caseEditor)
+function requireAppliedRaw(): boolean {
+  if (!rawEditorGuard.hasRaw()) return true
+  localError.value = '原始 JSON 有未应用的内容，请先修正或放弃后再操作。'
+  return false
+}
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
 const dependencyOptions = computed(() => buildCaseDependencyOptions(
@@ -245,6 +252,7 @@ async function loadSource(
 }
 
 function changeProject(projectId: string | null): void {
+  if (projectId !== context.projectId && !rawEditorGuard.confirmDiscardRaw()) return
   endpointActivationGeneration += 1
   sourceLoadGeneration += 1
   assets.invalidateLoad()
@@ -266,6 +274,7 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
+  if (sourceRevisionId !== context.sourceRevisionId && !rawEditorGuard.confirmDiscardRaw()) return
   endpointActivationGeneration += 1
   activeEndpoint.value = null
   sourceLoadGeneration += 1
@@ -322,6 +331,7 @@ function changeEnvironment(environmentRevisionId: string | null): void {
 }
 
 async function selectTask(taskId: string): Promise<void> {
+  if (taskId !== tasks.task?.id && !rawEditorGuard.confirmDiscardRaw()) return
   localError.value = ''
   const task = tasks.select(taskId)
   if (!task) return
@@ -376,6 +386,7 @@ async function activate(
     return false
   }
   if (beforeActivate && !beforeActivate()) return false
+  if (activeEndpoint.value?.id !== endpoint.id && !rawEditorGuard.confirmDiscardRaw()) return false
   activeEndpoint.value = detailed
   cases.draftFor(detailed)
   mobilePane.value = 'editor'
@@ -394,9 +405,13 @@ async function openAiGenerated(version: CaseVersion): Promise<void> {
   }
   const mayReplaceDraft = () => {
     if (!selectedIds.value.includes(version.endpoint_id)) return false
-    if (cases.activeVersionByEndpoint[endpoint.id] === version.id) return true
-    return !cases.dirtyDrafts[endpoint.id]
-      || window.confirm('该接口有未保存的修改。打开生成用例将丢失这些修改，确定继续吗？')
+    const replacing = cases.activeVersionByEndpoint[endpoint.id] !== version.id
+    const rawWillBeLost = rawEditorGuard.hasRaw() && (activeEndpoint.value?.id !== endpoint.id || replacing)
+    const dirtyWillBeLost = replacing && Boolean(cases.dirtyDrafts[endpoint.id])
+    if ((rawWillBeLost || dirtyWillBeLost)
+        && !window.confirm('存在未保存的修改或未应用的原始 JSON。继续将丢失这些内容，确定继续吗？')) return false
+    if (rawWillBeLost) caseEditor.value?.discardUnappliedRaw?.()
+    return true
   }
   if (!await activate(endpoint, apiClient, mayReplaceDraft)) return
   if (cases.activeVersionByEndpoint[endpoint.id] !== version.id) cases.setActiveVersion(endpoint.id, version.id)
@@ -415,6 +430,7 @@ function openEndpointHistory(endpointId: string, endpointKey?: string): void {
 }
 
 function startNewTask(): void {
+  if (!rawEditorGuard.confirmDiscardRaw()) return
   endpointActivationGeneration += 1
   tasks.clear()
   outdatedRestoredTask.value = null
@@ -469,6 +485,7 @@ function updateDraft(draft: CaseDraft): void {
   }
 }
 async function saveDraft() {
+  if (!requireAppliedRaw()) return
   if (!activeEndpoint.value) return null
   localError.value = ''
   try {
@@ -504,7 +521,7 @@ async function generateBasicPositive(): Promise<void> {
     const previews = await cases.previewBasicPositive([...task.selected_endpoint_ids], context.environmentRevisionId, task.id)
     const firstPreview = previews[0]
     const endpoint = assets.endpoints.find(item => item.id === firstPreview?.endpoint_id)
-    if (endpoint && firstPreview && !cases.dirtyDrafts[endpoint.id]
+    if (endpoint && firstPreview && !rawEditorGuard.hasRaw() && !cases.dirtyDrafts[endpoint.id]
         && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) {
       endpointActivationGeneration += 1
       activeEndpoint.value = endpoint
@@ -527,6 +544,7 @@ async function submitDebug(): Promise<void> {
 }
 
 async function submitDebugOnce(): Promise<void> {
+  if (!requireAppliedRaw()) return
   const scope = captureApiExecutionScope(context)
   if (!scope || !activeEndpoint.value) return
   const confirmedTaskGeneration = taskSelectionGeneration

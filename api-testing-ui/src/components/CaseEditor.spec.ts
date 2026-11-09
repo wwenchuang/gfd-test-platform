@@ -331,6 +331,17 @@ describe('CaseEditor', () => {
     expect(wrapper.get('[data-testid="data-rows-footer-warning"]').text()).toContain('已有基线不会自动更新')
   })
 
+  it('does not leave the raw editor when JSON is invalid', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+    await wrapper.get('[data-testid="raw-tab"]').trigger('click')
+    const raw = wrapper.get<HTMLTextAreaElement>('.raw-editor textarea')
+    await raw.setValue('{ invalid raw')
+    await wrapper.get('[data-testid="structured-tab"]').trigger('click')
+    expect(wrapper.find('.raw-editor textarea').exists()).toBe(true)
+    expect(raw.element.value).toBe('{ invalid raw')
+    expect(wrapper.text()).toContain('JSON 格式不正确')
+  })
+
   it('updates the data-group warning after raw JSON loses focus', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT, editingVersion: { name: '查询我的收藏', version: 2 } } })
     await wrapper.get('[data-testid="raw-tab"]').trigger('click')

@@ -164,7 +164,16 @@ async function editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: nu
   editorRoot.value?.querySelector<HTMLElement>(selector)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
 }
 
-defineExpose({ editStep })
+function hasUnappliedRaw(): boolean {
+  return raw.value !== JSON.stringify(local.value, null, 2)
+}
+
+function discardUnappliedRaw(): void {
+  raw.value = JSON.stringify(local.value, null, 2)
+  rawError.value = ''
+}
+
+defineExpose({ editStep, hasUnappliedRaw, discardUnappliedRaw })
 
 watch(() => props.modelValue, value => {
   if (JSON.stringify(value) !== JSON.stringify(local.value)) {
@@ -303,7 +312,8 @@ function changeProcessing(action: Record<string, unknown>): void {
   publish()
 }
 
-function applyRaw(): void {
+function applyRaw(): boolean {
+  if (!hasUnappliedRaw()) { rawError.value = ''; return true }
   try {
     const parsed = JSON.parse(raw.value) as CaseDraft
     if (!parsed.request || typeof parsed.request !== 'object') throw new Error('missing request')
@@ -311,9 +321,15 @@ function applyRaw(): void {
     requestEditorValid.value = true
     rawError.value = ''
     publish()
+    return true
   } catch {
     rawError.value = '用例 JSON 格式不正确或缺少 request'
+    return false
   }
+}
+
+function openStructured(): void {
+  if (mode.value !== 'raw' || applyRaw()) mode.value = 'structured'
 }
 
 function parseScalar(value: string): unknown {
@@ -351,7 +367,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
     <header class="editor-toolbar">
       <div><h2>测试用例</h2><span>{{ savedMessage || '修改后先保存，再调试' }}</span></div>
       <div class="segmented">
-        <button data-testid="structured-tab" type="button" :class="{ active: mode === 'structured' }" @click="mode = 'structured'"><List :size="15" />结构化</button>
+        <button data-testid="structured-tab" type="button" :class="{ active: mode === 'structured' }" @click="openStructured"><List :size="15" />结构化</button>
         <button data-testid="raw-tab" type="button" :class="{ active: mode === 'raw' }" @click="mode = 'raw'"><Code2 :size="15" />原始 JSON</button>
       </div>
     </header>
@@ -440,7 +456,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
       </details>
     </div>
 
-    <div v-else class="raw-editor"><textarea v-model="raw" rows="26" spellcheck="false" @blur="applyRaw" /><p v-if="rawError" class="field-error">{{ rawError }}</p></div>
+    <div v-else class="raw-editor"><textarea v-model="raw" rows="26" spellcheck="false" @input="emit('update:modelValue', clone(local))" @blur="applyRaw" /><p v-if="rawError" class="field-error">{{ rawError }}</p></div>
     <footer class="editor-footer"><small v-if="local.data_rows.filter(row => row.enabled).length > 1" data-testid="data-rows-footer-warning" class="field-warning">调试和回归仅使用第一组启用的数据；已有基线不会自动更新。</small><span role="status">{{ savedMessage || (hasBlockingError ? '请先处理阻塞错误' : '可保存草稿或直接调试') }}</span><span v-if="operationError" class="inline-error" role="alert">{{ operationError }}</span><small v-if="Object.keys(displayValidationErrors).length">错误 {{ Object.keys(displayValidationErrors).length }}</small><small v-if="Object.keys(validationWarnings).length">警告 {{ Object.keys(validationWarnings).length }}</small><button data-testid="save-case-draft" class="secondary-command" type="button" :disabled="saving || hasBlockingError" @click="emit('save')">{{ saving ? '保存中...' : '保存草稿' }}</button><button data-testid="save-and-debug" class="primary-command" type="button" :disabled="saving || debugging || hasBlockingError" @click="emit('debug')"><Play :size="15" />{{ debugging ? '调试中...' : '保存并调试' }}</button></footer>
   </section>
 </template>
