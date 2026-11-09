@@ -32,7 +32,7 @@
 
 等待只保留业务操作后必要的具体可见状态。不要添加“页面稳定”“弹窗完全显示”“提示消失”等没有业务必要性的步骤。正文精简为控件目标与可见结果，不复制整屏说明或广告内容。
 
-事件必填字段为 action,target,value,start_ms,end_ms,frame_refs,observation,evidence_kind,uncertainties；额外仅允许可选 outcome、selection、reusable_expected；不适用的可选字段必须省略，不能输出空字符串或 null。observation 只描述看到的页面变化，不能当成业务应有结果。不生成 expected、launch、包名、设备、确认状态、执行指令、shell、ADB或坐标。action 仅 aiTap/aiInput/aiScroll/aiWaitFor/aiAssert。系统键、跨应用和无法辨认动作在 uncertainties 提问，不降级成按钮点击。确认/取消弹窗必须区分，不用背景控件代替弹窗目标。失败弹窗描述原事实。
+事件必填字段为 action,target,value,start_ms,end_ms,frame_refs,observation,evidence_kind,uncertainties；额外仅允许可选 outcome、selection、reusable_expected；不适用的可选字段必须省略，不能输出空字符串或 null。observation 只描述看到的页面变化，不能当成业务应有结果。不生成 expected、launch、包名、设备、确认状态、执行指令、shell、ADB或坐标。action 仅 aiTap/aiInput/aiScroll/aiWaitFor/aiAssert/navigateBack/dismissKeyboard。系统键、跨应用和无法辨认动作在 uncertainties 提问，不降级成按钮点击。确认/取消弹窗必须区分，不用背景控件代替弹窗目标。失败弹窗描述原事实。
 
 aiAssert 只作为需要用户核对的可见检查候选，不推断后台数据/提交成功；目标是具体对象和状态。aiWaitFor 仅表示必要页面状态，不照抄视频停顿秒数。aiInput.value 总是空字符串；密码/验证码/令牌禁止转录，输入内容请用户手工配置，observation 也不得含秘密。aiScroll.value 必须是 JSON 对象，不能是字符串（包括不能把对象再次编码成字符串）、数组或 null；其他动作的 value 必须是字符串，且本任务统一用空字符串。滚动对象只允许 direction、distance、scrollType 三个可选字段：direction 仅 down/up/right/left；distance 仅有限正数；scrollType 仅 singleAction、scrollToBottom、scrollToTop、scrollToRight、scrollToLeft。scrollType 缺省或 singleAction 时才允许 direction/distance；scrollToBottom/scrollToTop/scrollToRight/scrollToLeft 不能带 direction 或 distance。不得增加 amount、pixels、speed、duration、x/y、from/to、shell 等其他字段。没有可靠方向或方式证据时 value={}，并在该事件 uncertainties 请求核对；不能将“向上滑动”等自然语言放入 value，也不能猜测滚动方向。direction 表示浏览内容的方向，不是手指移动方向：down 是向下浏览更靠后的内容，画面内容通常向上移动；up 是向上浏览更靠前的内容，画面内容通常向下移动；left/right 同理按浏览内容方向。不得把手指向上划直接编码为 direction=up。没有可靠距离证据时省略 distance，不得填经验默认值（例如300）。目标缺失或遮挡必须提问。不因模型自信省略疑问，不生成准确率。
 
@@ -112,7 +112,7 @@ phase=consolidate 时执行且仅执行一次全片整理：candidate_events、r
 {{payload}}
 
 带触点/指针轨迹录屏：白点、十字线、移动轨迹及顶部P/X/Y/压力/速度数字属于系统输入可视化层，不是应用控件、输入值或业务结果；录屏计时和悬浮控制同样忽略。对照触点出现→移动→消失与前后画面：在同一控件明确按下并松开可记录点击，未见页面响应时保留“点击后未观察到响应”的失败事实，不能抹掉点击，也不能推断成功；内容随轨迹连续位移才判滚动；从屏幕边缘向内移动且回到上一页面是返回手势，不能写成点击轨迹下碰巧可见的卡片，也不能改成列表滚动。仅触点存在、旧轨迹残留或指针悬停不能证明发生新的操作；多次抖动/采样点属于同一手势，不逐点生成步骤。触点被遮住或不能辨认时结合页面判断并保留必要歧义，不声称观察到了触点。
-执行语义必须跨端：目标写真实可见控件的中文名称/所属区域，不输出触点坐标、压力数字或像素距离。返回手势若操作前已有可见的应用返回箭头，可用该箭头表达等价返回并标明推断；没有可见等价入口或涉及长按/多指缩放等白名单不支持动作时，保留具体待确认问题，不伪造aiTap或aiScroll通过执行门禁。
+执行语义必须跨端：实际点击目标写真实可见控件的中文名称/所属区域，不输出触点坐标、压力数字或像素距离。有独立证据支持主动返回但没有实际点击证据时，保留navigateBack、target为上一页面、value为空；仅在有独立证据支持主动收起软键盘时使用dismissKeyboard，target为当前页面的软键盘、value为空；即使箭头可见也不能虚构点击。原图确证实际点击返回箭头才使用aiTap。无法确认或涉及不支持动作时保留具体疑问，不伪造动作通过门禁。
 触点只证明操作，不证明成功。操作后的预期必须由可见结果支持；用户在模型加载尚未完成时主动返回，保留加载中退出的事实，可检查目标页面标题/返回后的上一页，不补写模型生成或加载成功，不强行等待视频未出现的成功状态。开始和结束的系统操作仍由平台预置，不把退出桌面/停止录屏手势生成业务步骤。
 
 页面结果必须用结果帧中可见的控件/区域描述，不得只写“进入模型详情页”“操作成功”等抽象页面分类。例如作品卡片打开后，结果帧有模型展示区域、返回箭头和“去打印”时，写“模型展示区域可见，左上角有返回箭头，底部有去打印按钮”；不能要求标题必须叫“模型详情”，也不能因为标题是“文字建模”就否定这些可见结果。只引用结果帧实际存在的控件；加载中的模型区域不等于模型加载完成，不补写成功或可打印。

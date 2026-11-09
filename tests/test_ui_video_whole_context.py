@@ -745,3 +745,207 @@ def test_final_candidates_are_reported_before_planning_can_fail(monkeypatch,tmp_
     assert len(reported)==1
     assert reported[0][3]==final['events']
     assert observed==before
+
+
+def test_short_input_redaction_preserves_frame_and_action_structure():
+    from task_server.services.ui_video_analysis import _bind_whole_evidence,validate_analysis
+    raw=observation();raw['events'][0].update(action='aiInput',target='名称1输入框',value='1',
+        observation='显示1',uncertainties=['值1是否正确'])
+    raw['uncertainties']=['检查1']
+    checked=validate_analysis(_bind_whole_evidence(raw,frames()),frames(),1000)
+    event=checked['events'][0]
+    assert event['action']=='aiInput' and event['frame_refs']==['frame-001','frame-002']
+    assert event['value']=='' and '1' not in event['target'] and '1' not in event['observation']
+    assert all('1' not in q for q in event['uncertainties']+checked['uncertainties'])
+
+
+@pytest.mark.parametrize('action,target,secret', [('navigateBack','上一页面','上'),('dismissKeyboard','当前页面的软键盘','当前')])
+def test_short_input_does_not_damage_verified_fixed_semantic_targets(action,target,secret):
+    from task_server.services.ui_video_analysis import _bind_whole_evidence,validate_analysis
+    raw=observation();raw['events']=[
+        {'action':'aiInput','target':'名称输入框','value':secret,'frame_refs':['frame-001'],'observation':'开始输入','uncertainties':[]},
+        {'action':action,'target':target,'value':'','frame_refs':['frame-002'],'observation':'页面变化','uncertainties':[]}]
+    first=validate_analysis(_bind_whole_evidence(raw,frames()),frames(),1000)
+    assert first['events'][1]['target']==target
+    second=validate_analysis(first,frames(),1000)
+    assert second['events'][1]['target']==target
+
+
+def test_prior_events_and_probe_hints_are_redacted_before_later_model_request(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_targets as targets,ui_video_touch_detail as detail,ai_skill_service as ai
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,7)]
+    groups=[fs[:2],fs[2:4],fs[4:6]];calls=[];probes=[]
+    monkeypatch.setattr(windows,'observation_windows',lambda frames:groups)
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    def probe(*args):
+        probes.append(1)
+        return [{'frame_id':'frame-005','frame_refs':['frame-005','frame-006'],'scope':'probe',
+                 'kind':'unresolved_observation','questions':['复核 fixture-private 的目标'],
+                 'multiple_scenarios':False}] if len(probes)==3 else []
+    monkeypatch.setattr(targets,'probe',probe)
+    def model(skill,payload,**kw):
+        calls.append(copy.deepcopy(payload));n=len(calls)
+        if n==1:event={'action':'aiTap','target':'入口fixture-private','value':'','frame_refs':['frame-001'],'observation':'入口可见','uncertainties':[]}
+        elif n==2:event={'action':'aiInput','target':'名称输入框','value':'fixture-private','frame_refs':['frame-003'],'observation':'输入内容','uncertainties':[]}
+        else:
+            assert 'fixture-private' not in repr(payload['prior_events'])
+            assert 'fixture-private' not in repr(payload['touch_targets'])
+            assert payload['touch_targets'][0]['frame_refs']==['frame-005','frame-006']
+            return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[event],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=windows.observe_windows(fs,1000,tmp_path,lambda:False)
+    assert len(calls)==3
+    assert any('[输入内容未保存]' in q for q in result['uncertainties'])
+
+
+@pytest.mark.parametrize('masked_field',['target','observation'])
+def test_indexed_planning_cannot_erase_source_redaction(masked_field):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence,validate_analysis,draft_proposal
+    from task_server.services.ui_case_draft_contract import build_draft_yaml
+    candidate={'action':'aiTap','target':'按钮[输入内容未保存]' if masked_field=='target' else '按钮',
+               'value':'','start_ms':100,'end_ms':200,'frame_refs':['frame-001','frame-002'],
+               'observation':'页面显示结果[输入内容未保存]' if masked_field=='observation' else '页面显示',
+               'evidence_kind':'inferred','uncertainties':[]}
+    result={'events':[{'candidate_index':0,'action':'aiTap','target':'按钮A','value':'',
+                       'observation':'结果清晰可见','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+    checked=validate_analysis(_bind_candidate_evidence(result,[candidate],[0]),frames(),1000)
+    event=checked['events'][0]
+    assert '[输入内容未保存]' in (event['target'] if masked_field=='target' else event['observation'])
+    doc={'app_id':'com.example.app','source_id':'uvs_'+'0'*32,'analysis_version':1,'goal':'',
+         'media':{'duration_ms':1000,'frames':frames()},**checked}
+    proposal,_=draft_proposal(doc)
+    compiled=build_draft_yaml(proposal,doc['app_id'])
+    assert compiled['ready'] is False and compiled['yaml_content']==''
+    unindexed=copy.deepcopy(result);unindexed['events'][0].pop('candidate_index');unindexed['events'][0].update(
+        start_ms=100,end_ms=200,frame_refs=['frame-001','frame-002'],evidence_kind='inferred')
+    preserved=_bind_candidate_evidence(unindexed,[candidate],[0])['events'][0]
+    assert '[输入内容未保存]' in (preserved['target'] if masked_field=='target' else preserved['observation'])
+    with pytest.raises(ValueError,match='video_model_timeline'):
+        _bind_candidate_evidence(unindexed,[candidate,candidate],[0,1])
+
+
+def test_retry_redacts_newly_discovered_input_from_all_model_context(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_targets as targets,ui_video_touch_detail as detail,ai_skill_service as ai
+    fs=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[]);monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[{'frame_id':'frame-001','frame_refs':['frame-001','frame-002'],
+        'scope':'probe','kind':'unresolved_observation','questions':['确认 QASECRETVALUE'], 'multiple_scenarios':False}])
+    calls=[]
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        if len(calls)==1:
+            return {'events':[{'action':'aiInput','target':'名称','value':'QASECRETVALUE','frame_refs':['unknown'],
+                               'observation':'输入','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+        assert 'QASECRETVALUE' not in repr(payload)
+        assert payload['touch_targets'][0]['frame_refs']==['frame-001','frame-002']
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=windows.observe_windows(fs,1000,tmp_path,lambda:False)
+    assert len(calls)==2 and 'QASECRETVALUE' not in repr(result)
+    assert any('[输入内容未保存]' in q for q in result['uncertainties'])
+
+
+def test_redaction_is_idempotent_for_marker_substrings():
+    from task_server.services.ui_video_analysis import _redact_question
+    once=_redact_question('请输入',['输入'])
+    assert once=='请[输入内容未保存]'
+    assert _redact_question(once,['输入'])==once
+    assert _redact_question('输入1',['1','输入'])=='[输入内容未保存][输入内容未保存]'
+
+
+def test_invalid_frame_retry_cannot_clear_root_questions_or_multiple_scenarios(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_targets as targets,ui_video_touch_detail as detail,ai_skill_service as ai
+    fs=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[]);monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[])
+    calls=[]
+    def model(*a,**kw):
+        calls.append(1)
+        if len(calls)==1:return {'events':[{'action':'aiTap','target':'入口','value':'','frame_refs':['unknown'],
+                     'observation':'页面显示','uncertainties':['确认取消']}],
+                     'uncertainties':['疑似有另一流程'],'multiple_scenarios':True}
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=windows.observe_windows(fs,1000,tmp_path,lambda:False)
+    assert len(calls)==2 and result['multiple_scenarios'] is True
+    assert '疑似有另一流程' in result['uncertainties']
+    assert any('确认取消' in q for q in result['uncertainties'])
+
+
+@pytest.mark.parametrize('missing',['root_questions','multiple_scenarios'])
+def test_invalid_first_response_keeps_independently_valid_uncertainties(monkeypatch,tmp_path,missing):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_targets as targets,ui_video_touch_detail as detail,ai_skill_service as ai
+    fs=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[]);monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[]);calls=[]
+    first={'events':[{'action':'aiTap','target':'入口','value':'','frame_refs':['unknown'],
+                      'observation':'页面显示','uncertainties':['点击归属未明']}],
+           'uncertainties':['另有根疑问'],'multiple_scenarios':True}
+    del first['uncertainties' if missing=='root_questions' else 'multiple_scenarios']
+    def model(*a,**kw):
+        calls.append(1)
+        return first if len(calls)==1 else {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result,_=windows.observe_windows(fs,1000,tmp_path,lambda:False)
+    assert any('点击归属未明' in q for q in result['uncertainties'])
+    if missing=='root_questions':assert result['multiple_scenarios'] is True
+    else:assert '另有根疑问' in result['uncertainties']
+
+
+def test_retry_redacts_newly_known_secret_from_conflict_feedback(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_targets as targets,ui_video_touch_detail as detail,ai_skill_service as ai
+    fs=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[]);monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[]);calls=[];conflicts=[]
+    def conflict(*a,**kw):
+        conflicts.append(1)
+        if len(conflicts)==1:kw['evidence'].update(observed_target='名称',probe_target='QASECRETVALUE')
+        return '局部提示包含 QASECRETVALUE' if len(conflicts)==1 else ''
+    monkeypatch.setattr(targets,'conflict',conflict)
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        if len(calls)>1:assert 'QASECRETVALUE' not in repr(payload)
+        return {'events':[{'action':'aiInput','target':'名称','value':'QASECRETVALUE','frame_refs':['frame-001'],
+                           'observation':'输入内容','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    windows.observe_windows(fs,1000,tmp_path,lambda:False)
+    assert len(calls)==2 and '[输入内容未保存]' in calls[1]['validation_feedback']
+
+
+def test_indexed_planner_cannot_omit_redacted_assertion_candidate():
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence
+    candidates=[{'action':'aiTap','target':'入口','value':'','start_ms':100,'end_ms':100,
+                 'frame_refs':['frame-001'],'observation':'入口显示','evidence_kind':'inferred','uncertainties':[]},
+                {'action':'aiAssert','target':'状态[输入内容未保存]','value':'','start_ms':200,'end_ms':200,
+                 'frame_refs':['frame-002'],'observation':'状态显示','evidence_kind':'inferred','uncertainties':[]}]
+    plan={'events':[{'candidate_index':0,'action':'aiTap','target':'入口','value':'',
+                     'observation':'入口显示','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        _bind_candidate_evidence(plan,candidates,[0])
+
+
+@pytest.mark.parametrize('field',['selection','reusable_expected'])
+def test_planner_cannot_omit_candidate_with_masked_executable_field(field):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence
+    candidates=[{'action':'aiAssert','target':'列表','value':'','start_ms':100,'end_ms':100,
+                 'frame_refs':['frame-001'],'observation':'列表显示','evidence_kind':'inferred','uncertainties':[]},
+                {'action':'aiTap','target':'{{本次对象}}按钮' if field=='selection' else '按钮',
+                 'value':'','start_ms':200,'end_ms':200,'frame_refs':['frame-002'],
+                 'observation':'页面显示结果成功','evidence_kind':'inferred','uncertainties':[],field:'结果[输入内容未保存]'}]
+    plan={'events':[{'candidate_index':0,'action':'aiAssert','target':'列表','value':'',
+                     'observation':'列表显示','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+    with pytest.raises(ValueError,match='video_required_action_missing'):
+        _bind_candidate_evidence(plan,candidates,[])
+
+
+def test_nonexecuting_masked_observation_does_not_force_target_or_expected():
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence
+    candidate={'action':'aiTap','target':'按钮','value':'','start_ms':100,'end_ms':200,
+               'frame_refs':['frame-001','frame-002'],'observation':'正在加载[输入内容未保存]',
+               'evidence_kind':'inferred','uncertainties':[]}
+    event={'candidate_index':0,'action':'aiTap','target':'按钮','value':'',
+           'observation':'页面显示列表','uncertainties':[]}
+    bound=_bind_candidate_evidence({'events':[event]},[candidate],[0])['events'][0]
+    assert bound['target']=='按钮' and bound['observation']=='页面显示列表'

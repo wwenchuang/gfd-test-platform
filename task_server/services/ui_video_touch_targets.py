@@ -13,7 +13,8 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
     for detail in details[:6]:
         if cancelled():
             raise ValueError('video_cancelled')
-        parent = next(f for f in frames if f['frame_id'] == detail['source_frame_id'])
+        parent = next((f for f in frames if f['frame_id'] == detail['source_frame_id']),None)
+        if parent is None:raise ValueError('video_reference_invalid')
         index = frames.index(parent)
         selected = frames[max(0, index-1):index+2]
         for offset in (800, 1600):
@@ -48,6 +49,20 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
             raise ValueError('video_cancelled')
         checked = validate_analysis(_bind_whole_evidence(result, selected), selected, duration)
         root_questions=list(checked['uncertainties'])
+        # A question about a non-parent event is still grounded only in that
+        # event's referenced frame, never in the parent's detail image.
+        for event in checked['events']:
+            bound=parent['frame_id'] in event['frame_refs']
+            handled=bound and (event['action'] in {'aiTap','navigateBack'} or
+                               (event['action']=='aiAssert' and explicit_no_action_assertion(event['observation'])))
+            if not handled and event['uncertainties']:
+                hints.append({'frame_id':event['frame_refs'][0],'frame_refs':list(event['frame_refs']),
+                              'scope':'event','kind':'unresolved_observation',
+                              'questions':list(event['uncertainties']),'multiple_scenarios':False})
+        if root_questions or checked['multiple_scenarios']:
+            hints.append({'frame_id':parent['frame_id'],'frame_refs':[f['frame_id'] for f in selected],
+                          'scope':'probe','kind':'unresolved_observation','questions':root_questions,
+                          'multiple_scenarios':checked['multiple_scenarios']})
         bound_action_hints=[event for event in checked['events']
             if parent['frame_id'] in event['frame_refs'] and
             (event['action']=='navigateBack' or
@@ -65,7 +80,7 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
                 hints.append({'frame_id':parent['frame_id'],'action':event['action'],'target':event['target'],
                               'observation':event['observation'],
                               'requires_review':bool(event['uncertainties'] or root_questions or checked['multiple_scenarios']),
-                              'questions':list(dict.fromkeys(root_questions+event['uncertainties'])),
+                              'questions':list(event['uncertainties']),
                               'multiple_scenarios':checked['multiple_scenarios']})
             continue
         if uncertain_taps:
@@ -75,7 +90,7 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
             event=uncertain_taps[0]
             hints.append({'frame_id':parent['frame_id'],'target':event['target'],
                           'observation':event['observation'],'requires_review':True,
-                          'questions':list(dict.fromkeys(root_questions+event['uncertainties'])),
+                          'questions':list(event['uncertainties']),
                           'multiple_scenarios':checked['multiple_scenarios']})
             continue
         if checked['uncertainties'] or checked['multiple_scenarios'] or len(checked['events']) != 1:
@@ -92,6 +107,12 @@ def bind_uncertain_hints(events,hints,analysis=None):
     question='触点目标或页面变化存在疑问，请对照原视频核对'
     root_questions=[]
     for hint in hints:
+        if hint.get('kind')=='unresolved_observation':
+            if hint.get('multiple_scenarios') and isinstance(analysis,dict):analysis['multiple_scenarios']=True
+            root_questions.extend('局部复核待核对：'+q for q in hint.get('questions',[]) if q)
+            if hint.get('multiple_scenarios'):
+                root_questions.append('局部复核识别到多个可能场景，请核对原视频。')
+            continue
         if hint.get('multiple_scenarios'):
             if isinstance(analysis,dict):analysis['multiple_scenarios']=True
             root_questions.append('局部复核识别到多个可能场景，请保留该不确定性并核对原帧。')
@@ -123,7 +144,7 @@ def bind_uncertain_hints(events,hints,analysis=None):
                 conflict_question='同帧局部复核与主观察动作判断冲突，请核对完整原帧；无法确认时保留疑问，不删除或替换动作。'
                 root_questions.append(conflict_question)
             else:
-                root_questions.append(f"原帧 {hint['frame_id']} 的局部复核提示存在动作归因疑问，请核对完整原帧；不据此新增、删除或替换动作。")
+                root_questions.append('局部复核提示存在动作归因疑问，请核对原视频；不据此新增、删除或替换动作。')
             continue
         if not hint.get('requires_review'):continue
         root_questions.extend(hint.get('questions',[]))
@@ -190,6 +211,8 @@ def _same_explicit_input_label(left, right):
 def conflict(events, hints, frames, diagnostic=None, evidence=None):
     times = {f['frame_id']:f['timestamp_ms'] for f in frames}
     for hint in hints:
+        if hint.get('kind')=='unresolved_observation':
+            continue
         if hint.get('action') in ('navigateBack','aiAssert'):
             continue
         explicit = [e for e in events if e.get('action') == 'aiTap' and hint['frame_id'] in e.get('frame_refs',[])]

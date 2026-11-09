@@ -442,6 +442,14 @@ def restore_draft(actor, draft_id, body):
     raise ValueError('draft_previous_revision_empty')
 
 
+def _normalize_draft_blockers(blockers):
+    return [
+        {'code': value if re.fullmatch(r'[a-z][a-z0-9_]*', value) else 'draft_review_required',
+         'message': blocker_message(value) if re.fullmatch(r'[a-z][a-z0-9_]*', value) else value}
+        for value in dict.fromkeys(blockers)
+    ]
+
+
 def validate_draft(actor, draft_id, body):
     """Return a candidate gate only; trial dispatch adds its own admission/ownership gates."""
     body = _body(body, {'revision', 'target'}, {'revision', 'target'})
@@ -463,6 +471,12 @@ def validate_draft(actor, draft_id, body):
     candidate = build_draft_yaml({key: document[key] for key in _EDIT_KEYS}, document['app_id'],
         **compiler_options(document.get('source_snapshot', {}), document['app_id'], document['steps']))
     gate['blockers'].extend(candidate['questions'])
+    if not candidate['yaml_content']:
+        require_ui_actor(actor, permission='ui.execute', app_id=document['app_id'])
+        current = _store().get(draft_id, document['owner_user_id'])
+        if current['revision'] != revision:raise DraftConflict('draft_revision_changed')
+        gate['blockers'] = _normalize_draft_blockers(gate['blockers'])
+        return gate
     static = validate_yaml_static_executable(candidate['yaml_content'], strict=True)
     score = score_midscene_yaml_executable(candidate['yaml_content'], generated=True, compiler_roles=candidate['compiler_roles'])
     gate.update(static_validation=static, executable_score=score)
@@ -486,10 +500,6 @@ def validate_draft(actor, draft_id, body):
     current = _store().get(draft_id, document['owner_user_id'])
     if current['revision'] != revision:
         raise DraftConflict('draft_revision_changed')
-    gate['blockers'] = [
-        {'code': value if re.fullmatch(r'[a-z][a-z0-9_]*', value) else 'draft_review_required',
-         'message': blocker_message(value) if re.fullmatch(r'[a-z][a-z0-9_]*', value) else value}
-        for value in dict.fromkeys(gate['blockers'])
-    ]
+    gate['blockers'] = _normalize_draft_blockers(gate['blockers'])
     gate['ready'] = not gate['blockers'] and candidate['ready'] and gate['compiled_case'].get('ok') is True
     return gate

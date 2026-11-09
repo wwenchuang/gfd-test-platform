@@ -1137,3 +1137,80 @@ def test_boundary_rejection_retains_only_event_action_and_overlapping_original_f
     assert evidence=={'events':[{'action':'aiTap','frame_refs':['frame-001','frame-002','frame-end'],
                                   'overlap_frame_refs':['frame-end']}]}
     assert 'sensitive' not in str(evidence)
+
+
+def test_repair_payload_gesture_context_does_not_infer_arrow_click(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    class Captured(Exception):pass
+    def capture(skill,payload,**kwargs):
+        assert skill=='ui_video_observe'
+        assert '不因控件可见虚构点击' in payload['gesture_hypotheses_note']
+        assert '等价返回控件' not in payload['gesture_hypotheses_note']
+        raise Captured()
+    monkeypatch.setattr(ai,'run_ai_skill',capture)
+    with pytest.raises(Captured):
+        vr._repair_window([back],{'events':[tap],'uncertainties':[],'multiple_scenarios':False},
+                          frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'})
+
+
+def test_arrow_tap_return_gesture_mapping_is_unresolved_and_keeps_all_anchors():
+    frames,old,new,claim=return_gesture_fixture()
+    result=cr.validate([claim],{'first_pass':old},new,frames)[0]
+    assert result['review_required'] is True
+    assert result['resolution_status']=='unresolved'
+    assert set(result['source_anchors'])==set(claim['source_anchor_ids'])
+
+
+def test_arrow_tap_return_gesture_mapping_reaches_human_review(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,old,new,claim=return_gesture_fixture()
+    for event in old+new:
+        event.setdefault('observation','原片为连续返回手势，页面横移')
+        event.setdefault('value','')
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    def model(skill,payload,**kwargs):
+        event={k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}
+        return {'events':[event],'coverage_resolutions':[copy.deepcopy(claim)],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr._repair_window(old,{'events':[],'uncertainties':[],'multiple_scenarios':False},
+                             frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3','f4'},attempt_limit=1)
+    mapping=result['reconciliation_audit']['coverage_resolutions'][0]
+    assert mapping['review_required'] is True
+    assert set(mapping['source_anchors'])==set(claim['source_anchor_ids'])
+    assert any('实际动作及次数' in q for q in result['events'][0]['uncertainties'])
+
+
+def test_rejected_repair_response_questions_survive_next_attempt(monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(1); candidate=copy.deepcopy(claim)
+        event={k:v for k,v in back.items() if k not in {'start_ms','end_ms','evidence_kind'}}
+        if len(calls)==1:
+            candidate['evidence']['interaction']='未见点击返回箭头，实际执行返回操作'
+            event['uncertainties']=['触点归属不确定']
+        return {'events':[event], 'coverage_resolutions':[candidate],
+                'uncertainties':['返回方式未确定'] if len(calls)==1 else [],
+                'multiple_scenarios':len(calls)==1}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr._repair_window([back],{'events':[tap],'uncertainties':[],'multiple_scenarios':False},
+                             frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'},attempt_limit=2)
+    assert len(calls)==2 and result['multiple_scenarios'] is True
+    assert any('返回方式未确定' in q for q in result['uncertainties'])
+    assert any('触点归属不确定' in q for q in result['uncertainties'])
+
+
+def test_audit_redaction_preserves_structural_identifiers_for_short_inputs():
+    from task_server.services.ui_video_reconcile import _redact_audit
+    value={'frame_refs':['frame-001','frame-002'],'source_anchor_ids':['first_pass:1'],
+           'action':'aiTap','before_frame':'frame-001','interaction_frame':'frame-001',
+           'examined_frame_refs':['frame-001','frame-002'],'observation':'点击1','target':'按钮1'}
+    result=_redact_audit(value,['1'])
+    assert result['frame_refs']==value['frame_refs'] and result['source_anchor_ids']==value['source_anchor_ids']
+    assert result['action']=='aiTap' and result['before_frame']=='frame-001'
+    assert result['examined_frame_refs']==value['examined_frame_refs']
+    assert '1' not in result['observation'] and '1' not in result['target']
