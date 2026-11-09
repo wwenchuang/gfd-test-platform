@@ -35,6 +35,145 @@ describe('CasesView', () => {
     }])
   })
 
+  it.each(['version', 'preview', 'manual'].flatMap(mode => [[mode, false], [mode, true]]))('guards a modified case before a %s replacement (confirm: %s)', async (mode, allow) => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'p', sourceRevisionId: 's' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue(); vi.spyOn(assets, 'ensureEndpointDetail').mockResolvedValue(ENDPOINT)
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const original = savedCase('version-a', 'original')
+    const other = { ...savedCase('version-b', 'other'), case_id: 'case-b' }
+    cases.registerVersion(original); cases.registerVersion(other, false)
+    const preview = { id: 'preview-b', endpoint_id: ENDPOINT.id, case: other } as unknown as import('../api/contracts').GeneratedCasePreview
+    cases.generatedPreviews = [preview]
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(allow as boolean)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: {
+      ContextBar: true, EndpointDetail: true, DebugDrawer: true,
+      CaseEndpointPicker: { name: 'CaseEndpointPicker', emits: ['create-manual'], template: '<div />' },
+    } } })
+    await flushPromises()
+    const panel = wrapper.findComponent(CaseListPanel)
+    panel.vm.$emit('edit-version', original); await flushPromises()
+    cases.updateDraft(ENDPOINT.id, { ...JSON.parse(JSON.stringify(cases.drafts[ENDPOINT.id])), name: 'unsaved changes' })
+    panel.vm.$emit('edit-version', original); await flushPromises()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(cases.drafts[ENDPOINT.id].name).toBe('unsaved changes')
+    if (mode === 'version') panel.vm.$emit('edit-version', other)
+    else if (mode === 'preview') panel.vm.$emit('edit-preview', preview)
+    else {
+      await wrapper.get('[data-testid="open-case-endpoint-picker"]').trigger('click')
+      wrapper.findComponent({ name: 'CaseEndpointPicker' }).vm.$emit('create-manual', ENDPOINT)
+    }
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    if (!allow) {
+      expect(cases.drafts[ENDPOINT.id].name).toBe('unsaved changes')
+      expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(original.id)
+      expect(cases.dirtyDrafts[ENDPOINT.id]).toBe(true)
+    } else {
+      expect(cases.drafts[ENDPOINT.id].name).not.toBe('unsaved changes')
+      if (mode === 'version') expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(other.id)
+      if (mode === 'preview') expect(cases.activeGeneratedPreviewId).toBe(preview.id)
+      if (mode === 'manual') expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBeUndefined()
+    }
+    wrapper.unmount()
+  })
+
+  it.each(['project', 'source'])('restores the visible %s selector after cancelling raw discard', async kind => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p', sourceRevisionId: 's', projects: [{id: 'p', name: 'P'}, {id: 'q', name: 'Q'}], sourceRevisions: [{id: 's', project_id: 'p', name: 'S', revision_number: 1, endpoint_count: 1}, {id: 't', project_id: 'p', name: 'T', revision_number: 2, endpoint_count: 1}] })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const original = savedCase('version-a', 'original'); cases.registerVersion(original)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises(); wrapper.findComponent(CaseListPanel).vm.$emit('edit-version', original); await flushPromises()
+    await wrapper.get('[data-testid="raw-tab"]').trigger('click')
+    await wrapper.get<HTMLTextAreaElement>('.raw-editor textarea').setValue('{ invalid raw')
+    const selector = kind === 'project' ? 'context-project' : 'context-source'
+    await wrapper.get<HTMLSelectElement>(`[data-testid="${selector}"]`).setValue(kind === 'project' ? 'q' : 't'); await flushPromises()
+    expect(confirm).toHaveBeenCalled()
+    expect(context.projectId).toBe('p')
+    expect(context.sourceRevisionId).toBe('s')
+    expect(wrapper.get<HTMLSelectElement>(`[data-testid="${selector}"]`).element.value).toBe(kind === 'project' ? 'p' : 's')
+    expect(wrapper.get<HTMLTextAreaElement>('.raw-editor textarea').element.value).toBe('{ invalid raw')
+    wrapper.unmount()
+  })
+
+  it('keeps invalid raw JSON when cancelling a version switch', async () => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p', sourceRevisionId: 's' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const original = savedCase('version-a', 'original')
+    const other = { ...savedCase('version-b', 'other'), case_id: 'case-b' }
+    cases.registerVersion(original); cases.registerVersion(other, false)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { ContextBar: true, EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises()
+    const panel = wrapper.findComponent(CaseListPanel)
+    panel.vm.$emit('edit-version', original); await flushPromises()
+    await wrapper.get('[data-testid="raw-tab"]').trigger('click')
+    const raw = wrapper.get<HTMLTextAreaElement>('.raw-editor textarea')
+    await raw.setValue('{ invalid raw'); await raw.trigger('blur')
+    const saveAll = vi.spyOn(cases, 'saveAllGeneratedPreviews').mockResolvedValue([])
+    panel.vm.$emit('save-all-previews'); await flushPromises()
+    expect(saveAll).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('原始 JSON 有未应用的内容')
+    panel.vm.$emit('edit-version', other); await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(raw.element.value).toBe('{ invalid raw')
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(original.id)
+    expect(cases.dirtyDrafts[ENDPOINT.id]).toBe(true)
+    confirm.mockReturnValue(true)
+    panel.vm.$emit('edit-version', other); await flushPromises()
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(other.id)
+    expect(wrapper.get<HTMLTextAreaElement>('.raw-editor textarea').element.value).not.toBe('{ invalid raw')
+    wrapper.unmount()
+  })
+
+  it.each(['success', 'failure'])('disables editing while re-reading the source before %s', async outcome => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p', sourceRevisionId: 's' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    let finish!: () => void; let fail!: (error: Error) => void
+    vi.spyOn(assets, 'load').mockResolvedValueOnce().mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject }))
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const version = savedCase('version-a', 'original'); cases.registerVersion(version)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { ContextBar: true, EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises(); wrapper.findComponent(CaseListPanel).vm.$emit('edit-version', version); await flushPromises()
+    await wrapper.get('[data-testid="raw-tab"]').trigger('click')
+    await wrapper.get('button[title="重新读取用例"]').trigger('click')
+    expect(wrapper.get('[data-testid="case-edit-guard"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.raw-editor textarea').element.matches(':disabled')).toBe(true)
+    if (outcome === 'success') {
+      finish(); await flushPromises()
+      expect(wrapper.get('[data-testid="case-edit-guard"]').attributes('disabled')).toBeUndefined()
+    } else {
+      fail(new Error('来源读取失败')); await flushPromises()
+      expect(wrapper.find('[data-testid="case-edit-guard"]').exists()).toBe(false)
+      expect(wrapper.text()).toContain('来源读取失败')
+    }
+    wrapper.unmount()
+  })
+
   it('does not open an old manual draft after switching projects during detail loading', async () => {
     const context = useContextStore()
     Object.assign(context, { projectId: 'old-project', sourceRevisionId: 'old-source' })
@@ -562,6 +701,7 @@ describe('CasesView', () => {
     expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('创建并保存新用例'))
     expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('更新当前任务范围'))
 
+    confirm.mockReturnValueOnce(true)
     await wrapper.get('[data-testid="case-version-edit-version-1"]').trigger('click')
     await flushPromises()
 

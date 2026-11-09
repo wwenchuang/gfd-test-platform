@@ -19,6 +19,7 @@ import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
 import { captureApiExecutionScope, confirmApiExecution, matchesApiExecutionScope, type ApiExecutionScope } from '../utils/executionConfirmation'
+import { useRawEditorGuard } from '../utils/rawEditorGuard'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -44,7 +45,13 @@ const workspaceRestoreFailed = ref(false)
 const taskNameDraft = ref('')
 const outdatedRestoredTask = ref<ApiTestTask | null>(null)
 const mobilePane = ref<'scope' | 'editor' | 'ai'>('scope')
-const caseEditor = ref<{ editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void> } | null>(null)
+const caseEditor = ref<{ editStep(target: { stage: 'setup' | 'main' | 'cleanup'; index: number }): Promise<void>; hasUnappliedRaw(): boolean; discardUnappliedRaw(): void } | null>(null)
+const rawEditorGuard = useRawEditorGuard(caseEditor)
+function requireAppliedRaw(): boolean {
+  if (!rawEditorGuard.hasRaw()) return true
+  localError.value = '原始 JSON 有未应用的内容，请先修正或放弃后再操作。'
+  return false
+}
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
 const dependencyOptions = computed(() => buildCaseDependencyOptions(
@@ -245,6 +252,7 @@ async function loadSource(
 }
 
 function changeProject(projectId: string | null): void {
+  if (projectId === context.projectId || !rawEditorGuard.confirmDiscardRaw()) return
   endpointActivationGeneration += 1
   sourceLoadGeneration += 1
   assets.invalidateLoad()
@@ -266,6 +274,7 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
+  if (sourceRevisionId === context.sourceRevisionId || !rawEditorGuard.confirmDiscardRaw()) return
   endpointActivationGeneration += 1
   activeEndpoint.value = null
   sourceLoadGeneration += 1
@@ -322,6 +331,7 @@ function changeEnvironment(environmentRevisionId: string | null): void {
 }
 
 async function selectTask(taskId: string): Promise<void> {
+  if (!rawEditorGuard.confirmDiscardRaw()) return
   localError.value = ''
   const task = tasks.select(taskId)
   if (!task) return
@@ -359,6 +369,7 @@ async function selectTask(taskId: string): Promise<void> {
 async function activate(
   endpoint: ApiEndpoint,
   client: Pick<ApiClient, 'get'> = apiClient,
+  beforeActivate?: () => boolean,
 ): Promise<boolean> {
   const generation = ++endpointActivationGeneration
   const sourceGeneration = sourceLoadGeneration
@@ -374,6 +385,8 @@ async function activate(
     localError.value = assets.detailError || '接口详情读取失败，请重试'
     return false
   }
+  if (beforeActivate && !beforeActivate()) return false
+  if (activeEndpoint.value?.id !== endpoint.id && !rawEditorGuard.confirmDiscardRaw()) return false
   activeEndpoint.value = detailed
   cases.draftFor(detailed)
   mobilePane.value = 'editor'
@@ -390,8 +403,18 @@ async function openAiGenerated(version: CaseVersion): Promise<void> {
     localError.value = '生成用例对应的接口不在当前接口版本中'
     return
   }
-  if (!await activate(endpoint)) return
-  cases.setActiveVersion(version.endpoint_id, version.id)
+  const mayReplaceDraft = () => {
+    if (!selectedIds.value.includes(version.endpoint_id)) return false
+    const replacing = cases.activeVersionByEndpoint[endpoint.id] !== version.id
+    const rawWillBeLost = rawEditorGuard.hasRaw() && (activeEndpoint.value?.id !== endpoint.id || replacing)
+    const dirtyWillBeLost = replacing && Boolean(cases.dirtyDrafts[endpoint.id])
+    if ((rawWillBeLost || dirtyWillBeLost)
+        && !window.confirm('存在未保存的修改或未应用的原始 JSON。继续将丢失这些内容，确定继续吗？')) return false
+    if (rawWillBeLost) caseEditor.value?.discardUnappliedRaw?.()
+    return true
+  }
+  if (!await activate(endpoint, apiClient, mayReplaceDraft)) return
+  if (cases.activeVersionByEndpoint[endpoint.id] !== version.id) cases.setActiveVersion(endpoint.id, version.id)
 }
 
 function manageAiGenerated(): void {
@@ -407,6 +430,7 @@ function openEndpointHistory(endpointId: string, endpointKey?: string): void {
 }
 
 function startNewTask(): void {
+  if (!rawEditorGuard.confirmDiscardRaw()) return
   endpointActivationGeneration += 1
   tasks.clear()
   outdatedRestoredTask.value = null
@@ -461,6 +485,7 @@ function updateDraft(draft: CaseDraft): void {
   }
 }
 async function saveDraft() {
+  if (!requireAppliedRaw()) return
   if (!activeEndpoint.value) return null
   localError.value = ''
   try {
@@ -496,7 +521,7 @@ async function generateBasicPositive(): Promise<void> {
     const previews = await cases.previewBasicPositive([...task.selected_endpoint_ids], context.environmentRevisionId, task.id)
     const firstPreview = previews[0]
     const endpoint = assets.endpoints.find(item => item.id === firstPreview?.endpoint_id)
-    if (endpoint && firstPreview && !cases.dirtyDrafts[endpoint.id]
+    if (endpoint && firstPreview && !rawEditorGuard.hasRaw() && !cases.dirtyDrafts[endpoint.id]
         && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) {
       endpointActivationGeneration += 1
       activeEndpoint.value = endpoint
@@ -519,6 +544,7 @@ async function submitDebug(): Promise<void> {
 }
 
 async function submitDebugOnce(): Promise<void> {
+  if (!requireAppliedRaw()) return
   const scope = captureApiExecutionScope(context)
   if (!scope || !activeEndpoint.value) return
   const confirmedTaskGeneration = taskSelectionGeneration
@@ -768,7 +794,7 @@ function sourceRevisionLabel(revisionId: string | null): string {
 </script>
 
 <template>
-  <section v-if="route.query.help === 'load-metrics'" class="workspace" data-testid="load-metric-help-page">
+  <section v-show="route.query.help === 'load-metrics'" class="workspace" data-testid="load-metric-help-page">
     <header class="page-toolbar">
       <div><p class="eyebrow">工作台 · 使用帮助</p><h1>压测使用帮助</h1><p class="page-subtitle">了解指标含义、计算方式和使用边界；正式结果请查看性能报告。</p></div>
       <div class="load-toolbar-actions">
@@ -778,7 +804,7 @@ function sourceRevisionLabel(revisionId: string | null): string {
     </header>
     <LoadMetricGuide initially-expanded />
   </section>
-  <section v-else class="workspace workbench-page">
+  <section v-show="route.query.help !== 'load-metrics'" class="workspace workbench-page">
     <header class="page-toolbar"><div><p class="eyebrow">接口测试</p><h1>接口测试工作台</h1><p class="page-subtitle">选接口，AI 设计，保存草稿后直接调试。</p></div><div class="load-toolbar-actions"><RouterLink class="secondary-command" :to="{ path: '/', query: { help: 'load-metrics' } }">压测使用帮助</RouterLink><button class="icon-command" type="button" title="重新读取已保存接口" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="context.sourceRevisionId && assets.load(context.sourceRevisionId)"><RefreshCw :size="18" /></button></div></header>
     <div v-if="workspaceRestoring" class="state-message workspace-restoring" data-testid="workspace-restoring">
       <RefreshCw class="spinning" :size="18" />

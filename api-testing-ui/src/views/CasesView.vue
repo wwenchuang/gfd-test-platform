@@ -18,6 +18,7 @@ import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
 import { captureApiExecutionScope, confirmApiExecution, matchesApiExecutionScope, type ApiExecutionScope } from '../utils/executionConfirmation'
 import { endpointGroupName } from '../utils/endpointGroups'
 import { inferTestApplicationBusiness } from '../utils/testApplications'
+import { useRawEditorGuard } from '../utils/rawEditorGuard'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -28,10 +29,18 @@ const route = useRoute()
 
 const selectedIds = ref<string[]>([])
 const activeEndpoint = ref<ApiEndpoint | null>(null)
+const caseEditor = ref<{ hasUnappliedRaw(): boolean; discardUnappliedRaw(): void } | null>(null)
+const rawEditorGuard = useRawEditorGuard(caseEditor)
+function requireAppliedRaw(): boolean {
+  if (!rawEditorGuard.hasRaw()) return true
+  localError.value = '原始 JSON 有未应用的内容，请先修正或放弃后再操作。'
+  return false
+}
 const debugOpen = ref(false)
 const executionStarting = ref(false)
 const localError = ref('')
 const sourceLoadError = ref('')
+const sourceReadPending = ref(false)
 let sourceLoadGeneration = 0
 let manualDetailGeneration = 0
 let taskSelectionGeneration = 0
@@ -146,6 +155,7 @@ function routeValue(value: unknown): string {
 
 async function loadSource(sourceRevisionId: string, preserveDrafts = false): Promise<void> {
   const generation = ++sourceLoadGeneration
+  sourceReadPending.value = true
   try {
     const caseLoad = preserveDrafts
       ? cases.loadSavedCases(sourceRevisionId, undefined, { preserveDrafts: true })
@@ -168,13 +178,16 @@ async function loadSource(sourceRevisionId: string, preserveDrafts = false): Pro
     activeEndpoint.value = null
     endpointPickerOpen.value = false
     sourceLoadError.value = error instanceof Error ? error.message : '无法读取接口和用例'
+  } finally {
+    if (generation === sourceLoadGeneration) sourceReadPending.value = false
   }
 }
 
 function changeProject(projectId: string | null): void {
-  if (projectId === context.projectId) return
+  if (projectId === context.projectId || !rawEditorGuard.confirmDiscardRaw()) return
   manualDetailGeneration += 1
   sourceLoadGeneration += 1
+  sourceReadPending.value = false
   assets.invalidateLoad()
   cases.invalidateLoad()
   cases.hideDraftScope()
@@ -193,9 +206,10 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
-  if (sourceRevisionId === context.sourceRevisionId) return
+  if (sourceRevisionId === context.sourceRevisionId || !rawEditorGuard.confirmDiscardRaw()) return
   manualDetailGeneration += 1
   sourceLoadGeneration += 1
+  sourceReadPending.value = false
   assets.invalidateLoad()
   assets.endpoints = []
   cases.invalidateLoad()
@@ -238,21 +252,34 @@ async function saveScope(): Promise<void> {
   }
 }
 
-function editCaseVersion(version: CaseVersion): void {
+function confirmDraftReplacement(endpointId: string, replacing: boolean, confirmed = false): boolean {
+  const rawWillBeLost = Boolean(caseEditor.value?.hasUnappliedRaw?.()
+    && (activeEndpoint.value?.id !== endpointId || replacing))
+  const dirtyWillBeLost = replacing && Boolean(cases.dirtyDrafts[endpointId])
+  if ((rawWillBeLost || dirtyWillBeLost) && !confirmed
+      && !window.confirm('存在未保存的修改或未应用的原始 JSON。继续将丢失这些内容，确定继续吗？')) return false
+  if (rawWillBeLost) caseEditor.value?.discardUnappliedRaw?.()
+  return true
+}
+
+function editCaseVersion(version: CaseVersion, replaceConfirmed = false): boolean {
   manualDetailGeneration += 1
   const endpointId = version.current_endpoint_id || version.endpoint_id
   const endpoint = assets.endpoints.find(item => item.id === endpointId)
   if (!endpoint) {
     localError.value = '该用例对应的接口不在当前接口版本中'
-    return
+    return false
   }
+  const replacing = cases.activeVersionByEndpoint[endpoint.id] !== version.id
+  if (!confirmDraftReplacement(endpoint.id, replacing, replaceConfirmed)) return false
   activeEndpoint.value = endpoint
   mobileDetailOpen.value = true
-  if (version.id !== activeVersionId.value) {
+  if (replacing) {
     cases.clearDebug()
     debugOpen.value = false
     cases.setActiveVersion(endpoint.id, version.id)
   }
+  return true
 }
 
 function editGeneratedPreview(preview: GeneratedCasePreview): void {
@@ -262,6 +289,13 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
     localError.value = '该候选用例对应的接口不在当前接口版本中'
     return
   }
+  if (cases.activeGeneratedPreviewId === preview.id) {
+    if (!confirmDraftReplacement(endpoint.id, false)) return
+    activeEndpoint.value = endpoint
+    mobileDetailOpen.value = true
+    return
+  }
+  if (!confirmDraftReplacement(endpoint.id, true)) return
   activeEndpoint.value = endpoint
   mobileDetailOpen.value = true
   cases.setDraftFromGeneratedPreview(preview.id)
@@ -288,6 +322,7 @@ async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
     localError.value = assets.detailError || '接口详情读取失败，请重试'
     return
   }
+  if (!confirmDraftReplacement(detailed.id, true)) return
   activeEndpoint.value = detailed
   const draft = cases.startManualDraft(detailed)
   const ownership = inferTestApplicationBusiness([endpointGroupName(detailed), ...detailed.tags])
@@ -312,7 +347,7 @@ async function generateBasicForEndpoint(endpoint: ApiEndpoint): Promise<void> {
   localError.value = ''
   try {
     const previews = await cases.previewBasicPositive([endpoint.id], context.environmentRevisionId, task.id)
-    if (previews[0] && !cases.dirtyDrafts[previews[0].endpoint_id]
+    if (previews[0] && !rawEditorGuard.hasRaw() && !cases.dirtyDrafts[previews[0].endpoint_id]
         && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) editGeneratedPreview(previews[0])
     endpointPickerOpen.value = false
   } catch (error) {
@@ -338,7 +373,7 @@ async function generateAiForEndpoint(endpoint: ApiEndpoint): Promise<void> {
   if (cases.aiError) return
   const generatedId = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
   const version = generatedId ? cases.versions[generatedId] : null
-  if (version && !cases.dirtyDrafts[version.current_endpoint_id || version.endpoint_id]
+  if (version && !rawEditorGuard.hasRaw() && !cases.dirtyDrafts[version.current_endpoint_id || version.endpoint_id]
       && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) editCaseVersion(version)
   endpointPickerOpen.value = false
 }
@@ -355,6 +390,7 @@ function updateDraft(draft: CaseDraft): void {
 }
 
 async function saveDraft() {
+  if (!requireAppliedRaw()) return
   if (!activeEndpoint.value) return null
   localError.value = ''
   try {
@@ -369,6 +405,7 @@ async function saveDraft() {
 }
 
 async function saveGeneratedPreview(preview: GeneratedCasePreview): Promise<void> {
+  if (!requireAppliedRaw()) return
   const selectionGeneration = context.selectionGeneration
   const detailGeneration = manualDetailGeneration
   localError.value = ''
@@ -384,6 +421,7 @@ async function saveGeneratedPreview(preview: GeneratedCasePreview): Promise<void
 }
 
 async function saveAllGeneratedPreviews(): Promise<void> {
+  if (!requireAppliedRaw()) return
   const selectionGeneration = context.selectionGeneration
   const detailGeneration = manualDetailGeneration
   localError.value = ''
@@ -401,6 +439,7 @@ async function saveAllGeneratedPreviews(): Promise<void> {
 }
 
 function mayOpenSavedVersion(version: CaseVersion): boolean {
+  if (rawEditorGuard.hasRaw()) return false
   const endpointId = activeEndpoint.value?.id
   if (!endpointId || !cases.dirtyDrafts[endpointId]) return true
   return endpointId === (version.current_endpoint_id || version.endpoint_id)
@@ -409,11 +448,13 @@ function mayOpenSavedVersion(version: CaseVersion): boolean {
 
 function discardGeneratedPreview(previewId: string): void {
   const wasActive = cases.activeGeneratedPreviewId === previewId
+  if (wasActive && !rawEditorGuard.confirmDiscardRaw()) return
   cases.discardGeneratedPreview(previewId)
   if (wasActive && activeEndpoint.value && !cases.drafts[activeEndpoint.value.id]) activeEndpoint.value = null
 }
 
 async function deleteCaseVersion(version: CaseVersion): Promise<void> {
+  if (activeEndpoint.value?.id === (version.current_endpoint_id || version.endpoint_id) && !requireAppliedRaw()) return
   const confirmed = window.confirm(`删除用例“${version.name}”？历史执行记录和已采纳基线证据会保留。`)
   if (!confirmed) return
   localError.value = ''
@@ -494,6 +535,10 @@ async function runCaseVersion(version: CaseVersion): Promise<void> {
 }
 
 async function runCaseVersionOnce(version: CaseVersion): Promise<void> {
+  if (rawEditorGuard.hasRaw()) {
+    localError.value = '原始 JSON 有未应用的内容，请先修正或放弃后再调试。'
+    return
+  }
   const scope = captureApiExecutionScope(context)
   if (!scope) {
     localError.value = '请先选择接口项目、接口版本和执行环境'
@@ -521,7 +566,7 @@ async function runCaseVersionOnce(version: CaseVersion): Promise<void> {
     localError.value = '范围已变化，调试未开始，请重新确认。'
     return
   }
-  editCaseVersion(version)
+  if (!editCaseVersion(version, true)) return
   if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
   let prepared
   try {
@@ -592,6 +637,7 @@ async function submitDebug(): Promise<void> {
 }
 
 async function submitDebugOnce(): Promise<void> {
+  if (!requireAppliedRaw()) return
   const scope = captureApiExecutionScope(context)
   if (!scope || !activeEndpoint.value) return
   const confirmedTaskGeneration = taskSelectionGeneration
@@ -704,6 +750,7 @@ function openAiGenerationResults(): void {
 }
 
 async function refreshCases(): Promise<void> {
+  if (!rawEditorGuard.confirmDiscardRaw()) return
   if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, true)
 }
 
@@ -880,8 +927,10 @@ function defaultTaskName(): string {
         </header>
         <div class="management-detail-body">
           <EndpointDetail :endpoint="activeEndpoint" @open-history="openEndpointHistory" />
+          <fieldset v-if="activeDraft" data-testid="case-edit-guard" class="case-edit-guard" :disabled="sourceReadPending">
+            <p v-if="sourceReadPending" role="status">正在重新读取，请稍候再编辑。</p>
           <CaseEditor
-            v-if="activeDraft"
+            ref="caseEditor"
             :model-value="activeDraft"
             :draft-identity="`${activeEndpoint?.id || ''}:${activeVersionId}:${cases.activeGeneratedPreviewId || ''}`"
             :editing-version="cases.versions[activeVersionId] || null"
@@ -900,6 +949,7 @@ function defaultTaskName(): string {
             @save="saveDraft"
             @debug="submitDebug"
           />
+          </fieldset>
           <div v-else class="state-message center-empty">从左侧选择一个用例后，可查看接口信息并编辑测试数据。</div>
         </div>
       </main>
@@ -924,3 +974,7 @@ function defaultTaskName(): string {
     />
   </section>
 </template>
+
+<style scoped>
+.case-edit-guard { border: 0; padding: 0; margin: 0; min-width: 0; }
+</style>
