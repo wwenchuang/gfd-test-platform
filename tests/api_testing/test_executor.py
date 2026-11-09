@@ -1017,9 +1017,9 @@ def test_failed_cleanup_step_does_not_feed_extractions_to_later_cleanup(
         if event.get("phase") == "workflow_step"
         and event.get("stage") == "cleanup"
     ]
-    assert [(event["status"], event.get("missing_variables")) for event in cleanup] == [
-        ("FAILED", None),
-        ("SKIPPED", ["resourceSn"]),
+    assert [(event["status"], event.get("failure_category")) for event in cleanup] == [
+        ("FAILED", "business_response"),
+        ("SKIPPED", "cleanup_dependency"),
     ]
 
 
@@ -1846,7 +1846,7 @@ def test_cleanup_ownership_failure_never_cancels_unverified_task(target_server):
     assert result.status == 'FAILED'
     assert result.failure_category == 'cleanup'
     assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/ownership-mismatch']
-    assert any(event.get('failure_category') == 'condition_not_met' for event in result.trace)
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
 
 
 def test_owned_record_selector_drives_cleanup_when_other_record_is_first(target_server):
@@ -1873,3 +1873,101 @@ def test_owned_record_selector_does_not_cleanup_when_not_unique(target_server, p
     result = _executor(target_server, _case(processing=_workflow_processing(setup_steps=[create, select], cleanup_steps=[cleanup]))).execute_case('v', 'env', {})
     assert result.status != 'PASSED'
     assert all(call[1] != '/workflow/cancel' for call in handler.workflow_calls)
+
+@pytest.mark.parametrize('outcome', ['failed', 'skipped', 'missing_optional'])
+def test_cleanup_verification_never_reuses_earlier_output_when_no_fresh_value(target_server, outcome):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verify = _workflow_step(
+        '确认资源归属', 'GET', '/workflow/ownership-mismatch',
+        assertions=[_code_assertion(), {'type': 'json_path', 'operator': 'equals', 'path': '$.data.resourceSn', 'expected': 'owned-resource', 'timeout_ms': 0, 'enabled': True}],
+        extractions=[_json_extraction('verifiedTaskSn', '$.data.resourceSn')],
+    )
+    if outcome == 'skipped':
+        verify['only_if_variable'] = 'allowVerify'
+    if outcome == 'missing_optional':
+        verify['assertions'] = [_code_assertion()]
+        verify['extractions'] = [{**_json_extraction('verifiedTaskSn', '$.data.missing'), 'required': False}]
+    cancel = _workflow_step('清理已核实任务', 'POST', '/workflow/cancel', body={'taskSn': '{{verifiedTaskSn}}'}, required_variables=['verifiedTaskSn'])
+    cancel['only_if_variable'] = 'verifiedTaskSn'
+    case = _case(processing=_workflow_processing(cleanup_steps=[verify, cancel]))
+
+    result = _executor(target_server, case).execute_case('v', 'env', {'verifiedTaskSn': 'another-run'})
+
+    assert result.status == 'FAILED'
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+@pytest.mark.parametrize(('action', 'initial'), [('copy_variable', 'another-run'), ('json_encode', 'another-run'), ('json_decode', '"another-run"')])
+def test_failed_cleanup_verification_invalidates_old_preprocessing_aliases(target_server, action, initial):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verify = _workflow_step('确认资源归属', 'GET', '/workflow/ownership-mismatch', assertions=[_code_assertion(), {'type': 'json_path', 'operator': 'equals', 'path': '$.data.resourceSn', 'expected': 'owned-resource', 'timeout_ms': 0, 'enabled': True}], extractions=[_json_extraction('verifiedTaskSn', '$.data.resourceSn')])
+    cancel = _workflow_step('清理已核实任务', 'POST', '/workflow/cancel', body={'taskSn': '{{alias}}'}, required_variables=['alias'])
+    cancel['only_if_variable'] = 'alias'
+    processing = _workflow_processing(cleanup_steps=[verify, cancel])
+    processing['pre'] = [{'action': action, 'source': 'verifiedTaskSn', 'target': 'alias'}]
+
+    result = _executor(target_server, _case(processing=processing)).execute_case('v', 'env', {'verifiedTaskSn': initial})
+
+    assert result.status == 'FAILED'
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_successful_cleanup_verification_overrides_stale_value_before_downstream(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verify = _workflow_step('确认资源归属', 'GET', '/workflow/setup', assertions=[_code_assertion()], extractions=[_json_extraction('verifiedTaskSn', '$.data.resourceSn')])
+    cancel = _workflow_step('清理已核实任务', 'POST', '/workflow/cancel', body={'taskSn': '{{verifiedTaskSn}}'}, required_variables=['verifiedTaskSn'])
+    cancel['only_if_variable'] = 'verifiedTaskSn'
+    result = _executor(target_server, _case(processing=_workflow_processing(cleanup_steps=[verify, cancel]))).execute_case('v', 'env', {'verifiedTaskSn': 'another-run'})
+    assert result.status == 'PASSED'
+    assert ('POST', '/workflow/cancel', {'taskSn': 'resource-1'}) in handler.workflow_calls
+
+
+def test_failed_cleanup_without_outputs_does_not_block_independent_cleanup(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    first = _workflow_step('清理失败', 'GET', '/workflow/setup-fail', assertions=[_code_assertion()])
+    second = _workflow_step('后续独立清理', 'GET', '/workflow/static-cleanup', assertions=[_code_assertion()])
+    result = _executor(target_server, _case(processing=_workflow_processing(cleanup_steps=[first, second]))).execute_case('v', 'env', {})
+    assert result.status == 'FAILED'
+    assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/setup-fail', '/workflow/static-cleanup']
+
+
+def test_missing_optional_output_on_last_cleanup_keeps_existing_behavior(target_server):
+    last = _workflow_step('最后清理', 'GET', '/workflow/ownership-mismatch', assertions=[_code_assertion()], extractions=[{**_json_extraction('optional', '$.data.missing'), 'required': False}])
+    result = _executor(target_server, _case(processing=_workflow_processing(cleanup_steps=[last]))).execute_case('v', 'env', {})
+    assert result.status == 'PASSED'
+
+
+def test_missing_cleanup_prerequisite_blocks_subsequent_cleanup(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verify = _workflow_step('核查资源', 'GET', '/workflow/setup', required_variables=['needed'], extractions=[_json_extraction('verifiedTaskSn', '$.data.resourceSn')])
+    cancel = _workflow_step('清理', 'POST', '/workflow/cancel', body={'taskSn': '{{verifiedTaskSn}}'})
+    result = _executor(target_server, _case(processing=_workflow_processing(cleanup_steps=[verify, cancel]))).execute_case('v', 'env', {'verifiedTaskSn': 'another-run'})
+    assert result.status == 'FAILED'
+    assert [call[1] for call in handler.workflow_calls] == ['/ok']
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
+
+
+def test_failed_cleanup_verification_blocks_environment_fallback_alias(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verify = _workflow_step('核查资源', 'GET', '/workflow/ownership-mismatch', assertions=[{'type': 'json_path', 'operator': 'equals', 'path': '$.data.resourceSn', 'expected': 'owned-resource', 'timeout_ms': 0, 'enabled': True}], extractions=[_json_extraction('verifiedTaskSn', '$.data.resourceSn')])
+    cancel = _workflow_step('清理', 'POST', '/workflow/cancel', body={'taskSn': '{{environmentAlias}}'})
+    case = _case(processing=_workflow_processing(cleanup_steps=[verify, cancel]))
+    result = _executor(target_server, case, values={'environmentAlias': 'another-run'}).execute_case('v', 'env', {})
+    assert result.status == 'FAILED'
+    assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/ownership-mismatch']
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
+
+
+@pytest.mark.parametrize('valid_value', [0, False])
+def test_cleanup_output_zero_and_false_are_not_treated_as_missing(valid_value):
+    step = {'extractions': [{'target': 'out'}]}
+    outcome = SimpleNamespace(status='PASSED', extracted={'out': valid_value})
+    assert HttpExecutor._cleanup_outputs_available(step, outcome)

@@ -427,7 +427,16 @@ class HttpExecutor:
             for index, step in enumerate(cleanup_steps):
                 if not step.get("enabled", True):
                     continue
+                protects_downstream = bool(step.get("extractions")) and any(
+                    later.get("enabled", True) for later in cleanup_steps[index + 1:]
+                )
                 if self._skip_conditional_step(callback, trace, "cleanup", index, step, variables):
+                    if protects_downstream:
+                        blocked = self._stop_cleanup_after_unavailable_outputs(
+                            callback, trace, cleanup_steps, index
+                        )
+                        cleanup_problem = cleanup_problem or blocked
+                        break
                     continue
                 missing = self._missing_step_variables(step, variables)
                 if missing:
@@ -446,6 +455,11 @@ class HttpExecutor:
                             + ", ".join(missing),
                             (),
                         )
+                    if protects_downstream:
+                        self._stop_cleanup_after_unavailable_outputs(
+                            callback, trace, cleanup_steps, index
+                        )
+                        break
                     continue
                 outcome, step_secrets = self._execute_inline_step(
                     "cleanup",
@@ -458,6 +472,12 @@ class HttpExecutor:
                     trace,
                 )
                 all_secrets.extend(step_secrets)
+                if protects_downstream and not self._cleanup_outputs_available(step, outcome):
+                    blocked = self._stop_cleanup_after_unavailable_outputs(
+                        callback, trace, cleanup_steps, index
+                    )
+                    cleanup_problem = cleanup_problem or blocked
+                    break
                 if outcome.status == "PASSED":
                     variables.update(copy.deepcopy(outcome.extracted))
                 if outcome.status != "PASSED" and cleanup_problem is None:
@@ -1012,6 +1032,34 @@ class HttpExecutor:
             for name in step.get("required_variables", [])
             if name not in variables
         )
+
+    @staticmethod
+    def _cleanup_outputs_available(step, outcome):
+        """Accept only outputs produced by this successful cleanup step."""
+        if outcome.status != "PASSED":
+            return False
+        for item in step.get("extractions", []):
+            name = (
+                item.get("target")
+                if isinstance(item, dict)
+                else getattr(item, "target", None)
+            )
+            value = outcome.extracted.get(name)
+            if name is None or value is None or value == "" or value == [] or value == {}:
+                return False
+        return True
+
+    @classmethod
+    def _stop_cleanup_after_unavailable_outputs(cls, callback, trace, cleanup_steps, index):
+        # Later steps may refer to a stale variable through aliases or environment
+        # defaults, so do not try to infer which individual requests are safe.
+        message = "清理步骤未产生可用输出，后续清理已停止；请核对资源归属和实际状态"
+        outcome = _HttpStepOutcome("SKIPPED", "cleanup_dependency", {}, {}, (), {}, message, ())
+        for next_index in range(index + 1, len(cleanup_steps)):
+            step = cleanup_steps[next_index]
+            if step.get("enabled", True):
+                cls._emit_workflow_step(callback, trace, "cleanup", next_index, step, outcome)
+        return _HttpStepOutcome("FAILED", "cleanup", {}, {}, (), {}, message, ())
 
     @classmethod
     def _skip_conditional_step(cls, callback, trace, stage, index, step, variables):
