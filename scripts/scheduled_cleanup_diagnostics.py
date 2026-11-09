@@ -2,7 +2,6 @@
 """Read-only, whitelisted diagnostics for an earlier scheduled scope snapshot."""
 import json
 import os
-import re
 import sys
 from uuid import UUID
 
@@ -11,15 +10,6 @@ CATEGORIES = frozenset(('condition_not_met', 'missing_variables', 'timeout', 'tr
                         'environment', 'cleanup', 'cleanup_dependency', 'assertion', 'cancelled',
                         'assertion_definition', 'host_policy', 'response_limit', 'redirect_limit'))
 METHODS = frozenset(('GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'))
-
-
-def safe_name(value):
-    if not isinstance(value, str):
-        return None
-    text = re.sub(r'https?://\S+|\S+@\S+', '[隐藏]', value[:200], flags=re.I)
-    text = re.sub(r'(?i)(token|secret|password|apikey|api[_-]?key|密码|密钥)\s*[:=]\s*[^\s,;，；]+', r'\1=[隐藏]', text)
-    text = re.sub(r'[A-Za-z0-9_-]{32,}|\d{7,}', '[隐藏]', text)
-    return ''.join(c for c in text if c.isprintable())
 
 
 def cleanup_structure(spec):
@@ -110,7 +100,7 @@ def diagnose(connection, report):
         connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
         connection.execute("SET LOCAL statement_timeout = '5s'")
         for job_id, version_id in hits:
-            version = connection.execute('SELECT c.name, v.processing_spec FROM api_case_versions v JOIN api_cases c ON c.id=v.case_id WHERE v.id=%s', (version_id,)).fetchone()
+            version = connection.execute('SELECT v.processing_spec FROM api_case_versions v WHERE v.id=%s', (version_id,)).fetchone()
             if version is None:
                 raise ValueError('version missing')
             latest = connection.execute(
@@ -126,8 +116,8 @@ def diagnose(connection, report):
                            'case_status': case_status if case_status in STATUSES else 'UNKNOWN',
                            'execution_state': execution_state if execution_state in STATUSES else 'UNKNOWN',
                            'created_at': created.isoformat() if created else None, 'cleanup_trace': trace_summary(result)}
-            data.append({'job_id': job_id, 'case_version_id': version_id, 'current_case_name': safe_name(version[0]),
-                         'cleanup_structure': cleanup_structure(version[1]), 'latest_scheduled_history': history})
+            data.append({'job_id': job_id, 'case_version_id': version_id,
+                         'cleanup_structure': cleanup_structure(version[0]), 'latest_scheduled_history': history})
     return {'scope': 'snapshot_hits_only', 'membership_revalidated': False, 'history_source': 'same_schedule_and_exact_version',
             'count': len(data), 'items': data}
 

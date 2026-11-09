@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from scripts.scheduled_cleanup_diagnostics import cleanup_structure, trace_summary, scheduled_hits, safe_name
+from scripts.scheduled_cleanup_diagnostics import cleanup_structure, trace_summary, scheduled_hits
 
 
 def test_structural_summary_never_exposes_names_values_or_requests():
@@ -42,11 +42,6 @@ def test_hits_require_expected_scope_and_exact_boolean():
     with pytest.raises(ValueError): scheduled_hits(report)
 
 
-def test_case_name_reduces_common_credential_and_number_exposure():
-    name = safe_name('订单 password=topsecret 13800138000 https://example.test/path')
-    assert 'topsecret' not in name and '13800138000' not in name and 'example.test' not in name
-
-
 def test_isolated_postgres_exact_schedule_version_and_readonly():
     import os
     import psycopg
@@ -66,7 +61,7 @@ def test_isolated_postgres_exact_schedule_version_and_readonly():
         c.execute('CREATE TABLE api_scheduled_job_runs(job_id text, execution_id text)')
         c.execute('CREATE TABLE api_executions(id text, state text, created_at timestamptz)')
         c.execute('CREATE TABLE api_execution_cases(id text, execution_id text, case_version_id text, status text, created_at timestamptz, sanitized_result jsonb)')
-        c.execute('INSERT INTO api_cases VALUES (%s, %s)', ('case', 'safe case'))
+        c.execute('INSERT INTO api_cases VALUES (%s, %s)', ('case', 'SECRET_UNSTRUCTURED_CASE_NAME'))
         c.execute('INSERT INTO api_case_versions VALUES (%s,%s,%s)', (version,'case',Jsonb({'cleanup_steps':[{'request':{'method':'GET','body':'SECRET'},'extractions':[{'target':'SECRET'}]},{}]})))
         for suffix, owner, date in [('1',job,'2026-01-01'),('2',job,'2026-01-02'),('3',other_job,'2026-01-03')]:
             execution = '20000000-0000-0000-0000-' + suffix.zfill(12)
@@ -79,7 +74,7 @@ def test_isolated_postgres_exact_schedule_version_and_readonly():
         class Probe:
             def transaction(self): return c.transaction()
             def execute(self, sql, params=None):
-                if sql.startswith('SELECT c.name'):
+                if sql.startswith('SELECT v.processing_spec'):
                     assert c.execute('SHOW transaction_read_only').fetchone()[0] == 'on'
                     c.execute('SAVEPOINT probe')
                     with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
@@ -92,3 +87,4 @@ def test_isolated_postgres_exact_schedule_version_and_readonly():
     assert evidence['execution_id'].endswith('000000000002')
     assert evidence['cleanup_trace'][0]['attempts'][0]['output_state'] == 'nonempty_recorded'
     assert 'SECRET' not in json.dumps(result)
+    assert 'current_case_name' not in result['items'][0]
