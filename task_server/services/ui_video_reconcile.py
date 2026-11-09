@@ -360,7 +360,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         if not groups or positions[frame['frame_id']]!=positions[groups[-1][-1]['frame_id']]+1:groups.append([])
         groups[-1].append(frame)
     if len(groups)>5 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
-    result=copy.deepcopy(checked);resolutions=[];replacements=[];redundant_claims=[];frame_role_audit=[]
+    result=copy.deepcopy(checked);resolutions=[];replacements=[];redundant_claims=[];redundant_tap_claims=[];frame_role_audit=[]
     all_ids={f['frame_id'] for f in window}
     replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
@@ -397,6 +397,10 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
             translated=copy.deepcopy(claim)
             translated['source_anchor_ids']=[global_id(aid) for aid in claim['source_anchor_ids']]
             redundant_claims.append(translated)
+        for claim in repaired['reconciliation_audit'].get('redundant_tap_claims',[]):
+            translated=copy.deepcopy(claim)
+            translated['source_anchor_ids']=[global_id(aid) for aid in claim['source_anchor_ids']]
+            redundant_tap_claims.append(translated)
         result['uncertainties']=list(dict.fromkeys(result['uncertainties']+repaired['uncertainties']))
         result['multiple_scenarios']=result['multiple_scenarios'] or repaired['multiple_scenarios']
     result['events']=preserved+replacements
@@ -406,9 +410,40 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     check_coverage(original,result['events'],duration,resolutions,'first_pass')
     check_coverage(checked['events'],result['events'],duration,resolutions,'independent_review')
     before=validate_analysis({'events':checked['events'],'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
-    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims},secrets)
+    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims,'redundant_tap_claims':redundant_tap_claims},secrets)
     if frame_role_audit:result['frame_role_audit']=frame_role_audit
     return result
+
+
+def _anchor_identity(value):
+    """Compare aliases without accepting noncanonical candidate identifiers."""
+    if not isinstance(value,str):return None
+    parts=value.split(':')
+    if len(parts)!=2 or not parts[0] or not re.fullmatch(r'[0-9]{1,9}',parts[1]):return None
+    return parts[0],str(int(parts[1]))
+
+
+def _uncontested_redundant_claim(claim,claims):
+    ids=claim['source_anchor_ids']
+    identities=[_anchor_identity(a) for a in ids]
+    if any(identity is None or a!=f'{identity[0]}:{identity[1]}' for a,identity in zip(ids,identities)):return False
+    for other in claims:
+        if other is claim:continue
+        if not isinstance(other,dict):return False
+        other_ids=other.get('source_anchor_ids')
+        if not isinstance(other_ids,list):return False
+        other_identities=[_anchor_identity(a) for a in other_ids]
+        if (any(identity is None for identity in other_identities) or
+            set(identities)&set(other_identities) or
+            other.get('reviewed_event_index')==claim['reviewed_event_index']):return False
+    return True
+
+
+def _redundant_claim_audit(claim,reviewed):
+    return {'source_anchor_ids':list(claim['source_anchor_ids']),'resolution':claim['resolution'],
+            'reviewed_event_index':claim['reviewed_event_index'],'reviewed_event_index_scope':'local_repair',
+            'reviewed_event_frame_refs':list(reviewed[claim['reviewed_event_index']]['frame_refs']),
+            'status':'unverified_model_claim'}
 
 
 def _separate_redundant_assert_claims(claims,sources,reviewed):
@@ -426,9 +461,7 @@ def _separate_redundant_assert_claims(claims,sources,reviewed):
             {x.split(':')[0] for x in ids}!={'first_pass','independent_review'} or
             type(index) is not int or not 0<=index<len(reviewed) or reviewed[index]['action']!='aiAssert'):
             kept.append(claim);continue
-        if any(other is not claim and isinstance(other,dict) and
-               (other.get('reviewed_event_index')==index or any(a in ids for a in (other.get('source_anchor_ids') if isinstance(other.get('source_anchor_ids'),list) else []) if isinstance(a,str)))
-               for other in claims):
+        if not _uncontested_redundant_claim(claim,claims):
             kept.append(claim);continue
         old=[]
         for aid in ids:
@@ -440,7 +473,48 @@ def _separate_redundant_assert_claims(claims,sources,reviewed):
             for event in old:check_coverage([event],[copy.deepcopy(reviewed[index])])
         except ValueError:
             kept.append(claim);continue
-        removed.append(copy.deepcopy(claim))
+        removed.append(_redundant_claim_audit(claim,reviewed))
+    return kept,removed
+
+
+def _separate_redundant_tap_claims(claims,sources,reviewed):
+    """Discard only exact cross-pass tap correspondence, never a merge."""
+    if not isinstance(claims,list):return claims,[]
+    kept=[];removed=[]
+    for claim in claims:
+        if not isinstance(claim,dict):kept.append(claim);continue
+        ids=claim.get('source_anchor_ids');index=claim.get('reviewed_event_index')
+        if (set(claim)!={'source_anchor_ids','resolution','reviewed_event_index','evidence'} or
+            not isinstance(claim['evidence'],dict) or
+            claim.get('resolution') not in {'same_interaction','same_interaction_with_action_correction'} or
+            not isinstance(ids,list) or len(ids)!=2 or any(not isinstance(a,str) for a in ids) or
+            len(set(ids))!=2 or {a.split(':')[0] for a in ids}!={'first_pass','independent_review'} or
+            type(index) is not int or not 0<=index<len(reviewed)):
+            kept.append(claim);continue
+        if not _uncontested_redundant_claim(claim,claims):
+            kept.append(claim);continue
+        anchors=[];positions={}
+        for aid in ids:
+            parts=aid.split(':')
+            if len(parts)!=2 or parts[0] not in sources or not parts[1].isdigit() or int(parts[1])>=len(sources[parts[0]]):break
+            positions[parts[0]]=int(parts[1]);anchors.append(sources[parts[0]][int(parts[1])])
+        new=reviewed[index]
+        refs=new.get('frame_refs')
+        if (len(anchors)!=2 or new.get('action')!='aiTap' or not isinstance(new.get('target'),str) or
+            not new['target'].strip() or new.get('value')!='' or new.get('uncertainties') or
+            not isinstance(refs,list) or len(refs)<3 or len(set(refs))!=len(refs) or
+            any(old.get('action')!='aiTap' or old.get('target')!=new['target'] or old.get('value')!='' or
+                old.get('uncertainties') or
+                old.get('frame_refs')!=new.get('frame_refs') or old.get('start_ms')!=new.get('start_ms') or
+                old.get('end_ms')!=new.get('end_ms') for old in anchors)):
+            kept.append(claim);continue
+        refs=set(new['frame_refs'])
+        if any(i!=positions.get(name,-1) and event.get('action')=='aiTap' and refs&set(event.get('frame_refs',[]))
+               for name,source in sources.items() for i,event in enumerate(source)) or any(
+               i!=index and event.get('action')=='aiTap' and refs&set(event.get('frame_refs',[]))
+               for i,event in enumerate(reviewed)):
+            kept.append(claim);continue
+        removed.append(_redundant_claim_audit(claim,reviewed))
     return kept,removed
 
 
@@ -633,7 +707,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     from .ui_video_touch_detail import append_details
     payload['detail_frames']=append_details(images,root,assets,cancelled,window_ids)
     before=copy.deepcopy(checked['events'])
-    resolutions=[];redundant_claims=[]
+    resolutions=[];redundant_claims=[];redundant_tap_claims=[]
     for attempt in range(attempt_limit):
         if cancelled():raise ValueError('video_cancelled')
         try:
@@ -665,6 +739,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             continue
         try:
             claims,redundant_claims=_separate_redundant_assert_claims(claims,{'first_pass':original,'independent_review':before},repaired['events'])
+            claims,redundant_tap_claims=_separate_redundant_tap_claims(claims,{'first_pass':original,'independent_review':before},repaired['events'])
             resolutions=validate_resolutions(claims,{'first_pass':original,'independent_review':before},repaired['events'],window,
                                              allow_unresolved_return=retry_return_gesture_only or attempt+1>=attempt_limit)
             for resolution in resolutions:
@@ -783,7 +858,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             payload['validation_feedback']+=' 上次仍未完整解释这些原帧：'+','.join(sorted(missing))+ '。unresolved_hypotheses是待证伪的旧识别，绝非正确答案。请逐帧核对旧识别是否误判；纠正旧点击/滚动时，完整引用其帧并明确说明实际动作或无新交互的自动状态。若多条旧识别实际为同一次操作，保留一次真实交互，并在coverage_resolutions中完整列入对应锚点，不额外造aiAssert代替重复锚点。仅独立的自动加载阶段可用aiAssert。不要复制旧动作凑数量。'
     before=validate_analysis({'events':before,'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
     resolutions=_redact_audit(resolutions,secrets)
-    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims,'model_attempts':attempt+1},secrets)
+    result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims,'redundant_tap_claims':redundant_tap_claims,'model_attempts':attempt+1},secrets)
     if role_claims:result['frame_role_audit']=role_claims
     return result
 

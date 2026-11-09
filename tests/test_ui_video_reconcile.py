@@ -94,11 +94,68 @@ def test_unnecessary_one_to_one_scroll_correction_can_be_checked_independently()
     claim={'source_anchor_ids':['first_pass:0','independent_review:0'],
            'resolution':'same_interaction_with_action_correction','reviewed_event_index':0,'evidence':{}}
     kept,removed=vr._separate_redundant_assert_claims([claim],sources,[observed])
-    assert kept==[] and removed==[claim]
+    assert kept==[] and len(removed)==1 and 'evidence' not in removed[0]
     observed['observation']='全程未见用户触点或滚动操作，图片自动加载。'
-    assert vr._separate_redundant_assert_claims([claim],sources,[observed])==([], [claim])
+    kept,removed=vr._separate_redundant_assert_claims([claim],sources,[observed])
+    assert kept==[] and len(removed)==1 and 'evidence' not in removed[0]
     for bad in ({**observed,'observation':'用户手动滚动'}, {**observed,'frame_refs':['f1']}):
         assert vr._separate_redundant_assert_claims([claim],sources,[bad])==([claim],[])
+
+
+@pytest.mark.parametrize('change',['none','action_correction','target','empty_target','frames','action','unknown_source','out_of_range','uncertain_old','uncertain_new','duplicate_id','conflict','duplicate_source','duplicate_result','neighbor_tap'])
+def test_redundant_tap_claim_requires_unambiguous_exact_correspondence(change):
+    tap={**event(1),'target':'确认打印','frame_refs':['f1','f2','f3'],'start_ms':100,'end_ms':300}
+    sources={'first_pass':[copy.deepcopy(tap)],'independent_review':[copy.deepcopy(tap)]}
+    reviewed=[copy.deepcopy(tap)]
+    claim={'source_anchor_ids':['first_pass:0','independent_review:0'],
+           'resolution':'same_interaction','reviewed_event_index':0,'evidence':{}}
+    claims=[claim]
+    if change=='action_correction':claim['resolution']='same_interaction_with_action_correction'
+    if change=='target':reviewed[0]['target']='取消打印'
+    if change=='empty_target':reviewed[0]['target']='  '
+    if change=='frames':reviewed[0]['frame_refs']=['f1','f2']
+    if change=='action':sources['first_pass'][0]['action']='navigateBack'
+    if change=='unknown_source':claim['source_anchor_ids'][1]='unknown:0'
+    if change=='out_of_range':claim['source_anchor_ids'][1]='independent_review:999'
+    if change=='uncertain_old':sources['first_pass'][0]['uncertainties']=['触点不确定']
+    if change=='uncertain_new':reviewed[0]['uncertainties']=['触点不确定']
+    if change=='duplicate_id':claim['source_anchor_ids'][1]='first_pass:0'
+    if change=='conflict':claim['resolution']='tap_return_conflict'
+    if change=='duplicate_source':claims.append({**copy.deepcopy(claim),'reviewed_event_index':1})
+    if change=='duplicate_result':claims.append({**copy.deepcopy(claim),'source_anchor_ids':['first_pass:1','independent_review:1']})
+    if change=='neighbor_tap':sources['first_pass'].append(copy.deepcopy(tap))
+    kept,removed=vr._separate_redundant_tap_claims(claims,sources,reviewed)
+    if change in {'none','action_correction'}:
+        assert kept==[] and len(removed)==1
+        assert removed[0]['status']=='unverified_model_claim'
+        assert removed[0]['reviewed_event_index_scope']=='local_repair'
+        assert removed[0]['reviewed_event_frame_refs']==tap['frame_refs']
+    else:assert claim in kept and claim not in removed
+
+
+@pytest.mark.parametrize('mode',['assert','tap'])
+@pytest.mark.parametrize('case',['sensitive','own_alias','other_alias','bad_other'])
+def test_redundant_claim_audit_is_minimal_and_aliases_do_not_bypass_conflicts(mode,case):
+    old={**event(1,'aiScroll' if mode=='assert' else 'aiTap'),'target':'目标',
+         'value':{'direction':'down','scrollType':'singleAction'} if mode=='assert' else '',
+         'frame_refs':['f1','f2','f3'],'start_ms':100,'end_ms':300}
+    new={**copy.deepcopy(old),'action':'aiAssert' if mode=='assert' else 'aiTap','value':'',
+         'observation':'图片自动加载，未见独立用户滚动' if mode=='assert' else '点击目标'}
+    sources={'first_pass':[copy.deepcopy(old)],'independent_review':[copy.deepcopy(old)]}
+    claim={'source_anchor_ids':['first_pass:0','independent_review:0'],
+           'resolution':'same_interaction_with_action_correction' if mode=='assert' else 'same_interaction',
+           'reviewed_event_index':0,'evidence':{'interaction':'unlisted-sensitive-private-value'}}
+    claims=[claim]
+    if case=='own_alias':claim['source_anchor_ids'][0]='first_pass:00'
+    if case=='other_alias':claims.append({**copy.deepcopy(claim),'source_anchor_ids':['first_pass:00','independent_review:1'],'reviewed_event_index':1})
+    if case=='bad_other':claims.append({**copy.deepcopy(claim),'source_anchor_ids':['unparsable'],'reviewed_event_index':1})
+    fn=vr._separate_redundant_assert_claims if mode=='assert' else vr._separate_redundant_tap_claims
+    kept,removed=fn(claims,sources,[new])
+    if case=='sensitive':
+        assert kept==[] and len(removed)==1
+        assert set(removed[0])=={'source_anchor_ids','resolution','reviewed_event_index','status','reviewed_event_index_scope','reviewed_event_frame_refs'}
+        assert 'unlisted-sensitive-private-value' not in repr(removed)
+    else:assert claim in kept and claim not in removed
 
 
 def test_review_all_frames_and_shared_secrets(monkeypatch,tmp_path):

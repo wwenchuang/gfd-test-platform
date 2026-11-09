@@ -516,7 +516,8 @@ def test_mapping_reject_reason_distinguishes_other_structural_errors():
     assert getattr(caught.value,'coverage_reason',None)!='merge_requires_same_source_duplicates'
 
 
-def test_dialog_motion_retries_from_real_reconcile_grouping(monkeypatch,tmp_path):
+@pytest.mark.parametrize('redundant_pair',['retry','same','correction','missing_click'])
+def test_dialog_motion_retries_from_real_reconcile_grouping(monkeypatch,tmp_path,redundant_pair):
     from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
     times=[52900,53500,54133,54233,54467,54867,55900,55967,56200,56233,56300]
     frames=[{'frame_id':f'frame-{i:03}','timestamp_ms':time} for i,time in zip(range(124,135),times)]
@@ -545,20 +546,38 @@ def test_dialog_motion_retries_from_real_reconcile_grouping(monkeypatch,tmp_path
         assert [f['frame_id'] for f in payload['frames']]==[f'frame-{i:03}' for i in range(127,133)]
         assert 'motion_review_question' in payload
         assert all('action' not in a for rows in payload['coverage_checks'].values() for a in rows)
-        return {'events':[{'action':'aiAssert','target':'弹窗内容','value':'','frame_refs':['frame-127','frame-130'],
-                           'observation':'图片自动加载，未见独立用户滚动','uncertainties':[]},
-                          {k:v for k,v in tap.items() if k not in {'start_ms','end_ms','evidence_kind'}}],
-                'coverage_resolutions':[copy.deepcopy(claim)] if len(calls)==1 else [],
+        pair=[{**copy.deepcopy(claim),'resolution':'same_interaction_with_action_correction'},
+              {'source_anchor_ids':['first_pass:1','independent_review:1'],'resolution':
+               'same_interaction_with_action_correction' if redundant_pair=='correction' else 'same_interaction',
+               'reviewed_event_index':1,'evidence':{}}]
+        for item in pair:item['evidence']={'interaction':'unlisted-sensitive-private-value'}
+        events=[{'action':'aiAssert','target':'弹窗内容','value':'','frame_refs':['frame-127','frame-130'],
+                 'observation':'图片自动加载，未见独立用户滚动','uncertainties':[]}]
+        if redundant_pair!='missing_click':events.append({k:v for k,v in tap.items() if k not in {'start_ms','end_ms','evidence_kind'}})
+        return {'events':events,
+                'coverage_resolutions':pair if redundant_pair!='retry' else ([copy.deepcopy(claim)] if len(calls)==1 else []),
                 'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai,'run_ai_skill',model)
+    if redundant_pair=='missing_click':
+        with pytest.raises(ValueError):vr.reconcile(old,frames,120000,tmp_path,lambda:False,[])
+        assert len(calls)==1
+        return
     result=vr.reconcile(old,frames,120000,tmp_path,lambda:False,[])
-    assert len(calls)==2
+    assert len(calls)==(2 if redundant_pair=='retry' else 1)
     assert len(repair_options)==1 and repair_options[0]['attempt_limit']==2
     assert repair_options[0]['retry_return_gesture_only'] is False
     assert repair_options[0]['motion_review_refs']=={'frame-127','frame-130'}
     assert [e['action'] for e in result['events']]==['aiTap','aiAssert','aiTap','aiAssert']
     assert result['events'][2]['frame_refs']==tap['frame_refs']
     assert result['reconciliation_audit']['coverage_resolutions']==[]
+    if redundant_pair!='retry':
+        assert len(result['reconciliation_audit']['redundant_assert_claims'])==1
+        assert len(result['reconciliation_audit']['redundant_tap_claims'])==1
+        audit=result['reconciliation_audit']['redundant_tap_claims'][0]
+        assert audit['status']=='unverified_model_claim'
+        assert audit['reviewed_event_index_scope']=='local_repair'
+        assert audit['reviewed_event_frame_refs']==tap['frame_refs']
+        assert 'unlisted-sensitive-private-value' not in repr(result['reconciliation_audit'])
 
 
 @pytest.mark.parametrize('blind',['motion','delayed'])
