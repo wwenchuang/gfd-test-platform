@@ -38,6 +38,31 @@ test('practice evidence is hidden from limited users and stale links cannot be u
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:['one']}};w.showAiPractice();assert.equal(w.document.querySelector('[data-practice-acceptance]'),null);
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.hasPermission=p=>p==='api.view';w.showAiPractice();assert.equal(w.document.querySelector('[data-practice-acceptance]'),null);
 });
+test('practice cleanup evidence loads only authorized summary, links safely and makes no business request',async t=>{
+ const {w}=fixture(t),requests=[];w.canAccessWorkflow=()=>true;
+ const id='11111111-1111-4111-8111-111111111111';
+ w.apiRequest=async(path,options={})=>{requests.push([path,options.method||'GET']);return path==='/platform/practice-cleanup-evidence'?{ok:true,evidence:{execution_id:id,observed_at:'历史时间',summary:'测试摘要 <img src=x>'}}:{ok:true,enabled:true,results:[]};};
+ w.activeWorkflow='ai_practice';w.showAiPractice();const section=w.document.querySelector('[data-practice-cleanup-evidence]');assert.ok(section);assert.equal(section.open,false);assert.equal(requests.length,0);
+ section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(section.textContent,/测试摘要 <img src=x>/);assert.equal(section.querySelector('img'),null);
+ const link=section.querySelector('a');assert.equal(link.getAttribute('href'),'/api-test/#/runs?executionId='+id);assert.deepEqual(requests.map(([p,m])=>[p,m]),[['/platform/practice-cleanup-evidence','GET']]);
+ w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
+});
+test('practice cleanup evidence clears results on denied refresh and ignores responses after scope or identity changes',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;let response={ok:true,evidence:{execution_id:'11111111-1111-4111-8111-111111111111',observed_at:'时间',summary:'私有摘要'}};
+ w.apiRequest=async()=>response;w.activeWorkflow='ai_practice';w.showAiPractice();let section=w.document.querySelector('[data-practice-cleanup-evidence]');section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(section.textContent,/私有摘要/);
+ w.apiRequest=async()=>{throw Object.assign(Error('denied'),{status:403});};section.querySelector('button').click();await wait();await wait();assert.doesNotMatch(section.textContent,/私有摘要/);assert.match(section.textContent,/暂不可用|无权/);
+ let resolve;w.apiRequest=()=>new Promise(r=>{resolve=r;});section.querySelector('button').click();w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*',api_projects:['other']}};resolve(response);await wait();await wait();assert.doesNotMatch(section.textContent,/私有摘要/);
+ section.querySelector('button').click();w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};resolve(response);await wait();await wait();assert.doesNotMatch(section.textContent,/私有摘要/);
+});
+test('practice cleanup evidence gives a clear message when the source is absent',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.apiRequest=async()=>({ok:true,evidence:null});w.activeWorkflow='ai_practice';w.showAiPractice();const section=w.document.querySelector('[data-practice-cleanup-evidence]');section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(section.textContent,/未配置|不可用/);assert.equal(section.querySelector('a'),null);
+});
+test('authentication refresh immediately removes a previously visible cleanup result',async t=>{
+ const {w}=fixture(t);const auth=fs.readFileSync('js/auth.js','utf8');w.eval(auth.slice(auth.indexOf('function acceptAuthSession('),auth.indexOf('function requireUiEditPermission(')));w.eval(auth.slice(auth.indexOf('const WORKFLOW_PERMISSIONS'),auth.indexOf('function applyAccessNavigation')));
+ const admin={user_id:'u1',status:'active',permissions:['platform.configure','api.view','ui.view'],scope:{ui_apps:'*',api_projects:'*',api_environments:'*'}};
+ w.currentAccessProfile=admin;w.apiRequest=async path=>path==='/platform/practice-cleanup-evidence'?{ok:true,evidence:{execution_id:'11111111-1111-4111-8111-111111111111',summary:'受保护记录'}}:{ok:true,enabled:true};w.activeWorkflow='ai_practice';w.showAiPractice();const section=w.document.querySelector('[data-practice-cleanup-evidence]');section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(section.textContent,/受保护记录/);
+ w.acceptAuthSession({profile:{...admin,scope:{ui_apps:'*',api_projects:['another'],api_environments:[]}}});assert.doesNotMatch(w.document.querySelector('[data-practice-workbench]').textContent,/受保护记录/);
+});
 test('feedback analysis describes the limited write cleanup verification consistently',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.apiRequest=async path=>path==='/platform/week2-real'?{ok:true,results:[{id:'sample',status:'blocked',created_at:'2026-11-06',source:'platform_record',source_verification:'server_authorized_platform_read',business_requests:0}]}:{ok:true,enabled:true};
  w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week2-real]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();

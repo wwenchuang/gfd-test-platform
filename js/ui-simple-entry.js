@@ -182,6 +182,24 @@ function attachTaskWorkbench(page){
   for(const [kind,id] of [['cleanup','0157b386-1475-4946-aae8-1664498ecc69'],['baseline','1eb0c640-d78a-41f9-b441-02785fd87e1c'],['failure','43b09e5e-d879-47a2-bde5-2d462d48e988'],['trace','6e5ae109-ba21-4434-9835-5d1e58d228ff']]){
     const link=document.createElement('a');link.className='ui-week-link';link.href='/api-test/#/runs?executionId='+id;link.textContent='查看执行记录';link.onclick=event=>{if(!allowed())event.preventDefault();};acceptance.querySelector('[data-practice-run="'+kind+'"]').append(' ',link);
   }
+  const scheduled=document.createElement('details');scheduled.dataset.practiceCleanupEvidence='';scheduled.className='ui-practice-details';
+  scheduled.innerHTML='<summary>查看定时清理执行记录</summary><p>仅显示当前账号有权查看的历史记录；这不是实时测试结果。</p><button type="button">重新读取</button><div data-cleanup-result aria-live="polite"></div>';
+  const result=scheduled.querySelector('[data-cleanup-result]'),button=scheduled.querySelector('button');let sequence=0,loaded=false;
+  const profileKey=()=>JSON.stringify([currentAccessProfile?.user_id,currentAccessProfile?.is_superuser,currentAccessProfile?.scope,currentAccessProfile?.permissions]);
+  const load=async()=>{
+    const request=++sequence,profile=profileKey();loaded=true;result.replaceChildren();
+    if(!allowed()){result.textContent='当前无权查看。';return;}
+    result.textContent='正在读取授权记录…';
+    try{
+      const data=await apiRequest('/platform/practice-cleanup-evidence',{timeoutMs:20000});
+      if(request!==sequence||!allowed()||profileKey()!==profile){if(request===sequence)result.replaceChildren();return;}
+      const item=data?.ok===true?data.evidence:null;
+      if(!item||typeof item.summary!=='string'||item.summary.length>2000||typeof item.execution_id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.execution_id)){result.textContent='记录未配置、不可用或当前账号无权查看。';return;}
+      result.replaceChildren();const description=document.createElement('p');description.textContent=(typeof item.observed_at==='string'&&item.observed_at.length<=80?'记录时间：'+item.observed_at+'。':'')+item.summary;result.append(description);
+      const link=document.createElement('a');link.className='ui-week-link';link.href='/api-test/#/runs?executionId='+encodeURIComponent(item.execution_id);link.textContent='查看原执行记录';link.onclick=event=>{if(!allowed()||profileKey()!==profile)event.preventDefault();};result.append(link);
+    }catch(_){if(request===sequence){result.replaceChildren();if(allowed()&&profileKey()===profile)result.textContent='记录暂不可用或当前账号无权查看，请稍后重新读取。';}}
+  };
+  button.onclick=load;scheduled.addEventListener('toggle',()=>{if(scheduled.open&&!loaded)load();});acceptance.append(scheduled);
   panel.append(acceptance);
 }
 function attachUiFirstWeekGuide(page){
