@@ -881,3 +881,15 @@ def test_runtime_preserves_nested_default_header_references(environment_service,
     assert runtime.headers['X-Resource'] == 'new'
     assert {'alias', 'resourceSn'} <= runtime.default_header_references
     assert runtime.referenced_variables({'body': '{{alias}}'}) == {'alias', 'resourceSn'}
+
+
+def test_runtime_tracks_configured_service_url_references_per_service(environment_service, production_environment):
+    production_environment['variables'].update({'resourceSn': 'old', 'alias': '{{resourceSn}}'})
+    production_environment['default_headers'] = {}
+    production_environment['services'][1]['base_url'] = 'https://share.example.test/api/{{alias}}'
+    view = environment_service.import_from_source(production_environment, 'admin')
+    runtime = environment_service.resolve_runtime(view.revision_id, {'resourceSn': 'new'})
+    assert runtime.base_urls['share'] == 'https://share.example.test/api/old'
+    assert runtime.public_variables['alias'] == 'new'
+    assert runtime.service_base_url_references['default'] == frozenset()
+    assert runtime.service_base_url_references['share'] == {'alias', 'resourceSn'}

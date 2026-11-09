@@ -260,6 +260,7 @@ class _CaseService:
 
 class _Runtime:
     def __init__(self, base_url, values):
+        self.service_base_url_references = {'default': frozenset()}
         self.base_url = base_url
         self.values = values
         self.secrets = {k: v for k, v in values.items() if "token" in k.lower()}
@@ -2039,7 +2040,7 @@ def test_failed_cleanup_verification_blocks_environment_fallback_alias(target_se
 @pytest.mark.parametrize('valid_value', [0, False])
 def test_cleanup_output_zero_and_false_are_not_treated_as_missing(valid_value):
     step = {'extractions': [{'target': 'out'}]}
-    outcome = SimpleNamespace(status='PASSED', extracted={'out': valid_value})
+    outcome = SimpleNamespace(status='PASSED', extracted={'out': valid_value}, response_outputs=frozenset({'out'}))
     assert HttpExecutor._cleanup_outputs_available(step, outcome)
 
 
@@ -2410,6 +2411,7 @@ def test_unscoped_environment_alias_of_future_cleanup_output_is_not_yet_guarded(
                 public_variables=resolver.resolve_all(), secrets={}, headers={}, service_metadata={},
                 unresolved_services=(), _renderer=resolver.render,
                 _reference_finder=resolver.referenced_variables,
+                service_base_url_references={'default': frozenset()},
             )
     cancel = _workflow_step('先操作别名', 'POST', '/workflow/cancel', body={'target': '{{environmentAlias}}'})
     verify = _workflow_step('稍后取得输出', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
@@ -2433,6 +2435,7 @@ def test_future_cleanup_output_allows_previously_produced_response_value(target_
                 public_variables=resolver.resolve_all(), secrets={}, headers={}, service_metadata={},
                 unresolved_services=(), _renderer=resolver.render,
                 _reference_finder=resolver.referenced_variables,
+                service_base_url_references={'default': frozenset()},
             )
     extraction = _json_extraction('resourceSn', '$.data.resourceSn')
     cancel = _workflow_step('使用已有本轮响应', 'POST', '/workflow/cancel', body={'target': '{{environmentAlias}}'})
@@ -2462,4 +2465,95 @@ def test_future_cleanup_output_cannot_trust_setup_default_overwriting_earlier_re
     case = _case('/ok', processing=_workflow_processing(setup_steps=[fresh, defaulted], cleanup_steps=[cancel, later]))
     handler.workflow_calls = []
     _executor(target_server, case).execute_case('v', 'env', {})
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+@pytest.mark.parametrize('control', ['only_if_variable', 'required_variables'])
+@pytest.mark.parametrize('use_alias', [False, True])
+def test_future_cleanup_output_cannot_authorize_earlier_control(target_server, control, use_alias):
+    _, handler = target_server
+    first = _workflow_step('旧条件触发清理', 'POST', '/workflow/cancel', body={'target': 'unrelated-fixed-id'})
+    control_name = 'oldAlias' if use_alias else 'resourceSn'
+    first[control] = [control_name] if control == 'required_variables' else control_name
+    later = _workflow_step('之后才获得输出', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
+    processing = _workflow_processing(cleanup_steps=[first, later])
+    if use_alias:
+        processing['pre'] = [{'action': 'copy_variable', 'source': 'resourceSn', 'target': 'oldAlias'}]
+    handler.workflow_calls = []
+    result = _executor(target_server, _case('/ok', processing=processing)).execute_case('v', 'env', {'resourceSn': 'another-run'})
+    assert result.status == 'FAILED'
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_missing_unrelated_optional_cleanup_output_does_not_block_owned_cleanup(target_server):
+    _, handler = target_server
+    optional = {**_json_extraction('unusedOptional', '$.data.nonexistent'), 'required': False, 'default': None}
+    first = _workflow_step('不相关可选提取', 'GET', '/workflow/static-cleanup', extractions=[optional])
+    second = _workflow_step('清理响应中获得的资源', 'POST', '/workflow/cancel', body={'target': '{{resourceSn}}'}, required_variables=['resourceSn'])
+    case = _case('/workflow/setup', extractions=[_extraction('resourceSn', 'json_path', '$.data.resourceSn')], processing=_workflow_processing(cleanup_steps=[first, second]))
+    handler.workflow_calls = []
+    result = _executor(target_server, case).execute_case('v', 'env', {})
+    assert result.status == 'PASSED'
+    assert ('POST', '/workflow/cancel', {'target': 'resource-1'}) in handler.workflow_calls
+
+
+@pytest.mark.parametrize('source', ['unavailable_dependency', 'fresh_main'])
+def test_configured_service_url_cannot_use_stale_same_name_output(target_server, source):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    base_url, handler = target_server
+    class ConfiguredService:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            runtime_resolver = _PlaceholderResolver({'resourceSn': 'another-run', **overrides})
+            configured_resolver = _PlaceholderResolver({'resourceSn': 'another-run'})
+            runtime = ResolvedEnvironment(
+                revision_id='env', environment_id='env', name='test',
+                base_urls={'default': base_url, 'danger': configured_resolver.render(base_url + '/workflow/{{resourceSn}}')},
+                public_variables=runtime_resolver.resolve_all(), secrets={}, headers={}, service_metadata={},
+                unresolved_services=(), _renderer=runtime_resolver.render,
+                _reference_finder=runtime_resolver.referenced_variables,
+            )
+            object.__setattr__(runtime, 'service_base_url_references', {'default': frozenset(), 'danger': frozenset({'resourceSn'})})
+            return runtime
+    step = _workflow_step('基址携带旧资源', 'POST', 'cancel', body={'operation': 'delete'})
+    step['request']['service'] = 'danger'
+    case = _case('/workflow/setup' if source == 'fresh_main' else '/ok',
+        extractions=[_extraction('resourceSn', 'json_path', '$.data.resourceSn')] if source == 'fresh_main' else [],
+        processing=_workflow_processing(cleanup_steps=[step]))
+    executor = _executor(target_server, case)
+    executor.environment_service = ConfiguredService()
+    handler.workflow_calls = []
+    result = executor.execute_case('v', 'env', {}, unavailable_dependency_exports={'resourceSn'} if source == 'unavailable_dependency' else ())
+    assert result.status == 'FAILED'
+    assert not any('/another-run/' in call[1] for call in handler.workflow_calls)
+
+
+def test_unknown_service_url_provenance_fails_closed_when_output_unavailable(target_server):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    base_url, handler = target_server
+    class UnknownConfiguredService:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            resolver = _PlaceholderResolver({'resourceSn': 'another-run', **overrides})
+            return ResolvedEnvironment(revision_id='env', environment_id='env', name='test',
+                base_urls={'default': base_url + '/workflow/another-run'}, public_variables=resolver.resolve_all(),
+                secrets={}, headers={}, service_metadata={}, unresolved_services=(), _renderer=resolver.render,
+                _reference_finder=resolver.referenced_variables)
+    step = _workflow_step('基址来源未知', 'POST', 'cancel', body={'operation': 'delete'})
+    executor = _executor(target_server, _case('/ok', processing=_workflow_processing(cleanup_steps=[step])))
+    executor.environment_service = UnknownConfiguredService()
+    handler.workflow_calls = []
+    executor.execute_case('v', 'env', {}, unavailable_dependency_exports={'resourceSn'})
+    assert not any('/another-run/' in call[1] for call in handler.workflow_calls)
+
+
+@pytest.mark.parametrize('control', ['only_if_variable', 'required_variables'])
+def test_future_cleanup_output_cannot_authorize_nested_override_control(target_server, control):
+    _, handler = target_server
+    first = _workflow_step('旧别名控制清理', 'POST', '/workflow/cancel', body={'target': 'unrelated-fixed-id'})
+    first[control] = ['oldAlias'] if control == 'required_variables' else 'oldAlias'
+    later = _workflow_step('之后才获得输出', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
+    handler.workflow_calls = []
+    result = _executor(target_server, _case('/ok', processing=_workflow_processing(cleanup_steps=[first, later]))).execute_case('v', 'env', {'resourceSn': 'another-run', 'oldAlias': '{{resourceSn}}'})
+    assert result.status == 'FAILED'
     assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)

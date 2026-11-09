@@ -479,9 +479,17 @@ class HttpExecutor:
                 protects_downstream = bool(targets) and any(
                     later.get("enabled", True) for later in cleanup_steps[index + 1:]
                 )
+                # A condition must not be satisfied by a previous run's value
+                # when the corresponding output has yet to be produced.
+                future_cleanup_targets = set()
+                for later in cleanup_steps[index + 1:]:
+                    if later.get("enabled", True):
+                        future_cleanup_targets.update(self._extraction_targets(later.get("extractions", [])))
+                future_cleanup_targets.difference_update(current_response_outputs)
                 controls = set(step.get("required_variables", ())) | {step.get("only_if_variable")}
                 controls.discard(None)
-                blocked_controls = controls & unavailable_outputs
+                control_refs = self._expanded_variable_references(controls, variables)
+                blocked_controls = control_refs & (unavailable_outputs | future_cleanup_targets)
                 if cleanup_output_failed:
                     blocked_controls.update(controls - fresh_cleanup_outputs)
                 if blocked_controls:
@@ -521,19 +529,12 @@ class HttpExecutor:
                         cleanup_output_failed = True
                         failed_cleanup_step = True
                     continue
-                # Future cleanup outputs cannot validate an older value, including
-                # through nested environment aliases. Already produced response
-                # outputs remain usable as source evidence, not ownership proof.
-                future_cleanup_targets = set()
-                for later in cleanup_steps[index + 1:]:
-                    if later.get("enabled", True):
-                        future_cleanup_targets.update(self._extraction_targets(later.get("extractions", [])))
-                future_cleanup_targets.difference_update(current_response_outputs)
                 outcome, step_secrets = self._execute_inline_step(
                     "cleanup", index, step, environment_revision_id, variables,
                     lambda _phase: False, callback, trace,
-                    require_outputs=protects_downstream,
                     unavailable_outputs=unavailable_outputs | future_cleanup_targets,
+                    configured_source_unavailable=(late_targets | set(dependency_overrides or {})
+                        | set(overrides or {}) | set(row_values) | set(unavailable_dependency_exports)),
                     require_independent_literal=cleanup_output_failed,
                     fresh_cleanup_outputs=fresh_cleanup_outputs,
                 )
@@ -721,8 +722,8 @@ class HttpExecutor:
         callback,
         trace,
         *,
-        require_outputs=False,
         unavailable_outputs=(),
+        configured_source_unavailable=(),
         require_independent_literal=False,
         fresh_cleanup_outputs=(),
     ):
@@ -742,8 +743,8 @@ class HttpExecutor:
                 callback,
                 trace,
                 record_main_phases=False,
-                require_outputs=require_outputs,
                 unavailable_outputs=unavailable_outputs,
+                configured_source_unavailable=configured_source_unavailable,
                 cleanup_guard=stage == "cleanup",
                 require_independent_literal=require_independent_literal,
                 fresh_cleanup_outputs=fresh_cleanup_outputs,
@@ -794,8 +795,8 @@ class HttpExecutor:
         trace,
         *,
         record_main_phases,
-        require_outputs=False,
         unavailable_outputs=(),
+        configured_source_unavailable=(),
         cleanup_guard=False,
         require_independent_literal=False,
         fresh_cleanup_outputs=(),
@@ -822,7 +823,17 @@ class HttpExecutor:
                 ],
                 "extractions": [getattr(item, "path", None) for item in extraction_views],
             }, variables)
-            blocked = sorted(set(unavailable_outputs) & references)
+            blocked = set(unavailable_outputs) & references
+            # Service URLs use configured values, not execution overrides. Even a
+            # same-named current response cannot refresh a value in the base URL.
+            configured_guard = set(unavailable_outputs) | set(configured_source_unavailable)
+            service_references = getattr(runtime, "service_base_url_references", None)
+            service_name = request.get("service", "default")
+            if service_references is None or service_name not in service_references:
+                blocked.update(configured_guard)
+            else:
+                blocked.update(configured_guard & set(service_references[service_name]))
+            blocked = sorted(blocked)
             unproven = references - set(fresh_cleanup_outputs) if require_independent_literal else set()
             if blocked or unproven:
                 message = "请求引用来源不可确认的变量：" + ", ".join(blocked or sorted(unproven))
@@ -837,18 +848,6 @@ class HttpExecutor:
                 self._render_extraction_path(extraction, runtime)
                 for extraction in extraction_views
             )
-            if require_outputs:
-                extraction_views = tuple(
-                    SimpleNamespace(
-                        type=item.type,
-                        target=item.target,
-                        path=item.path,
-                        name=item.name,
-                        required=True,
-                        default=None,
-                    )
-                    for item in extraction_views
-                )
             secrets = tuple(runtime.secrets.values())
             rendered = {key: runtime.render(value) for key, value in request.items()}
             path = self._render_path(
@@ -1178,13 +1177,11 @@ class HttpExecutor:
         if outcome.status != "PASSED":
             return False
         for item in step.get("extractions", []):
-            name = (
-                item.get("target")
-                if isinstance(item, dict)
-                else getattr(item, "target", None)
-            )
-            value = outcome.extracted.get(name)
-            if name is None or value is None or value == "" or value == [] or value == {}:
+            required = item.get("required", True) if isinstance(item, dict) else getattr(item, "required", True)
+            if not required:
+                continue
+            name = item.get("target") if isinstance(item, dict) else getattr(item, "target", None)
+            if not name or name not in outcome.response_outputs:
                 return False
         return True
 
@@ -1235,12 +1232,25 @@ class HttpExecutor:
             if isinstance(value, (list, tuple)):
                 return set().union(*(direct(v) for v in value)) if value else set()
             return set()
-        refs, pending = set(), list(direct(request))
+        return HttpExecutor._expanded_variable_references(direct(request), raw_values)
+
+    @staticmethod
+    def _expanded_variable_references(names, variables):
+        pattern = re.compile(r"{{([A-Za-z_][A-Za-z0-9_.-]*)}}")
+        def direct(value):
+            if isinstance(value, str):
+                return set(pattern.findall(value))
+            if isinstance(value, dict):
+                return set().union(*(direct(k) | direct(v) for k, v in value.items())) if value else set()
+            if isinstance(value, (list, tuple)):
+                return set().union(*(direct(v) for v in value)) if value else set()
+            return set()
+        refs, pending = set(), list(names)
         while pending:
             name = pending.pop()
             if name not in refs:
                 refs.add(name)
-                pending.extend(direct(raw_values.get(name)))
+                pending.extend(direct(variables.get(name)))
         return refs
 
     @staticmethod
