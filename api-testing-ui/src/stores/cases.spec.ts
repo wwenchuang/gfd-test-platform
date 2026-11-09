@@ -311,10 +311,507 @@ describe('cases store', () => {
     expect(Object.keys(store.versions)).toEqual(['new-version'])
   })
 
+  it('keeps dirty content and the original version after moving its group', async () => {
+    const store = useCasesStore(); store.registerVersion(VERSION)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'unsaved' })
+    vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { case_version: { ...VERSION, group_name: 'group' } } })
+    await store.updateVersionGroup(VERSION.id, 'group')
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('unsaved')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+  })
+
+  it('keeps dirty content while generated saved cases arrive', async () => {
+    const store = useCasesStore(); store.registerVersion(VERSION)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'unsaved' })
+    const generated = { ...VERSION, id: 'generated', case_id: 'other', name: 'generated' }
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_versions: [generated] } })
+    await store.generateBasicPositive([VERSION.endpoint_id], 'environment-a')
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('unsaved')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+  })
+
+  it('retains an active edited preview when generating another candidate for the same endpoint', async () => {
+    const store = useCasesStore()
+    store.generatedPreviews = [{ id: 'old-preview', endpoint_id: VERSION.endpoint_id, case: VERSION } as unknown as GeneratedCasePreview]
+    store.setDraftFromGeneratedPreview('old-preview')
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'unsaved candidate' })
+    const newer = { id: 'new-preview', endpoint_id: VERSION.endpoint_id, case: VERSION }
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_previews: [newer] } })
+    await store.previewBasicPositive([VERSION.endpoint_id], 'environment-a')
+    expect(store.generatedPreviews.map(item => item.id)).toEqual(['old-preview', 'new-preview'])
+    expect(store.activeGeneratedPreviewId).toBe('old-preview')
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('unsaved candidate')
+  })
+
+  it('can load a generated version after discarding an edited preview', async () => {
+    const store = useCasesStore()
+    store.generatedPreviews = [{ id: 'preview-a', endpoint_id: VERSION.endpoint_id, case: VERSION } as unknown as GeneratedCasePreview]
+    store.setDraftFromGeneratedPreview('preview-a')
+    store.discardGeneratedPreview('preview-a')
+    const client = { get: vi.fn().mockResolvedValue({ data: { case_version: VERSION } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadVersion(VERSION.id, client)
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+  })
+
+  it('does not bind a dirty existing case to a separately saved preview', async () => {
+    const store = useCasesStore(); store.registerVersion(VERSION)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'edit A' })
+    store.generatedPreviews = [{ id: 'preview-b', endpoint_id: VERSION.endpoint_id, case: VERSION } as unknown as GeneratedCasePreview]
+    const b = { ...VERSION, id: 'version-b', case_id: 'case-b', name: 'B' }
+    const v2 = { ...VERSION, id: 'version-2', version: 2, name: 'edit A' }
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: { case_version: b } }).mockResolvedValueOnce({ data: { case_version: v2 } })
+    vi.spyOn(store, 'validate').mockResolvedValue()
+    await store.saveGeneratedPreview('preview-b')
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('edit A')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+    await store.save(VERSION.endpoint_id)
+    expect(post.mock.calls[1][0]).toBe('/api/api-testing/v1/cases/case-1/versions')
+  })
+
+  it('keeps newer edits made while saving a generated preview', async () => {
+    const store = useCasesStore()
+    store.generatedPreviews = [{ id: 'preview-a', endpoint_id: VERSION.endpoint_id, case: VERSION } as unknown as GeneratedCasePreview]
+    store.setDraftFromGeneratedPreview('preview-a')
+    const sent = JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id]))
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const pending = store.saveGeneratedPreview('preview-a', sent)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'newer edit' })
+    finish({ data: { case_version: VERSION } }); await pending
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('newer edit')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+  })
+
+  it('does not overwrite a new manual selection while an earlier preview save returns', async () => {
+    const store = useCasesStore()
+    store.generatedPreviews = [{ id: 'preview-a', endpoint_id: VERSION.endpoint_id, case: VERSION } as unknown as GeneratedCasePreview]
+    store.setDraftFromGeneratedPreview('preview-a')
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const pending = store.saveGeneratedPreview('preview-a')
+    store.startManualDraft({ id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'other', tags: [] } as ApiEndpoint)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'other manual' })
+    finish({ data: { case_version: VERSION } })
+    await expect(pending).rejects.toThrow('已保存')
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('other manual')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBeUndefined()
+  })
+
+  it('does not write an old validation result into the current source', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const pending = store.validate('version-a')
+    await store.loadSavedCases('source-b', ready)
+    finish({ data: { validation: { errors: [{ field: 'name', message: 'old error' }], warnings: [] } } })
+    await expect(pending).rejects.toThrow('范围已切换')
+    expect(store.validationErrors).toEqual({})
+  })
+
+  it('does not register a completed group change in a different source', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'put').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const pending = store.updateVersionGroup(VERSION.id, 'new-group')
+    const empty = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-b', empty)
+    finish({ data: { case_version: { ...VERSION, group_name: 'new-group' } } })
+    await expect(pending).rejects.toThrow('已')
+    expect(store.versions).toEqual({})
+  })
+
+  it('keeps a completed preview save out of the new source and does not offer it twice', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    store.generatedPreviews = [{ id: 'preview-a', endpoint_id: VERSION.endpoint_id, case: VERSION } as unknown as GeneratedCasePreview]
+    store.setDraftFromGeneratedPreview('preview-a')
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const pending = store.saveGeneratedPreview('preview-a')
+    await store.loadSavedCases('source-b', ready)
+    finish({ data: { case_version: VERSION } })
+    await expect(pending).rejects.toThrow('已保存')
+    expect(store.versions).toEqual({})
+    const saved = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', saved)
+    expect(store.generatedPreviews).toEqual([])
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+  })
+
+  it('does not expose a stale generated preview after switching source', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const pending = store.previewBasicPositive(['endpoint-1'], 'environment-a')
+    await store.loadSavedCases('source-b', ready)
+    finish({ data: { case_previews: [{ id: 'preview-old', endpoint_id: 'endpoint-1', case: {} }] } })
+    await expect(pending).rejects.toThrow('范围已切换')
+    expect(store.generatedPreviews).toEqual([])
+  })
+
+  it('does not register persisted generated cases in a newly selected source', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const pending = store.generateBasicPositive(['endpoint-1'], 'environment-a')
+    await store.loadSavedCases('source-b', ready)
+    finish({ data: { case_versions: [VERSION] } })
+    await expect(pending).rejects.toThrow('已')
+    expect(store.versions).toEqual({})
+  })
+
+  it('does not let an old archive response delete a new-source draft', async () => {
+    const store = useCasesStore()
+    const readyA = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', readyA)
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'delete').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const pending = store.archiveCase(VERSION.endpoint_id, VERSION.id)
+    const b = { ...VERSION, id: 'version-b', case_id: VERSION.case_id, name: 'B' }
+    const readyB = { get: vi.fn().mockResolvedValue({ data: { case_versions: [b] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-b', readyB)
+    finish({ data: {} })
+    await expect(pending).rejects.toThrow('已')
+    expect(store.versions['version-b']).toBeDefined()
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('B')
+  })
+
+  it('retains edits made while a saved case request is in flight', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'sent for save' })
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    vi.spyOn(store, 'validate').mockResolvedValue()
+    const pending = store.save(VERSION.endpoint_id)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'edited after save started' })
+    const v2 = { ...VERSION, id: 'version-2', version: 2, name: 'sent for save' }
+    finish({ data: { case_version: v2 } }); await pending
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('edited after save started')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-2')
+  })
+
+  it('does not bind a newer manual draft to an earlier manual save', async () => {
+    const store = useCasesStore()
+    const endpoint = { id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'manual A', tags: [] } as ApiEndpoint
+    store.startManualDraft(endpoint)
+    let finish!: (value: unknown) => void
+    const b = { ...VERSION, id: 'version-b', case_id: 'case-b', name: 'manual B' }
+    const post = vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+      .mockResolvedValueOnce({ data: { case_version: b } })
+    vi.spyOn(store, 'validate').mockResolvedValue()
+    const first = store.save(endpoint.id)
+    store.startManualDraft({ ...endpoint, summary: 'manual B' })
+    store.updateDraft(endpoint.id, { ...JSON.parse(JSON.stringify(store.drafts[endpoint.id])), name: 'manual B' })
+    finish({ data: { case_version: VERSION } })
+    await expect(first).rejects.toThrow('已保存')
+    expect(store.drafts[endpoint.id].name).toBe('manual B')
+    expect(store.activeVersionByEndpoint[endpoint.id]).toBeUndefined()
+    await store.save(endpoint.id)
+    expect(post.mock.calls[1][0]).toBe('/api/api-testing/v1/cases')
+  })
+
+  it('does not bind a new manual draft after an earlier save returns across source switches', async () => {
+    const store = useCasesStore()
+    const endpoint = { id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'A', tags: [] } as ApiEndpoint
+    const empty = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', empty); store.startManualDraft(endpoint)
+    let finish!: (value: unknown) => void
+    const post = vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+      .mockResolvedValueOnce({ data: { case_version: { ...VERSION, id: 'version-b', case_id: 'case-b' } } })
+    vi.spyOn(store, 'validate').mockResolvedValue()
+    const pending = store.save(endpoint.id)
+    await store.loadSavedCases('source-b', empty)
+    await store.loadSavedCases('source-a', empty)
+    store.startManualDraft({ ...endpoint, summary: 'B' })
+    store.updateDraft(endpoint.id, { ...JSON.parse(JSON.stringify(store.drafts[endpoint.id])), name: 'new B' })
+    await store.loadSavedCases('source-b', empty)
+    finish({ data: { case_version: VERSION } }); await expect(pending).rejects.toThrow('已保存')
+    const loadedA = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', loadedA)
+    expect(store.drafts[endpoint.id].name).toBe('new B')
+    expect(store.activeVersionByEndpoint[endpoint.id]).toBeUndefined()
+    await store.save(endpoint.id)
+    expect(post.mock.calls[1][0]).toBe('/api/api-testing/v1/cases')
+  })
+
+  it('does not send a second save while the first is pending across source switches', async () => {
+    const store = useCasesStore()
+    const empty = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', empty)
+    store.startManualDraft({ id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'new', tags: [] } as ApiEndpoint)
+    let finish!: (value: unknown) => void
+    const post = vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const first = store.save(VERSION.endpoint_id)
+    await store.loadSavedCases('source-b', empty)
+    await store.loadSavedCases('source-a', empty)
+    await expect(store.save(VERSION.endpoint_id)).rejects.toThrow('保存')
+    expect(post).toHaveBeenCalledTimes(1)
+    finish({ data: { case_version: VERSION } })
+    await expect(first).rejects.toThrow('已保存')
+  })
+
+  it('does not publish an old save while the original source is awaiting reauthorization', async () => {
+    const store = useCasesStore()
+    const empty = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', empty)
+    store.startManualDraft({ id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'new', tags: [] } as ApiEndpoint)
+    let finishSave!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finishSave = resolve }) as never)
+    const saving = store.save(VERSION.endpoint_id)
+    await store.loadSavedCases('source-b', empty)
+    let finishReload!: (value: unknown) => void
+    const delayed = { get: vi.fn(() => new Promise(resolve => { finishReload = resolve })) } as unknown as Pick<ApiClient, 'get'>
+    const loading = store.loadSavedCases('source-a', delayed)
+    finishSave({ data: { case_version: VERSION } })
+    await expect(saving).rejects.toThrow('已保存')
+    expect(store.versions).toEqual({})
+    expect(store.drafts).toEqual({})
+    finishReload({ data: { case_versions: [VERSION] } }); await loading
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+  })
+
+  it('does not put a completed save into the new source after switching', async () => {
+    const store = useCasesStore()
+    const readyA = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', readyA)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'saved A' })
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    vi.spyOn(store, 'validate').mockResolvedValue()
+    const pending = store.save(VERSION.endpoint_id)
+    const b = { ...VERSION, id: 'version-b', case_id: 'case-b', name: 'B' }
+    const readyB = { get: vi.fn().mockResolvedValue({ data: { case_versions: [b] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-b', readyB)
+    const v2 = { ...VERSION, id: 'version-2', version: 2, name: 'saved A' }
+    finish({ data: { case_version: v2 } })
+    await expect(pending).rejects.toThrow('已保存')
+    expect(Object.keys(store.versions)).toEqual(['version-b'])
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('B')
+    const reloadedA = { get: vi.fn().mockResolvedValue({ data: { case_versions: [v2] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', reloadedA)
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-2')
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('saved A')
+  })
+
+  it('does not let a late old-source version response contaminate the new source', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    let finish!: (value: unknown) => void
+    const delayed = { get: vi.fn(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>
+    const old = store.loadVersion('version-1', delayed)
+    const b = { ...VERSION, id: 'version-b', case_id: 'case-b', name: 'B' }
+    const clientB = { get: vi.fn().mockResolvedValue({ data: { case_versions: [b] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-b', clientB)
+    finish({ data: { case_version: VERSION } }); await old
+    expect(Object.keys(store.versions)).toEqual(['version-b'])
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('B')
+  })
+
+  it('does not overwrite a dirty manual draft while loading an AI version for the same endpoint', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    store.startManualDraft({ id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'new', tags: [] } as ApiEndpoint)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'manual work' })
+    const ai = { ...VERSION, id: 'ai-version', case_id: 'ai-case', name: 'AI suggestion' }
+    const client = { get: vi.fn().mockResolvedValue({ data: { case_version: ai } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadVersion(ai.id, client)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('manual work')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBeUndefined()
+    expect(store.versions['ai-version']).toBeDefined()
+  })
+
+  it('does not accept draft writes after the source read fails', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    const endpoint = { id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'case', tags: [] } as ApiEndpoint
+    const denied = { get: vi.fn().mockRejectedValue(new Error('404')) } as unknown as Pick<ApiClient, 'get'>
+    await expect(store.loadSavedCases('source-a', denied)).rejects.toThrow('404')
+    const transient = store.draftFor(endpoint)
+    store.updateDraft(endpoint.id, { ...JSON.parse(JSON.stringify(transient)), name: 'must not store' })
+    expect(store.drafts[endpoint.id]).toBeUndefined()
+    await expect(store.save(endpoint.id)).rejects.toThrow('重新读取')
+  })
+
+  it('hides a previously visible source after a denied reload but preserves edits for reauthorization', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'unsaved A' })
+    const denied = { get: vi.fn().mockRejectedValue(new Error('404')) } as unknown as Pick<ApiClient, 'get'>
+    await expect(store.loadSavedCases('source-a', denied)).rejects.toThrow('404')
+    expect(store.versions).toEqual({})
+    expect(store.drafts).toEqual({})
+    await store.loadSavedCases('source-a', ready)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('unsaved A')
+  })
+
+  it('hides prior-source drafts immediately during a denied source switch', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'private A' })
+    let fail!: (error: Error) => void
+    const denied = { get: vi.fn(() => new Promise((_, reject) => { fail = reject })) } as unknown as Pick<ApiClient, 'get'>
+    const pending = store.loadSavedCases('source-b', denied)
+    expect(store.versions).toEqual({})
+    expect(store.drafts).toEqual({})
+    fail(new Error('403'))
+    await expect(pending).rejects.toThrow('403')
+    expect(store.versions).toEqual({})
+    expect(store.drafts).toEqual({})
+    await store.loadSavedCases('source-a', ready)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('private A')
+  })
+
+  it('refuses to restore source drafts in a browser with no authenticated session', async () => {
+    vi.stubGlobal('window', {})
+    vi.stubGlobal('sessionStorage', { getItem: () => null })
+    try {
+      const store = useCasesStore()
+      const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+      await expect(store.loadSavedCases('source-a', client)).rejects.toThrow('登录')
+      expect(client.get).not.toHaveBeenCalled()
+      expect(store.versions).toEqual({})
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('refuses to save a prior session draft after the active session changes', async () => {
+    let token = 'session-a'; vi.stubGlobal('sessionStorage', { getItem: () => token })
+    try {
+      const store = useCasesStore()
+      const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+      await store.loadSavedCases('source-a', client)
+      store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'private A' })
+      token = 'session-b'
+      const post = vi.spyOn(apiClient, 'post')
+      await expect(store.save(VERSION.endpoint_id)).rejects.toThrow('登录')
+      expect(post).not.toHaveBeenCalled()
+      expect(store.versions).toEqual({})
+      expect(store.drafts).toEqual({})
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('does not restore an earlier session draft after an account change', async () => {
+    let token = 'session-a'
+    vi.stubGlobal('sessionStorage', { getItem: () => token })
+    try {
+      const store = useCasesStore()
+      const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+      await store.loadSavedCases('source-a', client)
+      store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'private A' })
+      token = 'session-b'
+      await store.loadSavedCases('source-a', client)
+      expect(store.drafts[VERSION.endpoint_id].name).toBe(VERSION.name)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('discards a response requested under a previous session', async () => {
+    let token = 'session-a'
+    vi.stubGlobal('sessionStorage', { getItem: () => token })
+    try {
+      const store = useCasesStore()
+      let finish!: (value: unknown) => void
+      const client = { get: vi.fn(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>
+      const pending = store.loadSavedCases('source-a', client)
+      token = 'session-b'
+      finish({ data: { case_versions: [VERSION] } })
+      expect(await pending).toBe(false)
+      expect(store.versions).toEqual({})
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('binds a newly discovered saved case when the existing blank draft was untouched', async () => {
+    const store = useCasesStore()
+    const client = { get: vi.fn().mockResolvedValueOnce({ data: { case_versions: [] } }).mockResolvedValueOnce({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', client)
+    store.draftFor({ id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'blank', tags: [] } as ApiEndpoint)
+    await store.loadSavedCases('source-a', client)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe(VERSION.name)
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+  })
+
+  it('refreshes untouched draft content from the latest saved version', async () => {
+    const store = useCasesStore()
+    const refreshed = { ...VERSION, name: 'server latest' }
+    const get = vi.fn().mockResolvedValueOnce({ data: { case_versions: [VERSION] } })
+      .mockResolvedValueOnce({ data: { case_versions: [refreshed] } })
+    const client = { get } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', client)
+    await store.loadSavedCases('source-a', client)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('server latest')
+  })
+
+  it('retains an unsaved edit and original version when reloading the current source', async () => {
+    const store = useCasesStore()
+    const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', client)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'unsaved edit' })
+    await store.loadSavedCases('source-a', client)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('unsaved edit')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+  })
+
+  it('retains edits made while current-source reload is pending', async () => {
+    const store = useCasesStore()
+    const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', ready)
+    let finish!: (value: unknown) => void
+    const delayed = { get: vi.fn(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>
+    const pending = store.loadSavedCases('source-a', delayed)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'edit while loading' })
+    finish({ data: { case_versions: [VERSION] } }); await pending
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('edit while loading')
+  })
+
+  it('keeps drafts and active versions isolated by source even for identical endpoint IDs', async () => {
+    const store = useCasesStore()
+    const versionB = { ...VERSION, id: 'version-b', case_id: 'case-b', project_id: 'project-b', name: 'B saved' }
+    const clientA = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    const clientB = { get: vi.fn().mockResolvedValue({ data: { case_versions: [versionB] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', clientA)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'A unsaved' })
+    await store.loadSavedCases('source-b', clientB)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('B saved')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-b')
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'B unsaved' })
+    await store.loadSavedCases('source-a', clientA)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('A unsaved')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe(VERSION.id)
+    await store.loadSavedCases('source-b', clientB)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('B unsaved')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-b')
+  })
+
+  it('does not bind an unsaved manual case to an existing case after same-source reload', async () => {
+    const store = useCasesStore()
+    const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-a', client)
+    store.startManualDraft({ id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: 'new draft', tags: [] } as ApiEndpoint)
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: 'new case' })
+    await store.loadSavedCases('source-a', client)
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('new case')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBeUndefined()
+  })
+
   it('preserves an edited draft and active preview when retrying the same source', async () => {
     const store = useCasesStore()
+    store.draftSourceRevisionId = 'source-1'; store.draftScopeReady = true
     store.registerVersion(VERSION)
-    store.drafts[VERSION.endpoint_id].name = '未保存的修改'
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: '未保存的修改' })
     const preview = { id: 'preview-1', endpoint_id: VERSION.endpoint_id } as GeneratedCasePreview
     store.generatedPreviews = [preview]
     store.activeGeneratedPreviewId = preview.id
@@ -327,6 +824,7 @@ describe('cases store', () => {
 
   it('does not bind a new manual draft to a returned existing case on refresh', async () => {
     const store = useCasesStore()
+    store.draftSourceRevisionId = 'source-1'; store.draftScopeReady = true
     store.startManualDraft({ id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: '收藏', tags: [] } as ApiEndpoint)
     const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
     await store.loadSavedCases('source-1', client, { preserveDrafts: true })
@@ -339,8 +837,9 @@ describe('cases store', () => {
 
   it('retains draft and blocks saving when its original case version disappeared', async () => {
     const store = useCasesStore()
+    store.draftSourceRevisionId = 'source-1'; store.draftScopeReady = true
     store.registerVersion(VERSION)
-    store.drafts[VERSION.endpoint_id].name = '未保存的修改'
+    store.updateDraft(VERSION.endpoint_id, { ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])), name: '未保存的修改' })
     const other = { ...VERSION, id: 'other', case_id: 'other-case' }
     const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [other] } }) } as unknown as Pick<ApiClient, 'get'>
     await store.loadSavedCases('source-1', client, { preserveDrafts: true })
@@ -352,6 +851,7 @@ describe('cases store', () => {
 
   it('does not bind a draft to an older version when a refresh finishes after save', async () => {
     const store = useCasesStore()
+    store.draftSourceRevisionId = 'source-1'; store.draftScopeReady = true
     store.registerVersion(VERSION)
     let finish!: (value: unknown) => void
     const client = { get: vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>
@@ -368,6 +868,7 @@ describe('cases store', () => {
 
   it('does not resurrect a case archived while an older refresh was pending', async () => {
     const store = useCasesStore()
+    store.draftSourceRevisionId = 'source-1'; store.draftScopeReady = true
     store.registerVersion(VERSION)
     let finish!: (value: unknown) => void
     const client = { get: vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>

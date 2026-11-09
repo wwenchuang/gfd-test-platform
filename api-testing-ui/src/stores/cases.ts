@@ -10,15 +10,37 @@ import { createIdempotencyKey } from '../utils/idempotency'
 const TERMINAL_AI = new Set(['completed', 'partial', 'failed', 'failed_gateway', 'failed_validation'])
 const TERMINAL_EXECUTION = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
 
+interface DraftScope {
+  drafts: Record<string, CaseDraft>
+  dirty: Record<string, true>
+  identities: Record<string, number>
+  activeVersions: Record<string, string>
+  missingVersions: Record<string, string>
+  previews: GeneratedCasePreview[]
+  activePreview: string
+}
+
+// Keep the credential out of reactive store state and logs.
+const storeSessions = new WeakMap<object, string | null>()
+function sessionIdentity(): string | null {
+  try { return globalThis.sessionStorage?.getItem('sessionToken') || null } catch { return null }
+}
+
 export const useCasesStore = defineStore('api-cases', {
   state: () => ({
     drafts: {} as Record<string, CaseDraft>,
+    dirtyDrafts: {} as Record<string, true>,
+    draftIdentities: {} as Record<string, number>,
     versions: {} as Record<string, CaseVersion>,
     loadGeneration: 0,
     versionMutationGeneration: 0,
     versionIdsByEndpoint: {} as Record<string, string[]>,
     activeVersionByEndpoint: {} as Record<string, string>,
     missingDraftVersionByEndpoint: {} as Record<string, string>,
+    draftSourceRevisionId: '',
+    draftScopeReady: false,
+    draftScopeGeneration: 0,
+    draftScopes: {} as Record<string, DraftScope>,
     generatedPreviews: [] as GeneratedCasePreview[],
     activeGeneratedPreviewId: '',
     aiJob: null as AiJob | null,
@@ -45,12 +67,24 @@ export const useCasesStore = defineStore('api-cases', {
     baselineError: '',
   }),
   actions: {
+    requireDraftSession(): void {
+      if (storeSessions.has(this) && storeSessions.get(this) !== sessionIdentity()) {
+        this.invalidateLoad()
+        this.hideDraftScope()
+        this.draftScopes = {}
+        storeSessions.delete(this)
+        throw new Error('登录状态已变化，请重新读取用例')
+      }
+    },
     startManualDraft(endpoint: ApiEndpoint): CaseDraft {
+      if (this.draftSourceRevisionId && !this.draftScopeReady) throw new Error('当前来源尚未读取成功，请重新读取后再创建用例')
+      this.draftIdentities[endpoint.id] = (this.draftIdentities[endpoint.id] || 0) + 1
       this.aiRestoreGeneration += 1
       delete this.activeVersionByEndpoint[endpoint.id]
       delete this.missingDraftVersionByEndpoint[endpoint.id]
       this.activeGeneratedPreviewId = ''
       this.drafts[endpoint.id] = blankDraft(endpoint)
+      this.dirtyDrafts[endpoint.id] = true
       this.validationErrors = {}
       this.validationWarnings = {}
       this.savedMessage = ''
@@ -58,6 +92,7 @@ export const useCasesStore = defineStore('api-cases', {
       return this.drafts[endpoint.id]
     },
     draftFor(endpoint: ApiEndpoint): CaseDraft {
+      if (this.draftSourceRevisionId && !this.draftScopeReady) return blankDraft(endpoint)
       const versionId = this.activeVersionByEndpoint[endpoint.id]
       const version = versionId ? this.versions[versionId] : null
       if (!this.drafts[endpoint.id]) {
@@ -70,20 +105,24 @@ export const useCasesStore = defineStore('api-cases', {
       return this.drafts[endpoint.id]
     },
     updateDraft(endpointId: string, draft: CaseDraft): void {
+      if (this.draftSourceRevisionId && !this.draftScopeReady) return
       this.aiRestoreGeneration += 1
       this.drafts[endpointId] = structuredClone(draft)
+      this.dirtyDrafts[endpointId] = true
       this.savedMessage = ''
       this.validationErrors = {}
       this.validationWarnings = {}
     },
     setActiveVersion(endpointId: string, versionId: string): void {
       if (!this.versionIdsByEndpoint[endpointId]?.includes(versionId)) return
+      this.draftIdentities[endpointId] = (this.draftIdentities[endpointId] || 0) + 1
       this.aiRestoreGeneration += 1
       this.activeVersionByEndpoint[endpointId] = versionId
       delete this.missingDraftVersionByEndpoint[endpointId]
       this.activeGeneratedPreviewId = ''
       const version = this.versions[versionId]
       if (version) this.drafts[endpointId] = fromVersion(version)
+      delete this.dirtyDrafts[endpointId]
       this.validationErrors = {}
       this.validationWarnings = {}
       this.savedMessage = ''
@@ -116,10 +155,85 @@ export const useCasesStore = defineStore('api-cases', {
       if (makeActive || !this.activeVersionByEndpoint[endpointId]) {
         this.activeVersionByEndpoint[endpointId] = nextVersion.id
         this.drafts[endpointId] = fromVersion(nextVersion)
+        if (makeActive) delete this.dirtyDrafts[endpointId]
       }
+    },
+    registerExternalVersion(version: CaseVersion, makeActive = true): void {
+      const endpointId = displayEndpointId(version)
+      if (!this.dirtyDrafts[endpointId]) {
+        this.registerVersion(version, makeActive)
+        return
+      }
+      const draft = cloneJson(this.drafts[endpointId])
+      const originalVersion = this.missingDraftVersionByEndpoint[endpointId] || this.activeVersionByEndpoint[endpointId]
+      this.registerVersion(version, false)
+      this.drafts[endpointId] = draft
+      this.dirtyDrafts[endpointId] = true
+      if (!originalVersion) delete this.activeVersionByEndpoint[endpointId]
+      else if (this.versions[originalVersion]) {
+        this.activeVersionByEndpoint[endpointId] = originalVersion
+        delete this.missingDraftVersionByEndpoint[endpointId]
+      } else {
+        delete this.activeVersionByEndpoint[endpointId]
+        this.missingDraftVersionByEndpoint[endpointId] = originalVersion
+      }
+    },
+    hideDraftScope(nextSource = ''): void {
+      this.draftScopeGeneration += 1
+      const previousSource = this.draftSourceRevisionId
+      if (previousSource && this.draftScopeReady) {
+        this.draftScopes[previousSource] = cloneJson({
+          drafts: this.drafts, dirty: this.dirtyDrafts, identities: this.draftIdentities, activeVersions: this.activeVersionByEndpoint,
+          missingVersions: this.missingDraftVersionByEndpoint,
+          previews: this.generatedPreviews, activePreview: this.activeGeneratedPreviewId,
+        })
+      }
+      this.draftSourceRevisionId = nextSource
+      this.draftScopeReady = false
+      this.drafts = {}
+      this.dirtyDrafts = {}
+      this.draftIdentities = {}
+      this.versions = {}
+      this.versionIdsByEndpoint = {}
+      this.activeVersionByEndpoint = {}
+      this.missingDraftVersionByEndpoint = {}
+      this.generatedPreviews = []
+      this.activeGeneratedPreviewId = ''
+      this.basicGenerating = false
+      this.clearAiJob()
+      this.clearDebug()
     },
     invalidateLoad(): void { this.loadGeneration += 1 },
     async loadSavedCases(sourceRevisionId: string, client: Pick<ApiClient, 'get'> = apiClient, options: { preserveDrafts?: boolean } = {}): Promise<void | false> {
+      const session = sessionIdentity()
+      if (typeof window !== 'undefined' && !session) {
+        this.hideDraftScope()
+        this.draftScopes = {}
+        storeSessions.delete(this)
+        throw new Error('登录状态已失效，请重新登录后读取用例')
+      }
+      if (storeSessions.has(this) && storeSessions.get(this) !== session) {
+        this.draftScopes = {}
+        this.draftSourceRevisionId = ''
+        this.draftScopeReady = false
+        this.drafts = {}
+        this.dirtyDrafts = {}
+        this.draftIdentities = {}
+        this.versions = {}
+        this.versionIdsByEndpoint = {}
+        this.activeVersionByEndpoint = {}
+        this.missingDraftVersionByEndpoint = {}
+        this.generatedPreviews = []
+        this.activeGeneratedPreviewId = ''
+        this.clearAiJob()
+        this.clearDebug()
+      }
+      storeSessions.set(this, session)
+      const previousSource = this.draftSourceRevisionId
+      const changing = previousSource !== sourceRevisionId
+      if (changing) {
+        this.hideDraftScope(sourceRevisionId)
+      }
       const generation = ++this.loadGeneration
       const mutationGeneration = this.versionMutationGeneration
       let response
@@ -129,14 +243,38 @@ export const useCasesStore = defineStore('api-cases', {
         )
       } catch (error) {
         if (generation !== this.loadGeneration) return false
+        if (session !== sessionIdentity()) {
+          this.hideDraftScope()
+          this.draftScopes = {}
+          storeSessions.delete(this)
+          return false
+        }
+        this.hideDraftScope(sourceRevisionId)
         throw error
       }
-      if (generation !== this.loadGeneration || mutationGeneration !== this.versionMutationGeneration) return false
-      const drafts = options.preserveDrafts ? { ...this.drafts } : null
-      const previews = options.preserveDrafts ? this.generatedPreviews : []
-      const activePreview = options.preserveDrafts ? this.activeGeneratedPreviewId : ''
-      const activeVersions = options.preserveDrafts ? { ...this.activeVersionByEndpoint } : {}
-      const missingVersions = options.preserveDrafts ? { ...this.missingDraftVersionByEndpoint } : {}
+      if (generation !== this.loadGeneration) return false
+      if (session !== sessionIdentity()) {
+        this.hideDraftScope()
+        this.draftScopes = {}
+        storeSessions.delete(this)
+        return false
+      }
+      if (mutationGeneration !== this.versionMutationGeneration) return false
+      const snapshot = this.draftScopeReady ? {
+        drafts: this.drafts, dirty: this.dirtyDrafts, identities: this.draftIdentities, activeVersions: this.activeVersionByEndpoint,
+        missingVersions: this.missingDraftVersionByEndpoint,
+        previews: this.generatedPreviews, activePreview: this.activeGeneratedPreviewId,
+      } : this.draftScopes[sourceRevisionId]
+      const drafts = snapshot ? { ...snapshot.drafts } : null
+      const previews = snapshot ? snapshot.previews : []
+      const activePreview = snapshot ? snapshot.activePreview : ''
+      const activeVersions = snapshot ? { ...snapshot.activeVersions } : {}
+      const missingVersions = snapshot ? { ...snapshot.missingVersions } : {}
+      const dirty = snapshot ? { ...snapshot.dirty } : {}
+      const identities = snapshot ? { ...snapshot.identities } : {}
+      this.drafts = {}
+      this.dirtyDrafts = {}
+      this.draftIdentities = identities
       this.versions = {}
       this.versionIdsByEndpoint = {}
       this.activeVersionByEndpoint = {}
@@ -145,22 +283,37 @@ export const useCasesStore = defineStore('api-cases', {
       this.activeGeneratedPreviewId = activePreview
       for (const version of response.data.case_versions) this.registerVersion(version, false)
       if (drafts) {
-        this.drafts = { ...this.drafts, ...drafts }
         for (const endpointId of Object.keys(drafts)) {
           const versionId = missingVersions[endpointId] || activeVersions[endpointId]
-          if (!versionId) delete this.activeVersionByEndpoint[endpointId]
-          else if (this.versions[versionId]) this.activeVersionByEndpoint[endpointId] = versionId
-          else {
+          if (!versionId && dirty[endpointId]) delete this.activeVersionByEndpoint[endpointId]
+          else if (this.versions[versionId]) {
+            this.activeVersionByEndpoint[endpointId] = versionId
+            this.drafts[endpointId] = fromVersion(this.versions[versionId])
+          }
+          else if (versionId && dirty[endpointId]) {
             delete this.activeVersionByEndpoint[endpointId]
             this.missingDraftVersionByEndpoint[endpointId] = versionId
           }
+          if (dirty[endpointId]) {
+            this.drafts[endpointId] = drafts[endpointId]
+            this.dirtyDrafts[endpointId] = true
+          }
         }
       }
+      this.draftScopeReady = true
     },
     async save(endpointId: string, environmentRevisionId?: string, options: { requireValidation?: boolean } = {}): Promise<CaseVersion> {
+      this.requireDraftSession()
+      if (this.saving) throw new Error('已有用例保存正在进行，请等待结果后再操作')
+      if (this.draftSourceRevisionId && !this.draftScopeReady) throw new Error('当前来源尚未读取成功，请重新读取后再保存')
       const draft = this.drafts[endpointId]
       if (!draft) throw new Error('请先编辑测试用例')
       if (this.missingDraftVersionByEndpoint[endpointId]) throw new Error('原用例版本已不在当前列表中；草稿已保留，请重新选择用例或新建草稿后再保存')
+      const sourceRevisionId = this.draftSourceRevisionId
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
+      const sentDraft = cloneJson(draft)
+      const draftIdentity = this.draftIdentities[endpointId] || 0
       this.saving = true
       this.savedMessage = ''
       try {
@@ -174,11 +327,47 @@ export const useCasesStore = defineStore('api-cases', {
           : { endpoint_id: endpointId, case: draft, origin: 'manual' }
         const response = await apiClient.post<{ case_version: CaseVersion }>(path, body)
         const version = response.data.case_version
+        if (session !== sessionIdentity()) throw new Error('用例已保存；登录状态已变化，请重新登录并核对结果')
+        if (sourceRevisionId !== this.draftSourceRevisionId || scopeGeneration !== this.draftScopeGeneration) {
+          const previous = this.draftScopes[sourceRevisionId]
+          if (previous && previous.activeVersions[endpointId] === existingId && previous.drafts[endpointId]
+              && (previous.identities[endpointId] || 0) === draftIdentity) {
+            previous.activeVersions[endpointId] = version.id
+            delete previous.missingVersions[endpointId]
+            if (JSON.stringify(previous.drafts[endpointId]) === JSON.stringify(sentDraft)) {
+              previous.drafts[endpointId] = fromVersion(version)
+              delete previous.dirty[endpointId]
+            }
+          }
+          if (sourceRevisionId === this.draftSourceRevisionId && this.draftScopeReady
+              && this.activeVersionByEndpoint[endpointId] === existingId && this.drafts[endpointId]
+              && (this.draftIdentities[endpointId] || 0) === draftIdentity) {
+            delete this.activeVersionByEndpoint[endpointId]
+            this.missingDraftVersionByEndpoint[endpointId] = version.id
+          }
+          throw new Error('用例已保存；范围已切换，请返回原来源核对结果')
+        }
+        const currentDraft = this.drafts[endpointId]
+        const sameSelection = this.activeVersionByEndpoint[endpointId] === existingId
+          && (this.draftIdentities[endpointId] || 0) === draftIdentity
+        if (!sameSelection) throw new Error('用例已保存；当前选择已变化，请重新读取并核对结果')
+        const newerDraft = currentDraft && JSON.stringify(currentDraft) !== JSON.stringify(sentDraft)
+          ? cloneJson(currentDraft) : null
         this.registerVersion(version)
+        if (newerDraft) {
+          this.drafts[endpointId] = newerDraft
+          this.dirtyDrafts[endpointId] = true
+        }
         this.savedMessage = `草稿 v${version.version} 已保存`
         try {
           await this.validate(version.id, environmentRevisionId)
+          if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) {
+            throw new Error('用例已保存；范围或登录状态已变化，请返回原来源核对')
+          }
         } catch (error) {
+          if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) {
+            throw new Error('用例已保存；范围或登录状态已变化，请返回原来源核对')
+          }
           const reason = error instanceof Error ? error.message : '校验服务暂时不可用'
           this.validationErrors = {}
           this.validationWarnings = {
@@ -211,22 +400,26 @@ export const useCasesStore = defineStore('api-cases', {
     async generate(endpointIds: string[], environmentRevisionId: string, intent: string, taskId?: string): Promise<void> {
       this.clearAiJob()
       const scopeGeneration = this.aiScopeGeneration
+      const session = sessionIdentity()
       const draftGeneration = this.aiRestoreGeneration
       try {
         const response = await apiClient.post<{ job: AiJob }>('/api/api-testing/v1/ai-jobs', {
           endpoint_ids: endpointIds, environment_revision_id: environmentRevisionId, intent,
           ...(taskId ? { task_id: taskId } : {}),
         })
-        if (scopeGeneration !== this.aiScopeGeneration) return
+        if (scopeGeneration !== this.aiScopeGeneration || session !== sessionIdentity()) return
         this.aiJob = response.data.job
         this.lastAiJobId = response.data.job.id
         await this.pollAiJob(response.data.job.id, { draftGeneration })
       } catch (error) {
-        if (scopeGeneration !== this.aiScopeGeneration) return
+        if (scopeGeneration !== this.aiScopeGeneration || session !== sessionIdentity()) return
         this.aiError = error instanceof Error ? error.message : 'AI 生成失败'
       }
     },
     async generateBasicPositive(endpointIds: string[], environmentRevisionId: string, taskId?: string): Promise<CaseVersion[]> {
+      this.requireDraftSession()
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
       this.basicGenerating = true
       this.savedMessage = ''
       try {
@@ -235,15 +428,19 @@ export const useCasesStore = defineStore('api-cases', {
           environment_revision_id: environmentRevisionId,
           ...(taskId ? { task_id: taskId } : {}),
         })
+        if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) throw new Error('用例已生成；范围已切换，请返回原来源核对')
         const versions = response.data.case_versions
-        for (const version of versions) this.registerVersion(version)
+        for (const version of versions) this.registerExternalVersion(version)
         this.savedMessage = `已生成 ${versions.length} 个基础正向用例`
         return versions
       } finally {
-        this.basicGenerating = false
+        if (scopeGeneration === this.draftScopeGeneration && session === sessionIdentity()) this.basicGenerating = false
       }
     },
     async previewBasicPositive(endpointIds: string[], environmentRevisionId: string, taskId?: string): Promise<GeneratedCasePreview[]> {
+      this.requireDraftSession()
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
       this.basicGenerating = true
       this.savedMessage = ''
       try {
@@ -252,23 +449,29 @@ export const useCasesStore = defineStore('api-cases', {
           environment_revision_id: environmentRevisionId,
           ...(taskId ? { task_id: taskId } : {}),
         })
+        if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) throw new Error('范围已切换，请在当前来源重新生成候选')
         const previews = response.data.case_previews
         const incomingIds = new Set(previews.map(item => item.id))
         const incomingEndpointIds = new Set(previews.map(item => item.endpoint_id))
+        const activePreview = this.generatedPreviews.find(item => item.id === this.activeGeneratedPreviewId)
+        const protectedId = activePreview && this.dirtyDrafts[activePreview.endpoint_id] ? activePreview.id : ''
         this.generatedPreviews = [
-          ...this.generatedPreviews.filter(item => !incomingIds.has(item.id) && !incomingEndpointIds.has(item.endpoint_id)),
-          ...previews.map(item => cloneJson(item)),
+          ...this.generatedPreviews.filter(item => item.id === protectedId || (!incomingIds.has(item.id) && !incomingEndpointIds.has(item.endpoint_id))),
+          ...previews.filter(item => item.id !== protectedId).map(item => cloneJson(item)),
         ]
         this.savedMessage = `已生成 ${previews.length} 个基础正向候选，请确认后保存`
         return previews
       } finally {
-        this.basicGenerating = false
+        if (scopeGeneration === this.draftScopeGeneration && session === sessionIdentity()) this.basicGenerating = false
       }
     },
     setDraftFromGeneratedPreview(previewId: string): void {
+      if (this.draftSourceRevisionId && !this.draftScopeReady) return
       const preview = this.generatedPreviews.find(item => item.id === previewId)
       if (!preview) return
+      this.draftIdentities[preview.endpoint_id] = (this.draftIdentities[preview.endpoint_id] || 0) + 1
       this.drafts[preview.endpoint_id] = cloneJson(preview.case)
+      this.dirtyDrafts[preview.endpoint_id] = true
       delete this.activeVersionByEndpoint[preview.endpoint_id]
       delete this.missingDraftVersionByEndpoint[preview.endpoint_id]
       this.activeGeneratedPreviewId = preview.id
@@ -279,8 +482,17 @@ export const useCasesStore = defineStore('api-cases', {
       this.clearBaselineFeedback()
     },
     async saveGeneratedPreview(previewId: string, draft?: CaseDraft): Promise<CaseVersion> {
+      this.requireDraftSession()
+      if (this.saving) throw new Error('已有用例保存正在进行，请等待结果后再操作')
       const preview = this.generatedPreviews.find(item => item.id === previewId)
       if (!preview) throw new Error('请选择要保存的基础正向候选')
+      const sourceRevisionId = this.draftSourceRevisionId
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
+      const originalActivePreview = this.activeGeneratedPreviewId
+      const originalActiveVersion = this.activeVersionByEndpoint[preview.endpoint_id]
+      const originalDraft = this.drafts[preview.endpoint_id] ? cloneJson(this.drafts[preview.endpoint_id]) : null
+      const draftIdentity = this.draftIdentities[preview.endpoint_id] || 0
       this.saving = true
       this.savedMessage = ''
       try {
@@ -291,8 +503,51 @@ export const useCasesStore = defineStore('api-cases', {
           origin: preview.origin || 'imported',
         })
         const version = response.data.case_version
+        if (session !== sessionIdentity()) throw new Error('用例已保存；登录状态已变化，请重新登录并核对结果')
+        if (scopeGeneration !== this.draftScopeGeneration) {
+          const previous = this.draftScopes[sourceRevisionId]
+          if (previous) {
+            previous.previews = previous.previews.filter(item => item.id !== previewId)
+            if (previous.activePreview === previewId) {
+              previous.activePreview = ''
+              previous.activeVersions[preview.endpoint_id] = version.id
+              delete previous.missingVersions[preview.endpoint_id]
+              if (JSON.stringify(previous.drafts[preview.endpoint_id]) === JSON.stringify(caseDraft)) {
+                previous.drafts[preview.endpoint_id] = fromVersion(version)
+                delete previous.dirty[preview.endpoint_id]
+              }
+            }
+          }
+          if (sourceRevisionId === this.draftSourceRevisionId && this.draftScopeReady
+              && this.activeGeneratedPreviewId === previewId) {
+            this.generatedPreviews = this.generatedPreviews.filter(item => item.id !== previewId)
+            this.activeGeneratedPreviewId = ''
+            delete this.activeVersionByEndpoint[preview.endpoint_id]
+            this.missingDraftVersionByEndpoint[preview.endpoint_id] = version.id
+          }
+          throw new Error('用例已保存；范围已切换，请返回原来源核对结果')
+        }
+        if (originalActivePreview !== this.activeGeneratedPreviewId
+            || originalActiveVersion !== this.activeVersionByEndpoint[preview.endpoint_id]
+            || draftIdentity !== (this.draftIdentities[preview.endpoint_id] || 0)) {
+          this.generatedPreviews = this.generatedPreviews.filter(item => item.id !== previewId)
+          throw new Error('用例已保存；当前选择已变化，请重新读取并核对结果')
+        }
+        if (originalActivePreview !== previewId && this.dirtyDrafts[preview.endpoint_id]) {
+          this.registerExternalVersion(version, false)
+          this.generatedPreviews = this.generatedPreviews.filter(item => item.id !== previewId)
+          this.savedMessage = '基础正向用例已保存，当前未保存的编辑已保留'
+          return version
+        }
+        const currentDraft = this.drafts[preview.endpoint_id]
+        const newerDraft = currentDraft && (JSON.stringify(currentDraft) !== JSON.stringify(originalDraft)
+          || (this.dirtyDrafts[preview.endpoint_id] && originalActivePreview !== previewId)) ? cloneJson(currentDraft) : null
         this.registerVersion(version)
         this.discardGeneratedPreview(preview.id)
+        if (newerDraft) {
+          this.drafts[preview.endpoint_id] = newerDraft
+          this.dirtyDrafts[preview.endpoint_id] = true
+        }
         this.savedMessage = '基础正向用例已保存'
         return version
       } finally {
@@ -309,6 +564,10 @@ export const useCasesStore = defineStore('api-cases', {
       return versions
     },
     async updateVersionGroup(versionId: string, groupName: string): Promise<CaseVersion> {
+      this.requireDraftSession()
+      if (this.saving) throw new Error('已有用例保存正在进行，请等待结果后再操作')
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
       this.saving = true
       this.savedMessage = ''
       try {
@@ -317,7 +576,8 @@ export const useCasesStore = defineStore('api-cases', {
           { group_name: groupName },
         )
         const version = response.data.case_version
-        this.registerVersion(version, false)
+        if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) throw new Error('分组已更新；范围已切换，请返回原来源核对')
+        this.registerExternalVersion(version, false)
         this.savedMessage = `已移动到分组“${version.group_name}”`
         return version
       } finally {
@@ -325,6 +585,10 @@ export const useCasesStore = defineStore('api-cases', {
       }
     },
     async updateVersionGroups(versionIds: string[], groupName: string): Promise<CaseVersion[]> {
+      this.requireDraftSession()
+      if (this.saving) throw new Error('已有用例保存正在进行，请等待结果后再操作')
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
       const uniqueIds = [...new Set(versionIds)]
       if (!uniqueIds.length) return []
       this.saving = true
@@ -337,9 +601,16 @@ export const useCasesStore = defineStore('api-cases', {
               `/api/api-testing/v1/case-versions/${versionId}/group`,
               { group_name: groupName },
             )
+            if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) {
+              throw new Error(`范围已切换；已有 ${updated.length + 1} 条分组更新提交，请返回原来源核对`)
+            }
             updated.push(response.data.case_version)
-            this.registerVersion(response.data.case_version, false)
-          } catch {
+            this.registerExternalVersion(response.data.case_version, false)
+          } catch (error) {
+            if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) {
+              throw error instanceof Error && error.message.startsWith('范围已切换；')
+                ? error : new Error(`范围已切换；已有 ${updated.length} 条完成，当前请求可能已提交，请返回原来源核对`)
+            }
             this.savedMessage = `已移动 ${updated.length}/${uniqueIds.length} 条用例，剩余用例未修改`
             throw new Error(`批量移动未完成：已完成 ${updated.length}/${uniqueIds.length}，失败用例 ${versionId}`)
           }
@@ -357,13 +628,15 @@ export const useCasesStore = defineStore('api-cases', {
         this.activeGeneratedPreviewId = ''
         if (preview && !this.activeVersionByEndpoint[preview.endpoint_id]) {
           delete this.drafts[preview.endpoint_id]
+          delete this.dirtyDrafts[preview.endpoint_id]
         }
       }
     },
     async pollAiJob(jobId: string, options: { maxAttempts?: number; delayMs?: number; draftGeneration?: number } = {}): Promise<void> {
       const scopeGeneration = ++this.aiScopeGeneration
+      const session = sessionIdentity()
       const restoreGeneration = options.draftGeneration ?? ++this.aiRestoreGeneration
-      const isCurrent = () => scopeGeneration === this.aiScopeGeneration
+      const isCurrent = () => scopeGeneration === this.aiScopeGeneration && session === sessionIdentity()
       this.aiDiagnosisBatchId = ''
       const maxAttempts = options.maxAttempts ?? 120
       const delayMs = options.delayMs ?? 1500
@@ -407,6 +680,7 @@ export const useCasesStore = defineStore('api-cases', {
     async diagnoseAiValidation(batchId: string, errorIndex: number): Promise<void> {
       if (!this.aiJob || this.aiDiagnosisBatchId) return
       const scopeGeneration = this.aiScopeGeneration
+      const session = sessionIdentity()
       this.aiDiagnosisBatchId = batchId
       this.aiError = ''
       try {
@@ -414,15 +688,15 @@ export const useCasesStore = defineStore('api-cases', {
           `/api/api-testing/v1/ai-jobs/${this.aiJob.id}/validation-diagnosis`,
           { batch_id: batchId, error_index: errorIndex },
         )
-        if (scopeGeneration !== this.aiScopeGeneration) return
+        if (scopeGeneration !== this.aiScopeGeneration || session !== sessionIdentity()) return
         this.aiJob = response.data.job
       } catch (error) {
-        if (scopeGeneration !== this.aiScopeGeneration) return
+        if (scopeGeneration !== this.aiScopeGeneration || session !== sessionIdentity()) return
         this.aiError = error instanceof Error
           ? error.message
           : '千问暂时无法分析该错误，请稍后重试'
       } finally {
-        if (scopeGeneration === this.aiScopeGeneration) this.aiDiagnosisBatchId = ''
+        if (scopeGeneration === this.aiScopeGeneration && session === sessionIdentity()) this.aiDiagnosisBatchId = ''
       }
     },
     clearAiJob(): void {
@@ -442,6 +716,7 @@ export const useCasesStore = defineStore('api-cases', {
     ): Promise<void> {
       this.clearAiJob()
       const restoreGeneration = this.aiRestoreGeneration
+      const session = sessionIdentity()
       try {
         const sourceQuery = sourceRevisionId
           ? `&source_revision_id=${encodeURIComponent(sourceRevisionId)}`
@@ -449,7 +724,7 @@ export const useCasesStore = defineStore('api-cases', {
         const response = await client.get<{ job: AiJob | null }>(
           `/api/api-testing/v1/ai-jobs/latest?project_id=${encodeURIComponent(projectId)}${sourceQuery}`,
         )
-        if (restoreGeneration !== this.aiRestoreGeneration) return
+        if (restoreGeneration !== this.aiRestoreGeneration || session !== sessionIdentity()) return
         const job = response.data.job
         if (!job) return
         this.aiJob = job
@@ -474,15 +749,23 @@ export const useCasesStore = defineStore('api-cases', {
       client: Pick<ApiClient, 'get'> = apiClient,
       restoreGeneration?: number,
     ): Promise<void> {
+      const sourceRevisionId = this.draftSourceRevisionId
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
       const response = await client.get<{ case_version: CaseVersion }>(`/api/api-testing/v1/case-versions/${versionId}`)
+      if (sourceRevisionId !== this.draftSourceRevisionId || scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) return
       if (restoreGeneration !== undefined && restoreGeneration !== this.aiRestoreGeneration) return
       const version = response.data.case_version
-      this.registerVersion(version)
+      this.registerExternalVersion(version)
     },
     async archiveCase(endpointId: string, versionId: string): Promise<void> {
+      this.requireDraftSession()
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
       const version = this.versions[versionId]
       if (!version) throw new Error('请选择要删除的用例')
       await apiClient.delete(`/api/api-testing/v1/cases/${version.case_id}`)
+      if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) throw new Error('删除请求已完成；范围已切换，请返回原来源核对')
       this.versionMutationGeneration += 1
       for (const [id, item] of Object.entries(this.versions)) {
         if (item.case_id === version.case_id) delete this.versions[id]
@@ -495,6 +778,7 @@ export const useCasesStore = defineStore('api-cases', {
         else {
           delete this.activeVersionByEndpoint[endpointId]
           delete this.drafts[endpointId]
+          delete this.dirtyDrafts[endpointId]
         }
       }
       this.clearDebug()
@@ -503,6 +787,8 @@ export const useCasesStore = defineStore('api-cases', {
       this.savedMessage = '用例已删除，历史执行和基线证据仍保留'
     },
     async validate(versionId: string, environmentRevisionId?: string): Promise<void> {
+      const scopeGeneration = this.draftScopeGeneration
+      const session = sessionIdentity()
       this.validationErrors = {}
       this.validationWarnings = {}
       let environmentMetadata: Record<string, unknown> = {}
@@ -510,6 +796,7 @@ export const useCasesStore = defineStore('api-cases', {
         const environmentResponse = await apiClient.get<{ environment_revision: EnvironmentRevisionSnapshot }>(
           `/api/api-testing/v1/environment-revisions/${environmentRevisionId}`,
         )
+        if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) throw new Error('范围已切换，校验未完成')
         const snapshot = environmentResponse.data.environment_revision
         environmentMetadata = {
           variables: snapshot.variables,
@@ -522,6 +809,7 @@ export const useCasesStore = defineStore('api-cases', {
       const response = await apiClient.post<{ validation: CaseValidation }>(`/api/api-testing/v1/case-versions/${versionId}/validate`, {
         environment_metadata: environmentMetadata,
       })
+      if (scopeGeneration !== this.draftScopeGeneration || session !== sessionIdentity()) throw new Error('范围已切换，校验未完成')
       const validation = response.data.validation
       if (!validation) return
       this.validationErrors = issueMap(validation.errors || [])

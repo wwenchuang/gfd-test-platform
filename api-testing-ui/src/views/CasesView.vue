@@ -39,7 +39,10 @@ const taskReadNote = ref('')
 
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
-const allCaseVersions = computed(() => Object.values(cases.versions))
+const currentSourceReady = computed(() => Boolean(
+  context.sourceRevisionId && cases.draftScopeReady && cases.draftSourceRevisionId === context.sourceRevisionId,
+))
+const allCaseVersions = computed(() => currentSourceReady.value ? Object.values(cases.versions) : [])
 const caseCountByEndpoint = computed(() => {
   const counts: Record<string, number> = {}
   for (const version of allCaseVersions.value) {
@@ -144,6 +147,8 @@ async function loadSource(sourceRevisionId: string, preserveDrafts = false): Pro
     const results = await Promise.all([assets.load(sourceRevisionId), caseLoad])
     if (generation !== sourceLoadGeneration || sourceRevisionId !== context.sourceRevisionId) return
     if (results.includes(false)) {
+      activeEndpoint.value = null
+      endpointPickerOpen.value = false
       sourceLoadError.value = '读取期间数据发生变化，请重新读取用例。'
       return
     }
@@ -154,6 +159,8 @@ async function loadSource(sourceRevisionId: string, preserveDrafts = false): Pro
     selectedIds.value = selectedIds.value.filter(item => available.has(item))
   } catch (error) {
     if (generation !== sourceLoadGeneration || sourceRevisionId !== context.sourceRevisionId) return
+    activeEndpoint.value = null
+    endpointPickerOpen.value = false
     sourceLoadError.value = error instanceof Error ? error.message : '无法读取接口和用例'
   }
 }
@@ -164,6 +171,7 @@ function changeProject(projectId: string | null): void {
   sourceLoadGeneration += 1
   assets.invalidateLoad()
   cases.invalidateLoad()
+  cases.hideDraftScope()
   sourceLoadError.value = ''
   localError.value = ''
   context.selectProject(projectId)
@@ -185,6 +193,7 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
   assets.invalidateLoad()
   assets.endpoints = []
   cases.invalidateLoad()
+  cases.hideDraftScope()
   sourceLoadError.value = ''
   localError.value = ''
   context.selectSourceRevision(sourceRevisionId)
@@ -254,16 +263,21 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
 }
 
 async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
+  if (!currentSourceReady.value) {
+    localError.value = '当前来源尚未读取成功，请重新读取后再创建用例'
+    return
+  }
   const generation = ++manualDetailGeneration
   const sourceGeneration = sourceLoadGeneration
   const assetsGeneration = assets.loadGeneration
+  const draftScopeGeneration = cases.draftScopeGeneration
   const projectId = context.projectId
   const sourceRevisionId = context.sourceRevisionId
   localError.value = ''
   const detailed = await assets.ensureEndpointDetail(endpoint.id)
   if (generation !== manualDetailGeneration || sourceGeneration !== sourceLoadGeneration
-      || assetsGeneration !== assets.loadGeneration
-      || projectId !== context.projectId || sourceRevisionId !== context.sourceRevisionId) return
+      || assetsGeneration !== assets.loadGeneration || draftScopeGeneration !== cases.draftScopeGeneration
+      || projectId !== context.projectId || sourceRevisionId !== context.sourceRevisionId || !currentSourceReady.value) return
   if (!detailed) {
     localError.value = assets.detailError || '接口详情读取失败，请重试'
     return
@@ -281,6 +295,7 @@ async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
 }
 
 async function generateBasicForEndpoint(endpoint: ApiEndpoint): Promise<void> {
+  if (!currentSourceReady.value) return
   if (!context.environmentRevisionId) {
     localError.value = '请先选择执行环境'
     return
@@ -291,7 +306,8 @@ async function generateBasicForEndpoint(endpoint: ApiEndpoint): Promise<void> {
   localError.value = ''
   try {
     const previews = await cases.previewBasicPositive([endpoint.id], context.environmentRevisionId, task.id)
-    if (previews[0]) editGeneratedPreview(previews[0])
+    if (previews[0] && !cases.dirtyDrafts[previews[0].endpoint_id]
+        && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) editGeneratedPreview(previews[0])
     endpointPickerOpen.value = false
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '基础正向候选生成失败'
@@ -299,6 +315,7 @@ async function generateBasicForEndpoint(endpoint: ApiEndpoint): Promise<void> {
 }
 
 async function generateAiForEndpoint(endpoint: ApiEndpoint): Promise<void> {
+  if (!currentSourceReady.value) return
   if (!context.environmentRevisionId) {
     localError.value = '请先选择执行环境'
     return
@@ -315,8 +332,13 @@ async function generateAiForEndpoint(endpoint: ApiEndpoint): Promise<void> {
   if (cases.aiError) return
   const generatedId = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
   const version = generatedId ? cases.versions[generatedId] : null
-  if (version) editCaseVersion(version)
+  if (version && !cases.dirtyDrafts[version.current_endpoint_id || version.endpoint_id]
+      && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) editCaseVersion(version)
   endpointPickerOpen.value = false
+}
+
+function openEndpointPicker(): void {
+  if (currentSourceReady.value) endpointPickerOpen.value = true
 }
 
 function updateDraft(draft: CaseDraft): void {
@@ -341,11 +363,14 @@ async function saveDraft() {
 }
 
 async function saveGeneratedPreview(preview: GeneratedCasePreview): Promise<void> {
+  const selectionGeneration = context.selectionGeneration
+  const detailGeneration = manualDetailGeneration
   localError.value = ''
   try {
     const draft = cases.activeGeneratedPreviewId === preview.id ? activeDraft.value || preview.case : preview.case
     const version = await cases.saveGeneratedPreview(preview.id, draft)
-    editCaseVersion(version)
+    if (selectionGeneration !== context.selectionGeneration || detailGeneration !== manualDetailGeneration) return
+    if (mayOpenSavedVersion(version)) editCaseVersion(version)
     if (context.projectId) await tasks.restore(context.projectId)
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '候选用例保存失败'
@@ -353,17 +378,27 @@ async function saveGeneratedPreview(preview: GeneratedCasePreview): Promise<void
 }
 
 async function saveAllGeneratedPreviews(): Promise<void> {
+  const selectionGeneration = context.selectionGeneration
+  const detailGeneration = manualDetailGeneration
   localError.value = ''
   try {
     const overrides = cases.activeGeneratedPreviewId && activeDraft.value
       ? { [cases.activeGeneratedPreviewId]: activeDraft.value }
       : {}
     const versions = await cases.saveAllGeneratedPreviews(overrides)
-    if (versions[0]) editCaseVersion(versions[0])
+    if (selectionGeneration !== context.selectionGeneration || detailGeneration !== manualDetailGeneration) return
+    if (versions[0] && mayOpenSavedVersion(versions[0])) editCaseVersion(versions[0])
     if (context.projectId) await tasks.restore(context.projectId)
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '候选用例批量保存失败'
   }
+}
+
+function mayOpenSavedVersion(version: CaseVersion): boolean {
+  const endpointId = activeEndpoint.value?.id
+  if (!endpointId || !cases.dirtyDrafts[endpointId]) return true
+  return endpointId === (version.current_endpoint_id || version.endpoint_id)
+    && cases.activeVersionByEndpoint[endpointId] === version.id
 }
 
 function discardGeneratedPreview(previewId: string): void {
@@ -617,7 +652,7 @@ function defaultTaskName(): string {
         <p class="page-subtitle">这里保存测试用例及其版本。调试通过后需采纳为基线，才能加入任务回归；“已调试”不代表通过，“已基线”不代表本轮已执行。</p>
       </div>
       <div class="page-toolbar-actions">
-        <button data-testid="open-case-endpoint-picker" class="primary-command" type="button" :disabled="!context.sourceRevisionId" @click="endpointPickerOpen = true"><Plus :size="16" />从接口创建用例</button>
+        <button data-testid="open-case-endpoint-picker" class="primary-command" type="button" :disabled="!currentSourceReady" @click="openEndpointPicker"><Plus :size="16" />从接口创建用例</button>
         <button class="icon-command" type="button" title="重新读取用例" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="refreshCases"><RefreshCw :size="18" /></button>
       </div>
     </header>
@@ -638,7 +673,7 @@ function defaultTaskName(): string {
       @save="saveScope"
     />
     <CaseEndpointPicker
-      v-if="endpointPickerOpen"
+      v-if="endpointPickerOpen && currentSourceReady"
       :endpoints="assets.endpoints"
       :case-count-by-endpoint="caseCountByEndpoint"
       :busy="cases.saving || cases.basicGenerating || cases.aiPolling"
@@ -648,7 +683,7 @@ function defaultTaskName(): string {
       @generate-ai="generateAiForEndpoint"
     />
     <section
-      v-if="cases.aiJob"
+      v-if="currentSourceReady && cases.aiJob"
       :class="['case-generation-status', { failed: aiJobFailed }]"
       data-testid="case-generation-status"
       aria-live="polite"
@@ -684,7 +719,7 @@ function defaultTaskName(): string {
           :disabled="cases.aiPolling"
           @click="cases.resumeAiJob()"
         >继续查看进度</button>
-        <button v-else-if="aiJobFailed" class="secondary-command" type="button" @click="endpointPickerOpen = true">重新选择接口</button>
+        <button v-else-if="aiJobFailed" class="secondary-command" type="button" @click="openEndpointPicker">重新选择接口</button>
       </div>
     </section>
     <p v-if="context.readErrors.workspace" class="inline-error" role="alert">工作区：{{ context.readErrors.workspace }}。 <button data-testid="retry-workspace" type="button" :disabled="context.loading" @click="retryWorkspaceRead">重试工作区</button></p>
@@ -702,7 +737,7 @@ function defaultTaskName(): string {
       <CaseListPanel
         :endpoints="assets.endpoints"
         :versions="allCaseVersions"
-        :generated-previews="cases.generatedPreviews"
+        :generated-previews="currentSourceReady ? cases.generatedPreviews : []"
         :active-version-id="activeVersionId"
         :active-preview-id="cases.activeGeneratedPreviewId"
         :selected-endpoint-ids="selectedIds"
@@ -718,7 +753,7 @@ function defaultTaskName(): string {
         @save-all-previews="saveAllGeneratedPreviews"
         @update-version-group="updateCaseGroup"
         @update-version-groups="updateCaseGroups"
-        @open-endpoints="endpointPickerOpen = true"
+        @open-endpoints="openEndpointPicker"
         @open-debug-history="openCaseDebugHistory"
         @open-baseline="openCaseBaseline"
       />

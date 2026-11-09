@@ -13,6 +13,7 @@ import ScheduledJobsView from './ScheduledJobsView.vue'
 
 describe('ScheduledJobsView', () => {
   beforeEach(() => {
+    sessionStorage.setItem('sessionToken', 'test-session')
     setActivePinia(createPinia())
     vi.restoreAllMocks()
     setApiTestingAccessProfile(null)

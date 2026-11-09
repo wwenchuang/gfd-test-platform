@@ -213,7 +213,12 @@ async function loadSource(
       assets.load(sourceRevisionId, client),
       cases.loadSavedCases(sourceRevisionId, client),
     ])
-    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId || results.includes(false)) return false
+    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return false
+    if (results.includes(false)) {
+      activeEndpoint.value = null
+      localError.value = '读取期间数据发生变化，请重新读取用例。'
+      return false
+    }
     if (assets.error) throw new Error(assets.error)
     activeEndpoint.value = null
     const available = new Set(assets.endpoints.map(item => item.id))
@@ -226,6 +231,7 @@ async function loadSource(
     return true
   } catch (error) {
     if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return false
+    activeEndpoint.value = null
     localError.value = error instanceof Error ? error.message : '无法读取已保存接口和用例'
     if (throwOnError) throw new Error(localError.value)
     return false
@@ -238,6 +244,7 @@ function changeProject(projectId: string | null): void {
   assets.invalidateLoad()
   assets.endpoints = []
   cases.invalidateLoad()
+  cases.hideDraftScope()
   context.selectProject(projectId)
   tasks.clear()
   tasks.tasks = []
@@ -259,6 +266,7 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
   assets.invalidateLoad()
   assets.endpoints = []
   cases.invalidateLoad()
+  cases.hideDraftScope()
   const recoverableTask = tasks.task || outdatedRestoredTask.value
   context.selectSourceRevision(sourceRevisionId)
   tasks.clear()
@@ -482,7 +490,8 @@ async function generateBasicPositive(): Promise<void> {
     const previews = await cases.previewBasicPositive([...task.selected_endpoint_ids], context.environmentRevisionId, task.id)
     const firstPreview = previews[0]
     const endpoint = assets.endpoints.find(item => item.id === firstPreview?.endpoint_id)
-    if (endpoint && firstPreview) {
+    if (endpoint && firstPreview && !cases.dirtyDrafts[endpoint.id]
+        && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) {
       endpointActivationGeneration += 1
       activeEndpoint.value = endpoint
       cases.setDraftFromGeneratedPreview(firstPreview.id)
