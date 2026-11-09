@@ -6,16 +6,34 @@ import os
 import sys
 from uuid import UUID
 
-# Scheduled cases refer to pinned versions, while other target kinds resolve
-# through current baselines. Include ALL versions in enabled scheduled projects
-# to avoid falsely claiming the scheduled target graph was fully resolved.
+# Both active baselines and enabled schedules may run same-project dependency
+# versions. Include ALL versions in either kind of project rather than trying
+# to infer the graph from the direct target alone.
+SCOPE_INTEGRITY_SQL = """
+SELECT EXISTS (
+    SELECT 1 FROM api_cases AS c WHERE c.project_id IS NULL
+) OR EXISTS (
+    SELECT 1 FROM api_case_versions AS v
+    LEFT JOIN api_cases AS c ON c.id = v.case_id WHERE c.id IS NULL
+) OR EXISTS (
+    SELECT 1 FROM api_baselines AS b
+    LEFT JOIN api_case_versions AS v ON v.id = b.case_version_id
+    LEFT JOIN api_cases AS c ON c.id = v.case_id
+    WHERE b.status = 'active' AND (
+        b.project_id IS NULL OR v.id IS NULL OR c.id IS NULL
+        OR c.project_id IS DISTINCT FROM b.project_id
+    )
+) OR EXISTS (
+    SELECT 1 FROM api_scheduled_jobs AS j WHERE j.enabled AND j.project_id IS NULL
+)
+"""
 INVENTORY_SQL = """
 SELECT v.id, v.processing_spec
 FROM api_case_versions AS v
 JOIN api_cases AS c ON c.id = v.case_id
 WHERE EXISTS (
     SELECT 1 FROM api_baselines AS b
-    WHERE b.case_version_id = v.id AND b.status = 'active'
+    WHERE b.project_id = c.project_id AND b.status = 'active'
 ) OR EXISTS (
     SELECT 1 FROM api_scheduled_jobs AS j
     WHERE j.project_id = c.project_id AND j.enabled
@@ -81,13 +99,15 @@ def inventory(connection):
     with connection.transaction():
         connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
         connection.execute("SET LOCAL statement_timeout = '5s'")
+        if connection.execute(SCOPE_INTEGRITY_SQL).fetchone()[0]:
+            raise ValueError('project scope cannot be determined')
         with connection.cursor(name='cleanup_inventory_readonly') as cursor:
             cursor.execute(INVENTORY_SQL)
             for identifier, processing in cursor:
                 # Reject malformed IDs instead of leaking arbitrary database text.
                 case_version_id = str(UUID(str(identifier)))
                 rows.append({'case_version_id': case_version_id, **classify(processing)})
-    return {'scope': 'active_baselines_and_all_versions_in_enabled_schedule_projects',
+    return {'scope': 'all_versions_in_active_baseline_or_enabled_schedule_projects',
             'exact_schedule_membership_resolved': False,
             'count': len(rows), 'versions': rows}
 

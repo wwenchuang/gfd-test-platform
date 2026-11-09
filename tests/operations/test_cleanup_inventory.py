@@ -50,6 +50,7 @@ def test_query_scope_is_a_conservative_superset_and_read_only():
     module = load_module()
     sql = ' '.join(module.INVENTORY_SQL.lower().split())
     assert "b.status = 'active'" in sql
+    assert 'b.project_id = c.project_id' in sql
     assert 'j.enabled' in sql
     assert 'c.project_id' in sql
     assert sql.startswith('select ')
@@ -66,11 +67,12 @@ def test_real_postgresql_scope_and_output_are_read_only():
     module = load_module()
     with psycopg.connect(dsn) as connection:
         result = module.inventory(connection)
-        assert result['count'] == 3
+        assert result['count'] == 4
         ids = {row['case_version_id'] for row in result['versions']}
         assert ids == {'00000000-0000-0000-0000-000000000001',
                        '00000000-0000-0000-0000-000000000002',
-                       '00000000-0000-0000-0000-000000000003'}
+                       '00000000-0000-0000-0000-000000000003',
+                       '00000000-0000-0000-0000-000000000005'}
         assert 'NEVER_PRINT_SECRET' not in json.dumps(result)
         flagged = next(row for row in result['versions'] if row['case_version_id'].endswith('000000000001'))
         assert flagged['earlier_output'] and flagged['multi_cleanup']
@@ -101,5 +103,49 @@ def test_inventory_transaction_actually_rejects_writes():
                 with real.cursor(**kwargs) as cursor:
                     yield cursor
         result = module.inventory(ProbeConnection())
-        assert result['count'] == 3
+        assert result['count'] == 4
         assert real.execute("SELECT count(*) FROM api_cases WHERE id='should-not-exist'").fetchone()[0] == 0
+
+
+def test_unknown_project_fails_instead_of_silently_dropping_versions():
+    import os
+    import psycopg
+    dsn = os.environ.get('CLEANUP_INVENTORY_TEST_DSN')
+    if not dsn:
+        pytest.skip('requires an isolated temporary PostgreSQL database')
+    module = load_module()
+    with psycopg.connect(dsn) as setup:
+        setup.execute("INSERT INTO api_cases VALUES ('null-project', NULL)")
+        setup.execute("INSERT INTO api_case_versions VALUES ('00000000-0000-0000-0000-000000000006', 'null-project', '{}')")
+    try:
+        with psycopg.connect(dsn) as connection:
+            with pytest.raises(ValueError):
+                module.inventory(connection)
+    finally:
+        with psycopg.connect(dsn) as cleanup:
+            cleanup.execute("DELETE FROM api_case_versions WHERE id = '00000000-0000-0000-0000-000000000006'")
+            cleanup.execute("DELETE FROM api_cases WHERE id = 'null-project'")
+
+
+@pytest.mark.parametrize(('insert_sql', 'delete_sql'), [
+    ("INSERT INTO api_scheduled_jobs VALUES (NULL, TRUE)", "DELETE FROM api_scheduled_jobs WHERE project_id IS NULL"),
+    ("INSERT INTO api_baselines VALUES ('00000000-0000-0000-0000-000000000003', NULL, 'active')", "DELETE FROM api_baselines WHERE project_id IS NULL"),
+    ("INSERT INTO api_baselines VALUES ('00000000-0000-0000-0000-000000000003', 'wrong-project', 'active')", "DELETE FROM api_baselines WHERE project_id = 'wrong-project'"),
+    ("INSERT INTO api_case_versions VALUES ('00000000-0000-0000-0000-000000000006', 'missing-case', '{}')", "DELETE FROM api_case_versions WHERE id = '00000000-0000-0000-0000-000000000006'"),
+])
+def test_unknown_or_inconsistent_scope_fails_closed(insert_sql, delete_sql):
+    import os
+    import psycopg
+    dsn = os.environ.get('CLEANUP_INVENTORY_TEST_DSN')
+    if not dsn:
+        pytest.skip('requires an isolated temporary PostgreSQL database')
+    module = load_module()
+    with psycopg.connect(dsn) as setup:
+        setup.execute(insert_sql)
+    try:
+        with psycopg.connect(dsn) as connection:
+            with pytest.raises(ValueError):
+                module.inventory(connection)
+    finally:
+        with psycopg.connect(dsn) as cleanup:
+            cleanup.execute(delete_sql)
