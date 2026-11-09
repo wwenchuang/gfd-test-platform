@@ -23,8 +23,9 @@ def _fresh_dialog_motion(previous,event):
     start,end=event.get('start_ms'),previous.get('end_ms')
     if not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or not 0<=start-end<=3000:return False
     previous_note=previous.get('observation','')
-    if not re.search(r'(?:弹出|出现|打开|显示).{0,24}(?:弹窗|对话框)',previous_note):return False
-    if not re.search(r'弹窗|对话框',event.get('target','')):return False
+    container=r'(?:弹窗|对话框|面板|浮层|底部弹层|弹层)'
+    if not re.search(rf'(?:弹出|出现|打开|显示).{{0,24}}{container}|{container}.{{0,12}}(?:弹出|出现|打开|显示)',previous_note):return False
+    if not re.search(container,event.get('target','')):return False
     # An observation of an actual continuous contact is stronger than merely
     # describing content displacement or asserting the user scrolled.
     note=event.get('observation','')
@@ -53,6 +54,62 @@ def disputed_scroll_refs(original, reviewed):
                 not frames & interactions and any(frames <= old for old in observations)):
             refs.update(frames)
     return refs
+
+
+def disputed_tap_scroll_refs(original, reviewed):
+    """Review a re-observed scroll confined to evidence already owned by an old click."""
+    refs=set()
+    taps=[event for event in original if event.get('action')=='aiTap']
+    for tap in taps:
+        old=set(tap.get('frame_refs',[]))
+        if not old:continue
+        for event in reviewed:
+            frames=set(event.get('frame_refs',[]))
+            if event.get('action')=='aiScroll' and frames and frames<=old:
+                refs.update(frames)
+    return refs
+
+
+_NO_ACTION_ASSERTION=re.compile(
+    r'(?:未见|未观察到|没有观察到|没有|未发生|无)'
+    r'(?:当前|本帧|本次|任何|新的|独立的|独立|用户|手动|触点|手指){0,4}'
+    r'(?:用户)?(?:触点|点击|操作|交互|按下)(?:操作)?')
+
+
+def explicit_no_action_assertion(note):
+    return bool(_NO_ACTION_ASSERTION.search(note or ''))
+
+
+def contradictory_tap_assertion_refs(*event_groups):
+    """Return shared original frames claimed by a tap and an explicit no-action assertion."""
+    groups=[list(group or []) for group in event_groups]
+    refs=set()
+    for i,left_group in enumerate(groups):
+        for right_group in groups[i:]:
+            for left_index,left in enumerate(left_group):
+                start=left_index+1 if left_group is right_group else 0
+                for right in right_group[start:]:
+                    if left.get('action')=='aiAssert' and right.get('action')=='aiTap':
+                        assertion,tap=left,right
+                    elif left.get('action')=='aiTap' and right.get('action')=='aiAssert':
+                        assertion,tap=right,left
+                    else:continue
+                    common=set(assertion.get('frame_refs',[])) & set(tap.get('frame_refs',[]))
+                    if common and explicit_no_action_assertion(assertion.get('observation','')):
+                        refs.update(common)
+    return refs
+
+
+def contradictory_tap_assertion_questions(*event_groups):
+    refs=contradictory_tap_assertion_refs(*event_groups)
+    if not refs:return []
+    return ['同一原帧同时支持点击与“未观察到用户操作”的判断，请核对触点证据；无法确认时保留疑问，不删除或替换动作。']
+
+
+def disputed_tap_scroll_questions(original, reviewed):
+    refs=disputed_tap_scroll_refs(original,reviewed)
+    if not refs:return []
+    return ['独立复核把旧点击所引用原帧中的位移描述为滚动，请核对完整触点轨迹；图片加载或布局变化不能单独证明用户滚动，真实拖动仍须保留。']
 
 
 REVIEW_QUESTION=(

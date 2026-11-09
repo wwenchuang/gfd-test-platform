@@ -5,6 +5,7 @@ from . import ai_skill_service as ai
 
 def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=None):
     from .ui_video_analysis import _bind_whole_evidence, validate_analysis
+    from .ui_video_automatic_motion import explicit_no_action_assertion
     timeout_retry_budget = timeout_retry_budget if isinstance(timeout_retry_budget, dict) else {'used': False}
     by_name = {asset['name']: asset for asset in assets}
     hints = []
@@ -46,15 +47,36 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
         if cancelled():
             raise ValueError('video_cancelled')
         checked = validate_analysis(_bind_whole_evidence(result, selected), selected, duration)
-        uncertain=[e for e in checked['events'] if e['action']=='aiTap' and parent['frame_id'] in e['frame_refs'] and
-                   (e['uncertainties'] or checked['uncertainties'] or checked['multiple_scenarios'])]
-        if uncertain:
+        root_questions=list(checked['uncertainties'])
+        bound_action_hints=[event for event in checked['events']
+            if parent['frame_id'] in event['frame_refs'] and
+            (event['action']=='navigateBack' or
+             event['action']=='aiAssert' and explicit_no_action_assertion(event['observation']))]
+        uncertain_taps=[event for event in checked['events'] if event['action']=='aiTap' and
+            parent['frame_id'] in event['frame_refs'] and
+            (event['uncertainties'] or root_questions or checked['multiple_scenarios'])]
+        if bound_action_hints:
+            coframed=[event for event in checked['events'] if parent['frame_id'] in event['frame_refs']]
+            if uncertain_taps or len(bound_action_hints)>1 or len(coframed)>len(bound_action_hints):
+                # A second plausible action in the same probe response cannot
+                # be discarded just because a return/no-action hint exists.
+                raise ValueError('video_model_invalid')
+            for event in bound_action_hints:
+                hints.append({'frame_id':parent['frame_id'],'action':event['action'],'target':event['target'],
+                              'observation':event['observation'],
+                              'requires_review':bool(event['uncertainties'] or root_questions or checked['multiple_scenarios']),
+                              'questions':list(dict.fromkeys(root_questions+event['uncertainties'])),
+                              'multiple_scenarios':checked['multiple_scenarios']})
+            continue
+        if uncertain_taps:
             # Preserve an uncertain click as a review blocker, never as a
             # silently trusted target. Ambiguous multi-action probes fail closed.
-            if len(checked['events'])!=1 or len(uncertain)!=1:raise ValueError('video_model_invalid')
-            event=uncertain[0]
+            if len(checked['events'])!=1 or len(uncertain_taps)!=1:raise ValueError('video_model_invalid')
+            event=uncertain_taps[0]
             hints.append({'frame_id':parent['frame_id'],'target':event['target'],
-                          'observation':event['observation'],'requires_review':True})
+                          'observation':event['observation'],'requires_review':True,
+                          'questions':list(dict.fromkeys(root_questions+event['uncertainties'])),
+                          'multiple_scenarios':checked['multiple_scenarios']})
             continue
         if checked['uncertainties'] or checked['multiple_scenarios'] or len(checked['events']) != 1:
             continue
@@ -65,17 +87,52 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
     return hints
 
 
-def bind_uncertain_hints(events,hints):
-    """Attach the platform-owned blocker to exactly one same-frame tap."""
+def bind_uncertain_hints(events,hints,analysis=None):
+    """Attach blockers only to events sharing the evidenced source frame."""
     question='触点目标或页面变化存在疑问，请对照原视频核对'
-    found=False
+    root_questions=[]
     for hint in hints:
+        if hint.get('multiple_scenarios'):
+            if isinstance(analysis,dict):analysis['multiple_scenarios']=True
+            root_questions.append('局部复核识别到多个可能场景，请保留该不确定性并核对原帧。')
+        if hint.get('action') in ('navigateBack','aiAssert'):
+            root_questions.extend(hint.get('questions',[]))
+            if hint.get('multiple_scenarios'):
+                scenario_question='局部复核识别到多个可能场景，请保留该不确定性并核对原帧。'
+                root_questions.append(scenario_question)
+            matches=[e for e in events if hint['frame_id'] in e.get('frame_refs',[])]
+            taps=[event for event in matches if event.get('action')=='aiTap']
+            if taps:
+                if any(len(event.get('uncertainties',[]))>=10 for event in taps):raise ValueError('video_model_invalid')
+                conflict_question='同帧局部复核与主观察动作判断冲突，请核对完整原帧；无法确认时保留疑问，不删除或替换动作。'
+                for event in taps:
+                    if conflict_question not in event['uncertainties']:event['uncertainties'].append(conflict_question)
+                root_questions.append(conflict_question)
+                continue
+            same_action=[event for event in matches if event.get('action')==hint['action']]
+            if same_action:
+                if hint.get('requires_review'):
+                    if any(len(event.get('uncertainties',[]))>=10 for event in same_action):raise ValueError('video_model_invalid')
+                    q=(scenario_question if hint.get('multiple_scenarios') else
+                       '局部原帧复核对同一动作仍有疑问，请核对原帧；不确定时保留问题。')
+                    for event in same_action:
+                        if q not in event['uncertainties']:event['uncertainties'].append(q)
+                    root_questions.append(q)
+                continue
+            if matches:
+                conflict_question='同帧局部复核与主观察动作判断冲突，请核对完整原帧；无法确认时保留疑问，不删除或替换动作。'
+                root_questions.append(conflict_question)
+            else:
+                root_questions.append(f"原帧 {hint['frame_id']} 的局部复核提示存在动作归因疑问，请核对完整原帧；不据此新增、删除或替换动作。")
+            continue
         if not hint.get('requires_review'):continue
+        root_questions.extend(hint.get('questions',[]))
         matches=[e for e in events if e.get('action')=='aiTap' and hint['frame_id'] in e.get('frame_refs',[])]
         if len(matches)!=1 or len(matches[0].get('uncertainties',[]))>=10:raise ValueError('video_model_invalid')
         if question not in matches[0]['uncertainties']:matches[0]['uncertainties'].append(question)
-        found=True
-    return question if found else ''
+        if not hint.get('questions'):
+            root_questions.append(question)
+    return list(dict.fromkeys(root_questions))
 
 
 def _unquote(value):
@@ -133,6 +190,8 @@ def _same_explicit_input_label(left, right):
 def conflict(events, hints, frames, diagnostic=None, evidence=None):
     times = {f['frame_id']:f['timestamp_ms'] for f in frames}
     for hint in hints:
+        if hint.get('action') in ('navigateBack','aiAssert'):
+            continue
         explicit = [e for e in events if e.get('action') == 'aiTap' and hint['frame_id'] in e.get('frame_refs',[])]
         nearby = explicit or [e for e in events if e.get('action') == 'aiTap' and e.get('frame_refs')
                   and abs(times[e['frame_refs'][0]]-times[hint['frame_id']]) <= 350]

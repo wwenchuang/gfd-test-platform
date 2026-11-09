@@ -223,6 +223,58 @@ def test_fresh_dialog_negated_drag_is_not_treated_as_evidence():
     assert review_refs([tap,scroll])=={'a','b'}
 
 
+@pytest.mark.parametrize('container', ['面板','浮层','底部弹层','弹层'])
+def test_fresh_opened_container_with_inferred_motion_requests_original_review(container):
+    from task_server.services.ui_video_automatic_motion import fresh_dialog_review_questions
+    tap={'action':'aiTap','start_ms':100,'end_ms':200,'frame_refs':['f1'],
+         'observation':f'点击后打开了确认{container}'}
+    scroll={'action':'aiScroll','target':f'{container}内容区域','start_ms':300,'end_ms':400,
+            'frame_refs':['f2','f3'],'evidence_kind':'inferred','observation':'内容出现位移，判断为滚动'}
+    assert review_refs([tap,scroll])=={'f2','f3'}
+    assert fresh_dialog_review_questions([tap,scroll])
+    assert tap['action']=='aiTap' and scroll['action']=='aiScroll'
+
+
+def test_later_independent_drag_is_not_mistaken_for_new_container_layout():
+    tap={'action':'aiTap','start_ms':0,'end_ms':100,'frame_refs':['f1'],
+         'observation':'点击后打开了面板'}
+    scroll={'action':'aiScroll','target':'面板内容','start_ms':20000,'end_ms':21000,
+            'frame_refs':['f2','f3'],'evidence_kind':'inferred','observation':'内容向上移动'}
+    assert review_refs([tap,scroll])==set()
+
+
+def test_new_review_scroll_inside_old_click_frames_is_disputed_across_passes():
+    from task_server.services.ui_video_automatic_motion import disputed_tap_scroll_refs
+    original=[{'action':'aiTap','frame_refs':['frame-127','frame-130','frame-131','frame-132']}]
+    reviewed=[{'action':'aiScroll','frame_refs':['frame-127','frame-130'],
+               'observation':'内容上移，判断为独立滚动'}]
+    assert disputed_tap_scroll_refs(original,reviewed)=={'frame-127','frame-130'}
+
+
+def test_cross_pass_scroll_review_ignores_new_drag_frames_and_partial_context_overlap():
+    from task_server.services.ui_video_automatic_motion import disputed_tap_scroll_refs
+    original=[{'action':'aiTap','frame_refs':['f1','f2','f3']}]
+    assert disputed_tap_scroll_refs(original,[{'action':'aiScroll','frame_refs':['f2','f4']}])==set()
+    assert disputed_tap_scroll_refs(original,[{'action':'aiScroll','frame_refs':['f4','f5'],
+                                                'observation':'触点连续拖动，内容跟随移动'}])==set()
+
+
+def test_explicit_no_action_assertion_conflicting_with_same_frame_tap_is_reviewed():
+    from task_server.services.ui_video_automatic_motion import contradictory_tap_assertion_refs
+    tap={'action':'aiTap','frame_refs':['f2'],'start_ms':200,'end_ms':200}
+    assertion={'action':'aiAssert','frame_refs':['f2'],'start_ms':200,'end_ms':200,
+               'observation':'当前原帧未见用户触点或点击操作'}
+    assert contradictory_tap_assertion_refs([tap,assertion])=={'f2'}
+
+
+def test_same_frame_context_without_explicit_action_denial_is_not_a_conflict():
+    from task_server.services.ui_video_automatic_motion import contradictory_tap_assertion_refs
+    tap={'action':'aiTap','frame_refs':['f2'],'start_ms':200,'end_ms':200}
+    assertion={'action':'aiAssert','frame_refs':['f1','f2'],'start_ms':100,'end_ms':200,
+               'observation':'点击后的页面稳定显示'}
+    assert contradictory_tap_assertion_refs([tap,assertion])==set()
+
+
 def test_dialog_assertion_is_not_itself_a_suspicious_scroll():
     tap={'action':'aiTap','start_ms':0,'end_ms':100,'observation':'弹出对话框'}
     assertion={'action':'aiAssert','target':'弹窗','frame_refs':['a','b'],

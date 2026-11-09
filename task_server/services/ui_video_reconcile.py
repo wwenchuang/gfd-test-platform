@@ -246,12 +246,16 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     checked,new_secrets=observe_windows(frames,duration,root,cancelled,progress,
                                        review_events=events,prior_secrets=secrets)
     secrets.extend(new_secrets)
-    from .ui_video_automatic_motion import review_refs,disputed_scroll_refs,fresh_dialog_review_questions
-    motion_questions=fresh_dialog_review_questions(events)+fresh_dialog_review_questions(checked['events'])
+    from .ui_video_automatic_motion import (review_refs,disputed_scroll_refs,disputed_tap_scroll_refs,
+        contradictory_tap_assertion_refs,fresh_dialog_review_questions,
+        disputed_tap_scroll_questions,contradictory_tap_assertion_questions)
     repair_refs=review_refs(events) | review_refs(checked['events']) | _overlapping_gesture_refs(checked['events']) | _tap_scroll_refs(events) | _tap_scroll_refs(checked['events'])
     repair_refs.update(_overlapping_tap_refs(events) | _overlapping_tap_refs(checked['events']))
     repair_refs.update(_overlapping_input_refs(checked['events']))
     repair_refs.update(disputed_scroll_refs(events,checked['events']))
+    repair_refs.update(disputed_tap_scroll_refs(events,checked['events']))
+    repair_refs.update(contradictory_tap_assertion_refs(events,checked['events']))
+    pre_repair_events=list(checked['events'])
     from .ui_video_delayed_response import review_refs as delayed_refs
     repair_refs.update(delayed_refs(events,checked['events']))
     try:
@@ -262,6 +266,10 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
     if repair_refs:
         checked=_repair_coverage(events,checked,frames,duration,root,cancelled,secrets,repair_refs)
         check_coverage(events,checked['events'],duration,checked.get('reconciliation_audit',{}).get('coverage_resolutions'),'first_pass')
+    motion_questions=(fresh_dialog_review_questions(events)+fresh_dialog_review_questions(pre_repair_events)+
+        fresh_dialog_review_questions(checked['events'])+
+        disputed_tap_scroll_questions(events,pre_repair_events)+disputed_tap_scroll_questions(events,checked['events'])+
+        contradictory_tap_assertion_questions(events,pre_repair_events)+contradictory_tap_assertion_questions(events,checked['events']))
     warnings=[q for e in checked['events'] for q in e['uncertainties'] if q.startswith(('首轮点击','首轮滚动','点击与返回'))]
     checked['uncertainties']=list(dict.fromkeys(checked['uncertainties']+warnings+motion_questions))
     return checked

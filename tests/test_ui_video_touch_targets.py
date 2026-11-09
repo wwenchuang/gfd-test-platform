@@ -36,6 +36,230 @@ def test_detail_probe_requires_parent_reference_and_single_certain_tap(monkeypat
     assert targets.probe(frames,[detail],assets,1000,lambda:False)==[]
 
 
+def test_probe_preserves_parent_bound_navigate_back_as_review_hint(monkeypatch):
+    frames=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,5)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms']} for f in frames+[detail]]
+    response={'events':[{'action':'navigateBack','target':'上一页面','value':'','frame_refs':['frame-002','frame-003'],
+                         'observation':'当前页面返回上一页面','uncertainties':[]}],
+              'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:response)
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    assert hints==[{'frame_id':'frame-002','action':'navigateBack','target':'上一页面',
+                    'observation':'当前页面返回上一页面','requires_review':False,'questions':[],
+                    'multiple_scenarios':False}]
+
+
+def test_uncertain_navigate_back_probe_is_not_discarded(monkeypatch):
+    frames=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,5)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms']} for f in frames+[detail]]
+    response={'events':[{'action':'navigateBack','target':'上一页面','value':'','frame_refs':['frame-002'],
+                         'observation':'当前页面返回上一页面','uncertainties':['转场中，无法确认操作来源']}],
+              'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:response)
+    assert targets.probe(frames,[detail],assets,1000,lambda:False)==[
+        {'frame_id':'frame-002','action':'navigateBack','target':'上一页面',
+         'observation':'当前页面返回上一页面','requires_review':True,
+         'questions':['转场中，无法确认操作来源'],'multiple_scenarios':False}]
+
+
+def test_uncertain_tap_probe_carries_multiple_scenarios(monkeypatch):
+    frames=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,5)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms']} for f in frames+[detail]]
+    response={'events':[{'action':'aiTap','target':'确认按钮','value':'','frame_refs':['frame-002'],
+                         'observation':'可能点击确认','uncertainties':['触点不清楚']}],
+              'uncertainties':[],'multiple_scenarios':True}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:response)
+    assert targets.probe(frames,[detail],assets,1000,lambda:False)==[
+        {'frame_id':'frame-002','target':'确认按钮','observation':'可能点击确认',
+         'requires_review':True,'questions':['触点不清楚'],'multiple_scenarios':True}]
+
+
+def test_uncertain_tap_hint_propagates_multiple_scenarios_to_root():
+    events=[{'action':'aiTap','target':'确认按钮','frame_refs':['f2'],'uncertainties':[]}]
+    analysis={'multiple_scenarios':False,'uncertainties':[]}
+    questions=targets.bind_uncertain_hints(events,[{'frame_id':'f2','target':'确认按钮',
+        'requires_review':True,'questions':['触点不清楚'],'multiple_scenarios':True}],analysis)
+    assert analysis['multiple_scenarios'] is True
+    assert any('多个可能场景' in q for q in questions)
+    assert any('触点目标' in q for q in events[0]['uncertainties'])
+
+
+def test_confident_same_frame_navigate_back_agreement_is_not_blocked():
+    events=[{'action':'navigateBack','target':'上一页面','frame_refs':['f2'],'uncertainties':[]}]
+    hints=[{'frame_id':'f2','action':'navigateBack','target':'上一页面','requires_review':False,'questions':[]}]
+    assert targets.bind_uncertain_hints(events,hints)==[]
+    assert events[0]['uncertainties']==[]
+
+
+def test_unmatched_confident_return_hint_becomes_source_frame_root_question():
+    question=targets.bind_uncertain_hints([], [{'frame_id':'f2','action':'navigateBack',
+        'target':'上一页面','requires_review':False,'questions':[]}])
+    assert any('f2' in q and '动作归因疑问' in q for q in question)
+
+
+def test_local_multiple_scenarios_sets_root_flag_and_keeps_generic_question():
+    events=[{'action':'navigateBack','target':'上一页面','frame_refs':['f2'],'uncertainties':[]}]
+    root={'multiple_scenarios':False,'uncertainties':[]}
+    hint={'frame_id':'f2','action':'navigateBack','target':'上一页面','requires_review':True,
+          'questions':[],'multiple_scenarios':True}
+    question=targets.bind_uncertain_hints(events,[hint],root)
+    assert root['multiple_scenarios'] is True
+    assert question and any('场景' in q for q in question)
+    assert any('场景' in q for q in events[0]['uncertainties'])
+
+
+def test_conflict_and_unmatched_question_hints_are_both_preserved():
+    events=[{'action':'aiTap','target':'确认按钮','frame_refs':['f1'],'uncertainties':[]}]
+    hints=[{'frame_id':'f1','action':'navigateBack','target':'上一页面','requires_review':True,'questions':[]},
+           {'frame_id':'f2','action':'navigateBack','target':'上一页面','requires_review':True,
+            'questions':['第二帧过渡来源不确定']}]
+    question=targets.bind_uncertain_hints(events,hints)
+    assert any('f2' in q and '动作归因疑问' in q for q in question)
+    assert any('第二帧过渡来源不确定' in q for q in question)
+    assert any('动作判断冲突' in q for q in question)
+    assert any('动作判断冲突' in q for q in events[0]['uncertainties'])
+
+
+def test_return_hint_with_same_frame_assertion_and_tap_blocks_only_tap():
+    assertion={'action':'aiAssert','target':'页面仍在预览','frame_refs':['frame-332'],
+               'uncertainties':[]}
+    tap={'action':'aiTap','target':'确认按钮','frame_refs':['frame-332'],'uncertainties':[]}
+    events=[assertion,tap]
+    questions=targets.bind_uncertain_hints(events,[{'frame_id':'frame-332','action':'navigateBack',
+        'target':'上一页面','requires_review':True,'questions':[]}])
+    assert any('动作判断冲突' in q for q in questions)
+    assert events[0] is assertion and assertion['uncertainties']==[]
+    assert events[1] is tap and any('动作判断冲突' in q for q in tap['uncertainties'])
+
+
+def test_probe_fails_closed_when_navigation_and_uncertain_tap_share_output(monkeypatch):
+    frames=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,5)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms']} for f in frames+[detail]]
+    response={'events':[
+        {'action':'navigateBack','target':'上一页面','value':'','frame_refs':['frame-002'],
+         'observation':'页面返回上一页','uncertainties':[]},
+        {'action':'aiTap','target':'确认按钮','value':'','frame_refs':['frame-002'],
+         'observation':'按钮可能被点击','uncertainties':['触点不确定']}],
+        'uncertainties':[],'multiple_scenarios':True}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:response)
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        targets.probe(frames,[detail],assets,1000,lambda:False)
+
+
+def test_probe_fails_closed_when_confident_navigation_and_tap_share_output(monkeypatch):
+    frames=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,5)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms']} for f in frames+[detail]]
+    response={'events':[
+        {'action':'navigateBack','target':'上一页面','value':'','frame_refs':['frame-002'],
+         'observation':'页面返回上一页','uncertainties':[]},
+        {'action':'aiTap','target':'确认按钮','value':'','frame_refs':['frame-002'],
+         'observation':'确认按钮被点击','uncertainties':[]}],
+        'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:response)
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        targets.probe(frames,[detail],assets,1000,lambda:False)
+
+
+def test_same_frame_navigate_back_hint_blocks_click_without_rewriting_action():
+    events=[{'action':'aiTap','target':'确认打印按钮','frame_refs':['frame-002'],'uncertainties':[]}]
+    hints=[{'frame_id':'frame-002','action':'navigateBack','target':'上一页面',
+            'observation':'当前页面返回上一页面','requires_review':True}]
+    question=targets.bind_uncertain_hints(events,hints)
+    assert question and any('动作判断' in q for q in question)
+    assert events[0]['action']=='aiTap' and events[0]['target']=='确认打印按钮'
+    assert any('动作判断' in item for item in events[0]['uncertainties'])
+
+
+def test_navigate_back_hint_on_another_frame_is_global_not_bound_to_click():
+    events=[{'action':'aiTap','target':'确认打印按钮','frame_refs':['frame-002'],'uncertainties':[]}]
+    hints=[{'frame_id':'frame-003','action':'navigateBack','target':'上一页面',
+            'observation':'当前页面返回上一页面','requires_review':True}]
+    assert any('frame-003' in q for q in targets.bind_uncertain_hints(events,hints))
+    assert events[0]['action']=='aiTap' and events[0]['uncertainties']==[]
+
+
+def test_action_hint_without_same_frame_tap_survives_as_root_question():
+    question=targets.bind_uncertain_hints([], [{'frame_id':'frame-002','action':'navigateBack',
+        'target':'上一页面','observation':'页面返回上一页','requires_review':True}])
+    assert any('frame-002' in q and '动作归因疑问' in q for q in question)
+
+
+def test_observe_window_surfaces_same_frame_return_vs_tap_as_root_blocker(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[{'frame_id':'frame-001','action':'navigateBack',
+        'target':'上一页面','observation':'当前页面返回上一页面','requires_review':True}])
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:{'events':[{'action':'aiTap','target':'确认按钮',
+        'value':'','frame_refs':['frame-001'],'observation':'确认按钮被点击','uncertainties':[]}],
+        'uncertainties':[],'multiple_scenarios':False})
+    result,_=windows.observe_windows(frames,1000,tmp_path,lambda:False)
+    assert result['events'][0]['action']=='aiTap' and result['events'][0]['target']=='确认按钮'
+    assert any('动作判断冲突' in q for q in result['events'][0]['uncertainties'])
+    assert any('动作判断冲突' in q for q in result['uncertainties'])
+    assert result['uncertainties'].count(next(q for q in result['uncertainties'] if '动作判断冲突' in q))==1
+
+
+def test_observe_window_adds_hint_questions_once_and_enforces_root_budget(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    source_question='局部来源问题'
+    monkeypatch.setattr(targets,'probe',lambda *a:[{'frame_id':'frame-001','action':'navigateBack',
+        'target':'上一页面','requires_review':True,'questions':[source_question]}])
+    def model(*a,**kw):
+        return {'events':[{'action':'aiTap','target':'按钮','value':'','frame_refs':['frame-001'],
+            'observation':'点击按钮','uncertainties':[]}], 'uncertainties':[source_question], 'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    result,_=windows.observe_windows(frames,1000,tmp_path,lambda:False)
+    assert result['uncertainties'].count(source_question)==1
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:{'events':[{'action':'aiTap','target':'按钮',
+        'value':'','frame_refs':['frame-001'],'observation':'点击按钮','uncertainties':[]}],
+        'uncertainties':[f'问题{i}' for i in range(30)],'multiple_scenarios':False})
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        windows.observe_windows(frames,1000,tmp_path,lambda:False)
+
+
+def test_observe_window_preserves_local_multiple_scenarios_with_matching_return(monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    monkeypatch.setattr(windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(detail,'append_details',lambda *a:[])
+    monkeypatch.setattr(targets,'probe',lambda *a:[{'frame_id':'frame-001','action':'navigateBack',
+        'target':'上一页面','observation':'页面返回上一页','requires_review':True,'questions':[],
+        'multiple_scenarios':True}])
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:{'events':[{'action':'navigateBack','target':'上一页面',
+        'value':'','frame_refs':['frame-001'],'observation':'页面返回上一页','uncertainties':[]}],
+        'uncertainties':[],'multiple_scenarios':False})
+    result,_=windows.observe_windows(frames,1000,tmp_path,lambda:False)
+    assert result['multiple_scenarios'] is True
+    assert any('场景' in q for q in result['uncertainties'])
+    assert any('场景' in q for q in result['events'][0]['uncertainties'])
+
+
+def test_action_hint_root_question_reaches_draft_execution_gate():
+    from task_server.services.ui_video_analysis import draft_proposal
+    from task_server.services.ui_case_draft_contract import build_draft_yaml
+    blocker='；'.join(targets.bind_uncertain_hints([], [{'frame_id':'f2','action':'navigateBack','target':'上一页面',
+        'observation':'转场来源不确定','requires_review':True,'questions':['转场来源不确定']}])
+    )
+    document={'app_id':'com.example.app','source_id':'uvs_'+'0'*32,'analysis_version':1,
+        'goal':'','title':'页面操作','media':{'frames':[{'frame_id':'f2','timestamp_ms':100}], 'duration_ms':100},
+        'events':[{'action':'aiTap','target':'确认按钮','value':'','frame_refs':['f2'],'start_ms':100,'end_ms':100,
+                   'evidence_kind':'inferred','observation':'确认按钮','uncertainties':[]}],
+        'uncertainties':[blocker]}
+    proposal,_=draft_proposal(document)
+    assert any('转场来源不确定' in question for question in proposal['questions'])
+    assert not build_draft_yaml(proposal,document['app_id'])['ready']
+
+
 def test_cancelled_probe_does_not_call_model(monkeypatch):
     monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:pytest.fail('cancelled model call'))
     with pytest.raises(ValueError,match='video_cancelled'):

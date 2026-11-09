@@ -130,10 +130,14 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                             if secret:target_evidence[key]=target_evidence[key].replace(secret,'[输入内容未保存]')
                     error.target_failure_evidence=target_evidence
                     raise error
-                question=bind_uncertain_hints(checked['events'],payload['touch_targets'])
-                if question and question not in checked['uncertainties']:
-                    if len(checked['uncertainties'])>=30:raise ValueError('video_model_invalid')
-                    checked['uncertainties'].append(question)
+                hint_questions=bind_uncertain_hints(checked['events'],payload['touch_targets'],checked)
+                if not isinstance(hint_questions,list):raise ValueError('video_model_invalid')
+                from .ui_video_analysis import _text
+                for hint_question in hint_questions:
+                    hint_question=_text(hint_question)
+                    if hint_question and hint_question not in checked['uncertainties']:
+                        if len(checked['uncertainties'])>=30:raise ValueError('video_model_invalid')
+                        checked['uncertainties'].append(hint_question)
                 break
             except ValueError as error:
                 if cancelled() or attempt or getattr(error,'target_diagnostic',{}).get('ambiguous_bare_probe'):raise
