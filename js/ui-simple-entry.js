@@ -35,7 +35,7 @@ function resetUiSimpleWorkflow(){
   uiStartCreationIntent=null;
   uiSimpleEpoch++;uiSimpleEnabled=false;uiSimpleEvidenceAvailable=false;
   window.UiSimpleFlow?.reset();leaveUiSimpleWorkflow();
-  document.querySelectorAll('[data-practice-workbench] [data-ui-week-one], [data-practice-workbench] [data-ui-week-two]').forEach(node=>node.remove());
+  document.querySelectorAll('[data-practice-workbench] [data-ui-week-one], [data-practice-workbench] [data-ui-week-two], [data-practice-workbench] [data-practice-ai-results]').forEach(node=>node.remove());
 }
 
 async function initUiSimpleAvailability({navigate=true}={}){
@@ -160,6 +160,7 @@ function attachTaskWorkbench(page){
   const apiSlot=cards.querySelector('[data-practice-api-slot]');
   if(hasPermission('api.view')){const link=document.createElement('a');link.dataset.practiceApi='';link.href='/api-test/';link.textContent='打开 API 测试';link.onclick=event=>{if(!current()||!hasPermission('api.view'))event.preventDefault();};apiSlot.append(link);}
   else apiSlot.textContent='需要 API 查看权限，请联系管理员。';
+  if(hasPermission('api.view'))attachPracticeAiResults(page,current);
   if(!hasPermission('platform.configure')||(currentAccessProfile?.is_superuser!==true&&currentAccessProfile?.scope?.ui_apps!=='*'))return;
   attachUiFirstWeekGuide(page);
   const previousEnvironment=page.querySelector('[data-ui-week-one]');
@@ -218,6 +219,36 @@ function attachTaskWorkbench(page){
   };
   button.onclick=load;scheduled.addEventListener('toggle',()=>{if(scheduled.open&&!loaded)load();});acceptance.append(scheduled);
   panel.append(acceptance);
+}
+function attachPracticeAiResults(page,current){
+  const panel=document.createElement('details');panel.dataset.practiceAiResults='';panel.className='ui-practice-details';
+  panel.innerHTML='<summary>查看任务的 AI 生成状态</summary><p>选择项目和测试任务，查看读取时的生成状态；草稿详情请到 API 测试查看。任务列表最多显示最近 100 条。这里不会发起生成或执行业务。</p><label>项目 <select data-ai-project><option value="">请选择项目</option></select></label> <label>测试任务 <select data-ai-task disabled><option value="">请选择任务</option></select></label> <button type="button" data-ai-refresh>刷新状态</button><p data-ai-result role="status" aria-live="polite"></p>';
+  page.append(panel);
+  const project=panel.querySelector('[data-ai-project]'),taskSelect=panel.querySelector('[data-ai-task]'),result=panel.querySelector('[data-ai-result]');
+  const profile=()=>JSON.stringify([sessionToken(),currentAccessProfile?.user_id,currentAccessProfile?.is_superuser,currentAccessProfile?.scope,currentAccessProfile?.permissions]);
+  const permitted=()=>current()&&hasPermission('api.view');let seq=0,loaded=false;
+  const valid=(id,key)=>id===seq&&permitted()&&profile()===key;
+  const request=async path=>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const response=await nativeFetch('/api'+path,{headers:authHeaders(),cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('unavailable');const payload=await response.json();if(payload?.ok!==true||!payload.data||typeof payload.data!=='object')throw Error('unavailable');return payload.data;}finally{clearTimeout(timer);}};
+  const options=(select,items,label)=>{select.replaceChildren(new Option(label,''));for(const item of items){if(typeof item?.id!=='string'||typeof item?.name!=='string')continue;const option=document.createElement('option');option.value=item.id;option.textContent=item.name;select.append(option);}};
+  const clearSelections=()=>{options(project,[],'请选择项目');options(taskSelect,[],'请选择任务');taskSelect.disabled=true;};
+  const loadProjects=async()=>{const id=++seq,key=profile();clearSelections();result.textContent='正在读取项目…';try{const data=await request('/api-testing/v1/projects');if(!valid(id,key))return;options(project,Array.isArray(data?.projects)?data.projects:[],'请选择项目');result.textContent='请选择项目。';}catch(_){if(valid(id,key)){clearSelections();result.textContent='项目暂不可用或无权查看，请稍后重试。';}}};
+  const loadTasks=async()=>{const id=++seq,key=profile(),selected=project.value;options(taskSelect,[],'请选择任务');taskSelect.disabled=true;result.textContent='';if(!selected)return;result.textContent='正在读取任务…';try{const data=await request('/api-testing/v1/tasks?project_id='+encodeURIComponent(selected));if(!valid(id,key)||project.value!==selected)return;options(taskSelect,Array.isArray(data?.tasks)?data.tasks.filter(x=>x.project_id===selected):[],'请选择任务');taskSelect.disabled=false;result.textContent='请选择测试任务。';}catch(_){if(valid(id,key)){clearSelections();result.textContent='任务暂不可用或无权查看，请稍后重试。';}}};
+  const loadResult=async()=>{const id=++seq,key=profile(),projectId=project.value,taskId=taskSelect.value;result.textContent='';if(!projectId||!taskId)return;result.textContent='正在读取任务结果…';const taskPath='/api-testing/v1/tasks?project_id='+encodeURIComponent(projectId);
+    try{
+      const first=await request(taskPath);if(!valid(id,key))return;const task=Array.isArray(first?.tasks)?first.tasks.find(x=>x.id===taskId&&x.project_id===projectId):null;
+      if(!task)throw Error('unavailable');if(!task.latest_ai_job_id){result.textContent='该任务没有可查看的 AI 生成记录。';return;}
+      const response=await request('/api-testing/v1/ai-jobs/'+encodeURIComponent(task.latest_ai_job_id));if(!valid(id,key))return;const job=response?.job;
+      if(!job||job.id!==task.latest_ai_job_id||job.project_id!==projectId||job.environment_revision_id!==task.environment_revision_id||!Array.isArray(job.endpoint_ids)||!Array.isArray(task.selected_endpoint_ids)||!job.endpoint_ids.every(x=>task.selected_endpoint_ids.includes(x)))throw Error('mismatch');
+      const second=await request(taskPath);if(!valid(id,key))return;const again=Array.isArray(second?.tasks)?second.tasks.find(x=>x.id===taskId&&x.project_id===projectId):null;
+      if(!again||again.latest_ai_job_id!==task.latest_ai_job_id||again.environment_revision_id!==task.environment_revision_id||JSON.stringify(again.selected_endpoint_ids)!==JSON.stringify(task.selected_endpoint_ids))throw Error('changed');
+      const batches=Array.isArray(job.batches)?job.batches:[];const count=batches.reduce((n,b)=>n+(Array.isArray(b.generated_draft_ids)?b.generated_draft_ids.length:0),0);
+      const state=({queued:'等待生成',running:'正在生成',completed:'生成完成',partial:'部分生成',failed:'生成失败',failed_gateway:'生成失败',failed_validation:'生成校验失败'})[job.state]||'状态待核验';
+      const timeout=batches.length>0&&batches.every(b=>b.state==='failed_gateway'&&b.error_code==='gateway_timeout');
+      result.textContent=state+'；生成草稿 '+count+' 条。'+(timeout?'模型服务或连接等待超时，具体原因待核查。':'')+' 草稿需要审查后才能使用。';
+    }catch(_){if(valid(id,key)){clearSelections();result.textContent='结果暂不可用、任务已变更或当前账号无权查看，请刷新重试。';}}
+  };
+  project.onchange=loadTasks;taskSelect.onchange=loadResult;panel.querySelector('[data-ai-refresh]').onclick=()=>{if(!project.value)loadProjects();else if(!taskSelect.value)loadTasks();else loadResult();};
+  panel.addEventListener('toggle',()=>{if(panel.open&&!loaded){loaded=true;loadProjects();}});
 }
 function attachUiFirstWeekGuide(page){
   const identity=uiSimpleIdentity(),epoch=uiSimpleEpoch;

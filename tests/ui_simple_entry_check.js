@@ -3,6 +3,36 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('../api-testing-ui/node_modules/jsdom');
 const wait=()=>new Promise(setImmediate);
+const mockPracticeFetch=w=>{const handler=w.apiRequest;w.nativeFetch=async(path,options)=>({ok:true,status:200,json:async()=>({ok:true,data:await handler(path.slice(4),options)})});};
+test('practice AI result follows the selected authorized task, not project latest',async t=>{
+ const {w}=fixture(t),calls=[];w.canAccessWorkflow=()=>true;
+ const task={id:'task-1',project_id:'project-1',environment_revision_id:'env-1',name:'反馈任务',selected_endpoint_ids:['ep-1'],latest_ai_job_id:'job-1'};
+ w.apiRequest=async path=>{calls.push(path);if(path==='/api-testing/v1/projects')return {projects:[{id:'project-1',name:'业务'}]};if(path==='/api-testing/v1/tasks?project_id=project-1')return {tasks:[task]};if(path==='/api-testing/v1/ai-jobs/job-1')return {job:{id:'job-1',project_id:'project-1',environment_revision_id:'env-1',endpoint_ids:['ep-1'],state:'failed_gateway',batches:[{state:'failed_gateway',error_code:'gateway_timeout',generated_draft_ids:[]}]}};throw Error(path);};
+ mockPracticeFetch(w);w.apiRequest=async()=>{throw Error('practice must use guarded fetch');};
+ w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-practice-ai-results]');assert.ok(panel);panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();
+ const project=panel.querySelector('[data-ai-project]');project.value='project-1';project.dispatchEvent(new w.Event('change'));await wait();await wait();const select=panel.querySelector('[data-ai-task]');select.value='task-1';select.dispatchEvent(new w.Event('change'));await wait();await wait();await wait();
+ assert.match(panel.textContent,/超时/);assert.match(panel.textContent,/0\s*条/);assert.doesNotMatch(calls.join(' '),/ai-jobs\/latest/);assert.ok(calls.filter(x=>x.includes('/tasks?')).length>=2);
+});
+test('practice AI result discards an old account response',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;let finish;const task={id:'task-1',project_id:'project-1',environment_revision_id:'env-1',name:'反馈任务',selected_endpoint_ids:['ep-1'],latest_ai_job_id:'job-1'};
+ w.apiRequest=async path=>{if(path==='/api-testing/v1/projects')return {projects:[{id:'project-1',name:'业务'}]};if(path==='/api-testing/v1/tasks?project_id=project-1')return {tasks:[task]};if(path==='/api-testing/v1/ai-jobs/job-1')return new Promise(r=>finish=r);throw Error(path);};
+ mockPracticeFetch(w);w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-practice-ai-results]');assert.ok(panel);panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();const project=panel.querySelector('[data-ai-project]');project.value='project-1';project.dispatchEvent(new w.Event('change'));await wait();await wait();const select=panel.querySelector('[data-ai-task]');select.value='task-1';select.dispatchEvent(new w.Event('change'));await wait();
+ w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};finish({job:{id:'job-1',project_id:'project-1',environment_revision_id:'env-1',endpoint_ids:['ep-1'],state:'completed',batches:[]}});await wait();await wait();assert.doesNotMatch(panel.textContent,/生成完成/);
+});
+test('practice AI result refuses environment mismatch and a changed task association',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;let mismatch=true,taskReads=0;const task={id:'task-1',project_id:'project-1',environment_revision_id:'env-1',name:'反馈任务',selected_endpoint_ids:['ep-1'],latest_ai_job_id:'job-1'};
+ w.apiRequest=async path=>{if(path==='/api-testing/v1/projects')return {projects:[{id:'project-1',name:'业务'}]};if(path==='/api-testing/v1/tasks?project_id=project-1'){taskReads++;return {tasks:[!mismatch&&taskReads===2?{...task,latest_ai_job_id:'job-2'}:task]};}if(path==='/api-testing/v1/ai-jobs/job-1')return {job:{id:'job-1',project_id:'project-1',environment_revision_id:mismatch?'other-env':'env-1',endpoint_ids:['ep-1'],state:'completed',batches:[]}};throw Error(path);};
+ mockPracticeFetch(w);w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-practice-ai-results]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();const project=panel.querySelector('[data-ai-project]');project.value='project-1';project.dispatchEvent(new w.Event('change'));await wait();await wait();const select=panel.querySelector('[data-ai-task]');select.value='task-1';select.dispatchEvent(new w.Event('change'));await wait();await wait();assert.doesNotMatch(panel.textContent,/生成完成/);assert.match(panel.textContent,/结果暂不可用/);
+ mismatch=false;panel.querySelector('[data-ai-refresh]').click();await wait();await wait();project.value='project-1';project.dispatchEvent(new w.Event('change'));await wait();await wait();taskReads=0;select.value='task-1';select.dispatchEvent(new w.Event('change'));await wait();await wait();await wait();assert.doesNotMatch(panel.textContent,/生成完成/);assert.match(panel.textContent,/任务已变更/);
+});
+test('practice AI result is removed immediately on session reset',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-practice-ai-results]');panel.querySelector('[data-ai-result]').textContent='private result';w.resetUiSimpleWorkflow();assert.doesNotMatch(w.document.body.textContent,/private result/);
+});
+test('practice AI status hides old selections and raw error after authorization failure',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;let denied=false,loggedOut=false;w.forceLogoutWithMessage=()=>loggedOut=true;
+ w.nativeFetch=async()=>denied?{ok:false,status:401,json:async()=>({error:'private error'})}:{ok:true,status:200,json:async()=>({ok:true,data:{projects:[{id:'p1',name:'private project'}]}})};
+ w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-practice-ai-results]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(panel.textContent,/private project/);denied=true;panel.querySelector('[data-ai-refresh]').click();await wait();await wait();assert.doesNotMatch(panel.textContent,/private project|private error/);assert.equal(loggedOut,false);
+});
 test('legacy records are absent from static page and loaded only after authorization',async t=>{
  const source=fs.readFileSync('js/ui-simple-entry.js','utf8');
  for(const id of ['0157b386-1475-4946-aae8-1664498ecc69','1eb0c640-d78a-41f9-b441-02785fd87e1c','43b09e5e-d879-47a2-bde5-2d462d48e988','6e5ae109-ba21-4434-9835-5d1e58d228ff','de803f8b-e18b-4e67-986d-b14ce737b8aa','0dfab6ed-b597-4c56-81bf-cc8d7dcb6342'])assert.doesNotMatch(source,new RegExp(id));
