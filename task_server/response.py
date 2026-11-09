@@ -104,7 +104,8 @@ class ResponseMixin:
         # Authentication failures may precede access-control initialization.
         path = getattr(self, "_access_path", "") or urllib.parse.urlsplit(getattr(self, "path", "")).path
         if (path.startswith("/api/ui-executions") or path in (
-                    "/api/platform/practice-cleanup-evidence", "/api/platform/week2-real")):
+                    "/api/platform/practice-cleanup-evidence", "/api/platform/week2-real",
+                    "/api/platform/practice-legacy-evidence")):
             self.send_header("Cache-Control", "private, no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

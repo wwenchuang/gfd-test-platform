@@ -3,6 +3,24 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('../api-testing-ui/node_modules/jsdom');
 const wait=()=>new Promise(setImmediate);
+test('legacy records are absent from static page and loaded only after authorization',async t=>{
+ const source=fs.readFileSync('js/ui-simple-entry.js','utf8');
+ for(const id of ['0157b386-1475-4946-aae8-1664498ecc69','1eb0c640-d78a-41f9-b441-02785fd87e1c','43b09e5e-d879-47a2-bde5-2d462d48e988','6e5ae109-ba21-4434-9835-5d1e58d228ff','de803f8b-e18b-4e67-986d-b14ce737b8aa','0dfab6ed-b597-4c56-81bf-cc8d7dcb6342'])assert.doesNotMatch(source,new RegExp(id));
+ assert.doesNotMatch(source,/GET \/print3d\/api\/v1\/feedback\/category\/first|The read operation timed out|30043 ms/);
+ const {w}=fixture(t), id='11111111-1111-4111-8111-111111111111';let resolve;
+ w.canAccessWorkflow=()=>true;w.apiRequest=path=>path==='/platform/practice-legacy-evidence'?new Promise(r=>{resolve=r;}):Promise.resolve({ok:true,results:[]});
+ w.activeWorkflow='ai_practice';w.showAiPractice();const section=w.document.querySelector('[data-practice-legacy-evidence]');assert.ok(section);assert.doesNotMatch(section.textContent,/私有摘要/);
+ section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();resolve({ok:true,records:[{key:'baseline',execution_id:id,summary:'私有摘要'}]});await wait();await wait();assert.match(section.textContent,/私有摘要/);const link=section.querySelector('a');assert.equal(link.getAttribute('href'),'/api-test/#/runs?executionId='+id);
+ w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
+ section.querySelector('button').click();w.currentAccessProfile={user_id:'third',scope:{ui_apps:'*'}};resolve({ok:true,records:[{key:'baseline',execution_id:id,summary:'旧账号摘要'}]});await wait();await wait();assert.doesNotMatch(section.textContent,/旧账号摘要|私有摘要/);
+});
+test('legacy evidence rejects same-account scope changes and clears on denied refresh',async t=>{
+ const {w}=fixture(t),id='11111111-1111-4111-8111-111111111111';let resolve;
+ w.canAccessWorkflow=()=>true;w.apiRequest=()=>new Promise(r=>{resolve=r;});w.activeWorkflow='ai_practice';w.showAiPractice();const section=w.document.querySelector('[data-practice-legacy-evidence]');section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();
+ w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*',api_projects:['another']}};resolve({ok:true,records:[{key:'trace',execution_id:id,summary:'已撤销摘要'}]});await wait();await wait();assert.doesNotMatch(section.textContent,/已撤销摘要/);
+ w.apiRequest=async()=>({ok:true,records:[{key:'trace',execution_id:id,summary:'受保护摘要'}]});section.querySelector('[data-legacy-refresh]').click();await wait();await wait();assert.match(section.textContent,/受保护摘要/);
+ w.apiRequest=async()=>{throw Object.assign(Error('denied'),{status:403});};section.querySelector('[data-legacy-refresh]').click();await wait();await wait();assert.doesNotMatch(section.textContent,/受保护摘要/);assert.match(section.textContent,/无权|不可用/);
+});
 function fixture(t){
  const dom=new JSDOM('<div id="app"><details data-ui-advanced open></details><main id="editor-area"></main></div>',{url:'http://localhost/task-manager.html',runScripts:'dangerously',pretendToBeVisual:true});t.after(()=>dom.window.close());
  const w=dom.window,calls=[];w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.activeWorkflow='dashboard';w.currentFile=null;
@@ -25,19 +43,21 @@ test('practice workspace keeps actual task links permission scoped and blocks st
  const {w,calls}=fixture(t);w.canAccessWorkflow=()=>false;w.hasPermission=p=>p==='platform.configure';w.activeWorkflow='ai_practice';w.showAiPractice();let page=w.document.querySelector('[data-practice-workbench]');assert.equal(page.querySelector('[data-practice-api]'),null);assert.ok(page.querySelector('[data-practice-workflow="ui_start"]').disabled);assert.ok(page.querySelector('[data-practice-workflow="ui_reports"]').disabled);
  w.hasPermission=()=>true;w.canAccessWorkflow=()=>true;w.showAiPractice();page=w.document.querySelector('[data-practice-workbench]');const link=page.querySelector('[data-practice-api]'),button=page.querySelector('[data-practice-workflow="ui_reports"]');w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);button.click();assert.equal(calls.includes('ui_reports'),false);
 });
-test('practice evidence links preserve the actual results and their limitations without running tests',async t=>{
- const {w}=fixture(t),requests=[];w.canAccessWorkflow=()=>true;w.apiRequest=async(path,options={})=>{requests.push([path,options.method||'GET']);return {ok:true,enabled:true,results:[]};};
- w.activeWorkflow='ai_practice';w.showAiPractice();const snapshot=w.document.querySelector('[data-practice-acceptance]');assert.ok(snapshot);assert.equal(snapshot.open,false);
- assert.match(snapshot.textContent,/2026-11-06/);assert.match(snapshot.textContent,/09:39:48.*标记删除/);assert.match(snapshot.textContent,/物理删除.*未/);assert.match(snapshot.textContent,/17:12:20.*只读.*通过.*HTTP 200.*业务码 0.*3 条断言通过/);assert.match(snapshot.textContent,/17:02:55.*临时变量.*发请求前中断.*未收到响应.*失败/);assert.match(snapshot.textContent,/并发.*未/);assert.match(snapshot.textContent,/11-05.*17:13:05.*请求号.*3 条断言.*通过.*业务日志.*未/);
- const links=[...snapshot.querySelectorAll('a')];assert.deepEqual(links.map(link=>link.getAttribute('href')),['/api-test/#/runs?executionId=0157b386-1475-4946-aae8-1664498ecc69','/api-test/#/runs?executionId=1eb0c640-d78a-41f9-b441-02785fd87e1c','/api-test/#/runs?executionId=43b09e5e-d879-47a2-bde5-2d462d48e988','/api-test/#/runs?executionId=6e5ae109-ba21-4434-9835-5d1e58d228ff']);assert.equal(requests.filter(([,method])=>method==='POST').length,0);
+test('practice evidence is fetched only on demand and does not execute business tests',async t=>{
+ const {w}=fixture(t),requests=[];w.canAccessWorkflow=()=>true;const id='11111111-1111-4111-8111-111111111111';
+ w.apiRequest=async(path,options={})=>{requests.push([path,options.method||'GET']);return path==='/platform/practice-legacy-evidence'?{ok:true,records:[{key:'cleanup',execution_id:id,summary:'已授权历史数据；关联资源与物理删除未验证。'}]}:{ok:true,enabled:true,results:[]};};
+ w.activeWorkflow='ai_practice';w.showAiPractice();const snapshot=w.document.querySelector('[data-practice-acceptance]');assert.ok(snapshot);assert.equal(snapshot.open,false);assert.equal(requests.length,0);
+ snapshot.open=true;snapshot.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(snapshot.textContent,/已授权历史数据/);assert.match(snapshot.textContent,/关联资源.*物理删除未验证/);assert.equal(snapshot.querySelector('a').getAttribute('href'),'/api-test/#/runs?executionId='+id);assert.deepEqual(requests,[['/platform/practice-legacy-evidence','GET']]);
 });
+
 test('practice evidence is hidden from limited users and stale links cannot be used',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.activeWorkflow='ai_practice';w.showAiPractice();const links=[...w.document.querySelectorAll('[data-practice-acceptance] a')];assert.equal(links.length,4);
- w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};for(const link of links)assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
- w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.hasPermission=p=>p!=='api.view';for(const link of links)assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);w.hasPermission=()=>true;
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='11111111-1111-4111-8111-111111111111';w.apiRequest=async()=>({ok:true,records:[{key:'cleanup',execution_id:id,summary:'受限记录'}]});w.activeWorkflow='ai_practice';w.showAiPractice();const snapshot=w.document.querySelector('[data-practice-acceptance]');snapshot.open=true;snapshot.dispatchEvent(new w.Event('toggle'));await wait();await wait();const link=snapshot.querySelector('a');assert.ok(link);
+ w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
+ w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.hasPermission=p=>p!=='api.view';assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);w.hasPermission=()=>true;
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:['one']}};w.showAiPractice();assert.equal(w.document.querySelector('[data-practice-acceptance]'),null);
  w.currentAccessProfile={user_id:'u1',scope:{ui_apps:'*'}};w.hasPermission=p=>p==='api.view';w.showAiPractice();assert.equal(w.document.querySelector('[data-practice-acceptance]'),null);
 });
+
 test('practice cleanup evidence loads only authorized summary, links safely and makes no business request',async t=>{
  const {w}=fixture(t),requests=[];w.canAccessWorkflow=()=>true;
  const id='11111111-1111-4111-8111-111111111111';
@@ -63,11 +83,11 @@ test('authentication refresh immediately removes a previously visible cleanup re
  w.currentAccessProfile=admin;w.apiRequest=async path=>path==='/platform/practice-cleanup-evidence'?{ok:true,evidence:{execution_id:'11111111-1111-4111-8111-111111111111',summary:'受保护记录'}}:{ok:true,enabled:true};w.activeWorkflow='ai_practice';w.showAiPractice();const section=w.document.querySelector('[data-practice-cleanup-evidence]');section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(section.textContent,/受保护记录/);
  w.acceptAuthSession({profile:{...admin,scope:{ui_apps:'*',api_projects:['another'],api_environments:[]}}});assert.doesNotMatch(w.document.querySelector('[data-practice-workbench]').textContent,/受保护记录/);
 });
-test('feedback analysis describes the limited write cleanup verification consistently',async t=>{
+test('feedback analysis defers business cleanup evidence to authorized records',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.apiRequest=async path=>path==='/platform/week2-real'?{ok:true,results:[{id:'sample',status:'blocked',created_at:'2026-11-06',source:'platform_record',source_verification:'server_authorized_platform_read',business_requests:0}]}:{ok:true,enabled:true};
- w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week2-real]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();
- assert.equal((panel.textContent.match(/写入及清理仅完成单次验证，异常恢复和关联资源清理仍待验证/g)||[]).length,2);assert.doesNotMatch(panel.textContent,/真实写入及清理仍待验证/);
+ w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week2-real]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(panel.textContent,/写入与清理结果.*当前账号.*执行记录/);assert.doesNotMatch(panel.textContent,/写入及清理仅完成单次验证/);
 });
+
 test('release testing page does not contain the learning guide or probe',async t=>{
  const {w}=fixture(t);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();
  assert.equal(w.document.querySelector('[data-ui-week-one]'),null);
@@ -814,15 +834,8 @@ test('environment section explains unavailable permissions',async t=>{
  assert.equal(guide,null);assert.equal(w.document.querySelector('[data-ui-week-two]'),null);
 });
 
-test('first-week snapshot distinguishes historical evidence from pending acceptance',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
- const snapshot=w.document.querySelector('[data-week-snapshot]');assert.ok(snapshot);
- const text=snapshot.textContent;
- assert.match(text,/2026-11-05/);assert.match(text,/历史快照/);assert.match(text,/不是实时/);
- assert.match(text,/已认证.*业务.*200.*0/);assert.match(text,/匿名.*4009/);
- assert.match(text,/API.*正向.*退出码.?0.*反向.*退出码.?1/);assert.match(text,/UI.*正向.*退出码.?0.*反向.*退出码.?1/);
- assert.match(text,/配套.*浏览器/);assert.match(text,/复用.*Linux.*动态库/);assert.match(text,/全新.*复现.*未完成/);
- assert.match(text,/历史截图.*trace.*不在网页/);assert.match(text,/新执行.*网页.*查看/);assert.match(text,/人工.*待/);assert.match(text,/账单.*待/);
+test('first-week snapshot directs users to their authorized check history',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const snapshot=w.document.querySelector('[data-week-snapshot]');assert.ok(snapshot);assert.match(snapshot.textContent,/本人检查记录/);assert.match(snapshot.textContent,/按账号权限/);assert.doesNotMatch(snapshot.textContent,/已认证.*业务.*200/);
 });
 
 test('API task link remains keyboard reachable with visible focus styling',async t=>{
@@ -983,29 +996,27 @@ test('practice results use local readable time and keep detailed checks collapse
  w.apiRequest=async path=>path==='/ui-executions/availability'?{ok:true,enabled:true}:{ok:true,results:[result]};await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week2-real]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();const row=panel.querySelector('[data-week2-real-history] details');assert.equal(row.open,false);assert.match(row.querySelector('summary').textContent,/12 项/);assert.doesNotMatch(row.querySelector('summary').textContent,/T10:00:00Z/);assert.match(row.textContent,/check0/);assert.match(panel.textContent,/不.*AI/);
 });
 
-test('week two historical timeout identifies its actual chat execution without claiming a feedback timeout',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
- const snapshot=w.document.querySelector('[data-week2-snapshot]');const timeout=snapshot.querySelector('[data-week2-timeout-evidence]');assert.ok(timeout);
- assert.match(timeout.textContent,/历史.*POST.*文字建模聊天/);assert.match(timeout.textContent,/The read operation timed out/);assert.match(timeout.textContent,/未收到响应/);assert.match(timeout.textContent,/30043\s*ms/);assert.match(timeout.textContent,/0 条断言/);assert.match(timeout.textContent,/不是反馈接口超时/);assert.match(timeout.textContent,/没有新发起/);
- const link=timeout.querySelector('a');assert.equal(link.getAttribute('href'),'/api-test/#/runs?executionId=0dfab6ed-b597-4c56-81bf-cc8d7dcb6342');
- w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
- w.hasPermission=p=>p==='platform.configure';w.showAiPractice();assert.equal(w.document.querySelector('[data-week2-timeout-evidence] a'),null);
-});
-test('existing evidence requires API permission and prevents stale account record links',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.hasPermission=p=>p==='platform.configure';await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let guide=w.document.querySelector('[data-ui-week-two]');assert.equal(guide,null);
- w.hasPermission=()=>true;w.showAiPractice();guide=w.document.querySelector('[data-ui-week-two]');const link=guide.querySelector('[data-week2-trace-link]');assert.ok(link);w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
+test('historical timeout is rendered only after server returns an authorized record',async t=>{
+ const {w}=fixture(t),id='11111111-1111-4111-8111-111111111111';w.canAccessWorkflow=()=>true;w.apiRequest=async path=>path==='/platform/practice-legacy-evidence'?{ok:true,records:[{key:'timeout',execution_id:id,summary:'历史回归中文字建模聊天超时，不是反馈接口超时。'}]}:{ok:true,results:[]};
+ w.activeWorkflow='ai_practice';w.showAiPractice();const section=w.document.querySelector('[data-practice-legacy-evidence]');assert.doesNotMatch(section.textContent,/文字建模聊天/);section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(section.textContent,/文字建模聊天.*不是反馈接口超时/);assert.equal(section.querySelector('a').getAttribute('href'),'/api-test/#/runs?executionId='+id);
 });
 
-test('week two provides concrete reproducible steps and all 17 processing checks as descriptions, not fresh business executions',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-two]');const detail=guide.querySelector('[data-week2-howto]');assert.ok(detail);
- assert.equal(detail.querySelectorAll('[data-week2-check]').length,17);assert.match(detail.textContent,/原始执行记录/);assert.match(detail.textContent,/本地数据处理/);assert.match(detail.textContent,/不.*业务请求/);assert.match(detail.textContent,/新.*venv/);assert.match(detail.textContent,/unittest discover/);assert.match(detail.textContent,/--evidence/);assert.match(detail.textContent,/--execution-id/);assert.match(detail.textContent,/--case-id/);assert.match(detail.textContent,/未独立核验.*来源/);assert.match(detail.textContent,/不是.*业务.*合同/);
+test('existing evidence requires API permission and prevents stale account record links',async t=>{
+ const {w}=fixture(t),id='11111111-1111-4111-8111-111111111111';w.canAccessWorkflow=()=>true;w.hasPermission=p=>p==='platform.configure';await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();assert.equal(w.document.querySelector('[data-ui-week-two]'),null);
+ w.hasPermission=()=>true;w.apiRequest=async()=>({ok:true,records:[{key:'trace',execution_id:id,summary:'授权追踪'}]});w.showAiPractice();const section=w.document.querySelector('[data-practice-legacy-evidence]');section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();const link=section.querySelector('a');assert.ok(link);w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
+});
+
+test('week two provides reproducible steps and loads checks only with authorized feedback evidence',async t=>{
+ const {w}=fixture(t),id='11111111-1111-4111-8111-111111111111';w.canAccessWorkflow=()=>true;w.apiRequest=async path=>path==='/platform/practice-legacy-evidence'?{ok:true,records:[{key:'feedback',execution_id:id,summary:'已授权',checks:Array.from({length:17},(_,i)=>'检查 '+i)}]}:{ok:true,results:[]};w.activeWorkflow='ai_practice';w.showAiPractice();const guide=w.document.querySelector('[data-ui-week-two]'),detail=guide.querySelector('[data-week2-howto]');assert.ok(detail);assert.equal(detail.querySelectorAll('[data-week2-check]').length,0);
+ const section=guide.querySelector('[data-practice-legacy-evidence]');section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.equal(detail.querySelectorAll('[data-week2-check]').length,17);assert.match(detail.textContent,/原始执行记录/);assert.match(detail.textContent,/本地数据处理/);assert.match(detail.textContent,/不.*业务请求/);assert.match(detail.textContent,/新.*venv/);assert.match(detail.textContent,/unittest discover/);assert.match(detail.textContent,/--evidence/);assert.match(detail.textContent,/--execution-id/);assert.match(detail.textContent,/--case-id/);assert.match(detail.textContent,/未独立核验.*来源/);assert.match(detail.textContent,/不是.*业务.*合同/);
+ w.apiRequest=async()=>({ok:true,records:[]});section.querySelector('[data-legacy-refresh]').click();await wait();await wait();assert.equal(detail.querySelectorAll('[data-week2-check]').length,0);
 });
 
 test('week two real evidence exercise runs once, renders returned check detail and preserves result if history fails',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;let resolve,posts=0,gets=0;
  w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(path==='/platform/week2-real'&&options.method==='POST'){posts++;assert.deepEqual(Object.keys(options.body),[]);return new Promise(r=>resolve=r);}if(path==='/platform/week2-real'&&++gets>1)throw Error('network');return {ok:true,results:[]};};
- await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week2-real]');assert.ok(panel);panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(panel.textContent,/默认.*de803f8b-e18b-4e67-986d-b14ce737b8aa/);assert.match(panel.textContent,/其他真实反馈执行记录/);const button=panel.querySelector('[data-week2-real-run]');button.click();button.click();assert.equal(posts,1);assert.equal(button.disabled,true);
- resolve({ok:true,result:{id:'new',status:'failed',source:'platform_record',source_verification:'server_authorized_platform_read',execution_id:'run-one',total:1,business_requests:0,original_assertions:[{type:'json_path',passed:true}],checks:[{id:'<img src=x>',status:'failed'}],cleanup:'not_applicable_no_business_data_created'}});await wait();await wait();assert.match(panel.textContent,/run-one/);assert.match(panel.textContent,/失败/);assert.match(panel.textContent,/历史.*失败/);assert.match(w.document.querySelector('[data-week2-progress]').textContent,/待核验/);assert.match(panel.textContent,/原始.*断言/);assert.match(panel.textContent,/清理.*待验证/);assert.match(panel.textContent,/<img src=x>/);assert.equal(panel.querySelector('img'),null);assert.equal(button.disabled,false);
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-week2-real]');assert.ok(panel);panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(panel.textContent,/默认反馈记录/);assert.match(panel.textContent,/其他真实反馈执行记录/);const button=panel.querySelector('[data-week2-real-run]');button.click();button.click();assert.equal(posts,1);assert.equal(button.disabled,true);
+ resolve({ok:true,result:{id:'new',status:'failed',source:'platform_record',source_verification:'server_authorized_platform_read',execution_id:'run-one',total:1,business_requests:0,original_assertions:[{type:'json_path',passed:true}],checks:[{id:'<img src=x>',status:'failed'}],cleanup:'not_applicable_no_business_data_created'}});await wait();await wait();assert.match(panel.textContent,/run-one/);assert.match(panel.textContent,/失败/);assert.match(panel.textContent,/历史.*失败/);assert.match(w.document.querySelector('[data-week2-progress]').textContent,/待核验/);assert.match(panel.textContent,/原始.*断言/);assert.match(panel.textContent,/写入与清理结果.*执行记录/);assert.match(panel.textContent,/<img src=x>/);assert.equal(panel.querySelector('img'),null);assert.equal(button.disabled,false);
 });
 test('week two real exercise controls require full UI scope and ignore stale account results',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;w.currentAccessProfile={user_id:'limited',scope:{ui_apps:['app']}};let calls=0,resolve;
@@ -1030,10 +1041,8 @@ test('week two can use an execution ID or same-origin run link without a case ID
  execution.value=`http://untrusted.example/api-test/#/runs?executionId=${id}`;button.click();assert.equal(bodies.length,1);assert.match(panel.textContent,/执行.*编号.*链接/);execution.value='';caseId.value='d8f37256-f90b-4f22-950f-5be70a744c4a';button.click();assert.equal(bodies.length,1);assert.match(panel.textContent,/子用例.*执行/);
 });
 
-test('week two preserves real trace evidence and guards the execution link',async t=>{
- const {w}=fixture(t);w.canAccessWorkflow=()=>true;await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let guide=w.document.querySelector('[data-ui-week-two]'),snapshot=guide.querySelector('[data-week2-snapshot]');
- assert.match(snapshot.textContent,/2026-11-05.*X-Request-ID/);assert.match(snapshot.textContent,/UUID.*一致/);assert.match(snapshot.textContent,/HTTP 200.*业务码.?0.*结构.*通过/);assert.match(snapshot.textContent,/未回显/);assert.match(snapshot.textContent,/日志关联.*未验证/);const link=snapshot.querySelector('[data-week2-trace-link]');assert.equal(link.getAttribute('href'),'/api-test/#/runs?executionId=6e5ae109-ba21-4434-9835-5d1e58d228ff');w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
- w.currentAccessProfile={user_id:'limited',scope:{ui_apps:'*'}};w.hasPermission=p=>p==='platform.configure';w.showAiPractice();guide=w.document.querySelector('[data-ui-week-two]');assert.equal(guide,null);
+test('trace evidence is displayed only when returned by server authorization',async t=>{
+ const {w}=fixture(t),id='11111111-1111-4111-8111-111111111111';w.canAccessWorkflow=()=>true;w.apiRequest=async()=>({ok:true,records:[{key:'trace',execution_id:id,summary:'历史追踪记录，请求头已发送，日志关联未验证。'}]});w.activeWorkflow='ai_practice';w.showAiPractice();const section=w.document.querySelector('[data-practice-legacy-evidence]');section.open=true;section.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(section.textContent,/日志关联未验证/);const link=section.querySelector('a');assert.equal(link.getAttribute('href'),'/api-test/#/runs?executionId='+id);w.currentAccessProfile={user_id:'other',scope:{ui_apps:'*'}};assert.equal(link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true})),false);
 });
 
 test('week two task progress follows latest authorized analysis and opens its exact evidence',async t=>{

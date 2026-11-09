@@ -2873,6 +2873,14 @@ def _get_practice_cleanup_evidence(handler, qs):
         handler._json({'ok': True, 'evidence': practice_cleanup_evidence.get_evidence(*actor)})
 
 
+@route_get("/api/platform/practice-legacy-evidence")
+def _get_practice_legacy_evidence(handler, qs):
+    from task_server.services import practice_legacy_evidence
+    actor = _week2_real_actor(handler)
+    if actor:
+        handler._json({'ok': True, 'records': practice_legacy_evidence.get_records(*actor)})
+
+
 @route_post("/api/platform/week2-real")
 def _post_week2_real(handler, qs):
     from task_server.services import week2_real
