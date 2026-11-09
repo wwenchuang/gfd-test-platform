@@ -37,6 +37,15 @@ export class ApiClient {
       throw new ApiClientError(401, '登录已失效')
     }
 
+    const ensureCurrentSession = () => {
+      if (sessionStorage.getItem('sessionToken') === token) return
+      const method = String(options.method || 'GET').toUpperCase()
+      const message = options.readOnly || ['GET', 'HEAD'].includes(method)
+        ? '登录状态已变化，请在当前账号下重新读取'
+        : '登录状态已变化，本次操作可能已提交，请先核对结果，避免重复执行'
+      throw new ApiClientError(409, message)
+    }
+
     const headers = new Headers(options.headers)
     headers.set('Authorization', `Bearer ${token}`)
     if (options.body !== undefined) headers.set('Content-Type', 'application/json')
@@ -63,6 +72,7 @@ export class ApiClient {
         signal: controller.signal,
       })
     } catch (error) {
+      ensureCurrentSession()
       if (timedOut) {
         const method = String(options.method || 'GET').toUpperCase()
         const message = options.readOnly || ['GET', 'HEAD'].includes(method)
@@ -76,15 +86,23 @@ export class ApiClient {
       globalThis.clearTimeout(timeout)
       upstreamSignal?.removeEventListener('abort', abortFromUpstream)
     }
+    ensureCurrentSession()
     if (response.status === 401) {
       sessionStorage.removeItem('sessionToken')
       sessionStorage.removeItem('user')
       this.redirectToLogin()
       throw new ApiClientError(401, '登录已失效')
     }
+    let raw: string
+    try {
+      raw = await response.text()
+    } catch {
+      ensureCurrentSession()
+      throw new ApiClientError(response.status, nonJsonResponseMessage(response.status))
+    }
+    ensureCurrentSession()
     let payload: ApiEnvelope<T> & { error?: unknown; message?: unknown }
     try {
-      const raw = await response.text()
       payload = (raw ? JSON.parse(raw) : {}) as ApiEnvelope<T> & { error?: unknown; message?: unknown }
     } catch {
       throw new ApiClientError(response.status, nonJsonResponseMessage(response.status))
