@@ -981,6 +981,7 @@ class ExecutionService:
     def _unavailable_dependency_exports(version_snapshot, outcomes):
         """Names promised by optional dependencies that did not produce a value."""
         unavailable = set()
+        selected = set()
         dependencies = version_snapshot.get("dependencies", ())
         if not isinstance(dependencies, (list, tuple)):
             return unavailable
@@ -997,13 +998,19 @@ class ExecutionService:
                 else {}
             )
             for name in exports:
-                if (
-                    isinstance(name, str)
-                    and name
-                    and (name not in values or values[name] in (None, "", [], {})
-                         or name not in (getattr(result, "response_outputs", None) or ()))
-                ):
+                if not isinstance(name, str) or not name:
+                    continue
+                if name not in values:
+                    if name not in selected:
+                        unavailable.add(name)
+                    continue
+                selected.add(name)
+                if (values[name] in (None, "", [], {})
+                        or name not in (getattr(result, "response_outputs", None) or ())):
                     unavailable.add(name)
+                else:
+                    # A successful export overwrites any earlier value.
+                    unavailable.discard(name)
         return unavailable
 
     @staticmethod

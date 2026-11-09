@@ -363,6 +363,9 @@ class HttpExecutor:
                     targets = self._extraction_targets(step.get("extractions", []))
                     late_targets.update(targets)
                     unavailable_outputs.update(targets)
+            for step in cleanup_steps:
+                if step.get("enabled", True):
+                    late_targets.update(self._extraction_targets(step.get("extractions", [])))
             unavailable_outputs.update(
                 alias for alias, sources in pre_aliases.items()
                 if sources & (late_targets | unavailable_outputs)
@@ -461,84 +464,91 @@ class HttpExecutor:
             if main_outcome is None:
                 unavailable_outputs.update(self._extraction_targets(case.extractions))
             cleanup_problem = None
-            for index, step in enumerate(() if cleanup_problem else cleanup_steps):
+            cleanup_output_failed = bool(unavailable_outputs)
+            failed_cleanup_step = False
+            fresh_cleanup_outputs = set()
+            for index, step in enumerate(cleanup_steps):
                 if not step.get("enabled", True):
                     continue
-                protects_downstream = bool(step.get("extractions")) and any(
+                targets = self._extraction_targets(step.get("extractions", []))
+                protects_downstream = bool(targets) and any(
                     later.get("enabled", True) for later in cleanup_steps[index + 1:]
                 )
-                blocked_controls = set(step.get("required_variables", ())) | {step.get("only_if_variable")}
-                blocked_controls &= unavailable_outputs
+                controls = set(step.get("required_variables", ())) | {step.get("only_if_variable")}
+                controls.discard(None)
+                blocked_controls = controls & unavailable_outputs
+                if cleanup_output_failed:
+                    blocked_controls.update(controls - fresh_cleanup_outputs)
                 if blocked_controls:
                     message = "流程条件引用来源不可确认的变量：" + ", ".join(sorted(blocked_controls))
                     missing = self._missing_step_variables(step, variables)
-                    if missing:
+                    if missing and not failed_cleanup_step:
                         self._emit_skipped_step(callback, trace, "cleanup", index, step, missing)
                     else:
                         skipped = _HttpStepOutcome("SKIPPED", "cleanup_dependency", {}, {}, (), {}, message, ())
                         self._emit_workflow_step(callback, trace, "cleanup", index, step, skipped)
                     cleanup_problem = cleanup_problem or _HttpStepOutcome("FAILED", "cleanup", {}, {}, (), {}, message, ())
                     if protects_downstream:
-                        self._stop_cleanup_after_unavailable_outputs(callback, trace, cleanup_steps, index)
-                        break
+                        unavailable_outputs.update(targets)
+                        fresh_cleanup_outputs.difference_update(targets)
+                        cleanup_output_failed = True
+                        failed_cleanup_step = True
                     continue
                 if self._skip_conditional_step(callback, trace, "cleanup", index, step, variables):
                     if protects_downstream:
-                        blocked = self._stop_cleanup_after_unavailable_outputs(
-                            callback, trace, cleanup_steps, index
-                        )
-                        cleanup_problem = cleanup_problem or blocked
-                        break
+                        unavailable_outputs.update(targets)
+                        fresh_cleanup_outputs.difference_update(targets)
+                        cleanup_output_failed = True
+                        failed_cleanup_step = True
+                        cleanup_problem = cleanup_problem or _HttpStepOutcome(
+                            "FAILED", "cleanup", {}, {}, (), {},
+                            "清理步骤条件未满足，输出不可用于后续操作", ())
                     continue
                 missing = self._missing_step_variables(step, variables)
                 if missing:
-                    self._emit_skipped_step(
-                        callback, trace, "cleanup", index, step, missing
-                    )
-                    if cleanup_problem is None:
-                        cleanup_problem = _HttpStepOutcome(
-                            "FAILED",
-                            "cleanup",
-                            {},
-                            {},
-                            (),
-                            {},
-                            "缺少清理步骤必需变量："
-                            + ", ".join(missing),
-                            (),
-                        )
+                    self._emit_skipped_step(callback, trace, "cleanup", index, step, missing)
+                    cleanup_problem = cleanup_problem or _HttpStepOutcome(
+                        "FAILED", "cleanup", {}, {}, (), {},
+                        "缺少清理步骤必需变量：" + ", ".join(missing), ())
                     if protects_downstream:
-                        self._stop_cleanup_after_unavailable_outputs(
-                            callback, trace, cleanup_steps, index
-                        )
-                        break
+                        unavailable_outputs.update(targets)
+                        fresh_cleanup_outputs.difference_update(targets)
+                        cleanup_output_failed = True
+                        failed_cleanup_step = True
                     continue
                 outcome, step_secrets = self._execute_inline_step(
-                    "cleanup",
-                    index,
-                    step,
-                    environment_revision_id,
-                    variables,
-                    lambda _phase: False,
-                    callback,
-                    trace,
+                    "cleanup", index, step, environment_revision_id, variables,
+                    lambda _phase: False, callback, trace,
                     require_outputs=protects_downstream,
                     unavailable_outputs=unavailable_outputs,
+                    require_independent_literal=cleanup_output_failed,
+                    fresh_cleanup_outputs=fresh_cleanup_outputs,
                 )
                 all_secrets.extend(step_secrets)
-                if protects_downstream and (
-                    not self._cleanup_outputs_available(step, outcome)
-                    or self._cleanup_output_has_pre_alias(step, pre_aliases)
-                ):
-                    blocked = self._stop_cleanup_after_unavailable_outputs(
-                        callback, trace, cleanup_steps, index
-                    )
-                    cleanup_problem = cleanup_problem or blocked
-                    break
                 if outcome.status == "PASSED":
                     variables.update(copy.deepcopy(outcome.extracted))
-                if outcome.status != "PASSED" and cleanup_problem is None:
-                    cleanup_problem = outcome
+                    actual = self._actual_output_targets(step.get("extractions", []), outcome)
+                    unavailable_outputs.update(targets - actual)
+                    unavailable_outputs.difference_update(actual)
+                    fresh_cleanup_outputs.difference_update(targets)
+                    fresh_cleanup_outputs.update(actual)
+                else:
+                    actual = set()
+                    unavailable_outputs.update(targets)
+                    fresh_cleanup_outputs.difference_update(targets)
+                    cleanup_problem = cleanup_problem or outcome
+                # An alias copied before this output was produced still contains
+                # the old value, even if the source variable is now fresh.
+                unavailable_outputs.update(
+                    alias for alias, sources in pre_aliases.items()
+                    if sources & targets and alias not in actual
+                )
+                if protects_downstream and not self._cleanup_outputs_available(step, outcome):
+                    cleanup_output_failed = True
+                    failed_cleanup_step = True
+                    cleanup_problem = cleanup_problem or _HttpStepOutcome(
+                        "FAILED", "cleanup", {}, {}, (), {},
+                        "清理步骤输出不可安全用于后续操作", ())
 
             secrets = tuple(dict.fromkeys(all_secrets))
             if setup_failure is not None:
@@ -697,6 +707,8 @@ class HttpExecutor:
         *,
         require_outputs=False,
         unavailable_outputs=(),
+        require_independent_literal=False,
+        fresh_cleanup_outputs=(),
     ):
         polling = step.get("polling") or {}
         max_attempts = int(polling.get("max_attempts", 1))
@@ -716,6 +728,9 @@ class HttpExecutor:
                 record_main_phases=False,
                 require_outputs=require_outputs,
                 unavailable_outputs=unavailable_outputs,
+                cleanup_guard=stage == "cleanup",
+                require_independent_literal=require_independent_literal,
+                fresh_cleanup_outputs=fresh_cleanup_outputs,
             )
             all_secrets.extend(outcome.secrets)
             self._emit_workflow_step(
@@ -765,6 +780,9 @@ class HttpExecutor:
         record_main_phases,
         require_outputs=False,
         unavailable_outputs=(),
+        cleanup_guard=False,
+        require_independent_literal=False,
+        fresh_cleanup_outputs=(),
     ):
         request_view = {}
         response_view = {}
@@ -789,8 +807,12 @@ class HttpExecutor:
                 "extractions": [getattr(item, "path", None) for item in extraction_views],
             }, variables)
             blocked = sorted(set(unavailable_outputs) & references)
-            if blocked:
-                raise ValueError("请求引用来源不可确认的变量：" + ", ".join(blocked))
+            unproven = references - set(fresh_cleanup_outputs) if require_independent_literal else set()
+            if blocked or unproven:
+                message = "请求引用来源不可确认的变量：" + ", ".join(blocked or sorted(unproven))
+                if cleanup_guard:
+                    return _HttpStepOutcome("SKIPPED", "cleanup_dependency", {}, {}, (), {}, message, ())
+                raise ValueError(message)
             assertion_views = tuple(
                 self._render_assertion_expected(assertion, runtime)
                 for assertion in assertion_views
@@ -1218,32 +1240,6 @@ class HttpExecutor:
             elif action in {"set_variable", "remove_variable"}:
                 aliases.pop(item.get("name"), None)
         return aliases
-
-    @classmethod
-    def _cleanup_output_has_pre_alias(cls, step, aliases):
-        for item in step.get("extractions", []):
-            name = item.get("target") if isinstance(item, dict) else getattr(item, "target", None)
-            if any(alias != name and name in sources for alias, sources in aliases.items()):
-                return True
-        return False
-
-    @classmethod
-    def _stop_cleanup_after_unavailable_outputs(
-        cls, callback, trace, cleanup_steps, index, *, variables=None
-    ):
-        # Later steps may refer to a stale variable through aliases or environment
-        # defaults, so do not try to infer which individual requests are safe.
-        message = "清理所需数据来源不可靠，清理已停止；请核对资源归属和实际状态"
-        outcome = _HttpStepOutcome("SKIPPED", "cleanup_dependency", {}, {}, (), {}, message, ())
-        for next_index in range(index + 1, len(cleanup_steps)):
-            step = cleanup_steps[next_index]
-            if step.get("enabled", True):
-                missing = cls._missing_step_variables(step, variables) if variables is not None else []
-                if missing:
-                    cls._emit_skipped_step(callback, trace, "cleanup", next_index, step, missing)
-                else:
-                    cls._emit_workflow_step(callback, trace, "cleanup", next_index, step, outcome)
-        return _HttpStepOutcome("FAILED", "cleanup", {}, {}, (), {}, message, ())
 
     @classmethod
     def _skip_conditional_step(cls, callback, trace, stage, index, step, variables):
