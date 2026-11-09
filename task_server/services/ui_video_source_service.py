@@ -18,7 +18,7 @@ from pathlib import Path
 MAX_BYTES = 200 * 1024 * 1024
 MAX_DURATION_MS = 600000
 MAX_FRAMES = 360
-MAX_ORDINARY_FRAMES = 384
+MAX_ORDINARY_FRAMES = 408
 MAX_WEAK_EVIDENCE_FRAMES = MAX_ORDINARY_FRAMES - MAX_FRAMES
 MAX_EXTRACTED_FRAME_BYTES = 32 * 1024 * 1024
 MAX_VIDEO_LIBRARY_BYTES = 4 * 1024 ** 3
@@ -418,12 +418,20 @@ def _add_weak_evidence(times, changes, original, extra_limit, cancelled=lambda: 
         # The worker cancellation callback reads the store; amortize it across
         # bounded CPU-only scan batches instead of querying once per frame.
         if i%256==0 and cancelled():raise ValueError('video_cancelled')
-        if not (.04<=changes[i]<.08 and .04<=changes[i+1]<.08 and
-                30<=times[i+1]-times[i]<=150 and changes[i-1]<.03):continue
-        response=next((j for j in range(i+2,min(len(times),i+20))
-                       if times[j]-times[i]<=500 and .08<=changes[j]<12),None)
-        if response is None or any(c>=12 for c in changes[i+2:response]):continue
-        required.update((times[i-1],times[i],times[i+1],times[response]))
+        if not (.04<=changes[i]<.08 and changes[i-1]<.03):continue
+        # Preserve the earlier consecutive-weak-signal rule unchanged.
+        if .04<=changes[i+1]<.08 and 30<=times[i+1]-times[i]<=150:
+            response=next((j for j in range(i+2,min(len(times),i+20))
+                           if times[j]-times[i]<=500 and .08<=changes[j]<12),None)
+            if response is not None and not any(c>=12 for c in changes[i+2:response]):
+                required.update((times[i-1],times[i],times[i+1],times[response]))
+        # A visible mark can remain nearly unchanged before the page responds.
+        # Retain the original weak frame as evidence; it is not an action claim.
+        for j in range(i+1,len(times)):
+            if times[j]-times[i]>250 or changes[j]>=12:break
+            if .08<=changes[j]<12:
+                required.add(times[i])
+                break
         if len(required-set(original))>extra_limit:
             raise ValueError('video_weak_evidence_limit')
     if cancelled():raise ValueError('video_cancelled')

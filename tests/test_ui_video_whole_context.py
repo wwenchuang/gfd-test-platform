@@ -336,7 +336,7 @@ def test_whole_frame_limit_rejects_before_model(monkeypatch,tmp_path):
         va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
 
 
-@pytest.mark.parametrize('count',[361,384])
+@pytest.mark.parametrize('count',[361,384,408])
 def test_extended_whole_frames_reach_model_with_actual_jpegs(monkeypatch,tmp_path,count):
     from PIL import Image
     from task_server.services import ui_video_analysis as va, ai_skill_service as ai
