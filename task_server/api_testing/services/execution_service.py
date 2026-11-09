@@ -645,6 +645,7 @@ class ExecutionService:
                             child,
                             snapshot["request"]["overrides"],
                             dependency_overrides,
+                            self._unavailable_dependency_exports(child_snapshot, outcomes),
                         )
                     )
                 except Exception as exc:
@@ -700,6 +701,7 @@ class ExecutionService:
         child,
         overrides,
         dependency_overrides,
+        unavailable_dependency_exports=(),
     ):
         def phase_callback(phase, payload):
             self.event_stream.append(
@@ -715,6 +717,10 @@ class ExecutionService:
         if dependency_overrides:
             keyword_arguments["dependency_overrides"] = copy.deepcopy(
                 dependency_overrides
+            )
+        if unavailable_dependency_exports:
+            keyword_arguments["unavailable_dependency_exports"] = sorted(
+                unavailable_dependency_exports
             )
         return self.executor.execute_case(
             child.case_version_id,
@@ -969,6 +975,34 @@ class ExecutionService:
                     f"{dependency_id} did not export {', '.join(missing)}",
                 )
         return overrides, ""
+
+    @staticmethod
+    def _unavailable_dependency_exports(version_snapshot, outcomes):
+        """Names promised by optional dependencies that did not produce a value."""
+        unavailable = set()
+        dependencies = version_snapshot.get("dependencies", ())
+        if not isinstance(dependencies, (list, tuple)):
+            return unavailable
+        for dependency in dependencies:
+            if not isinstance(dependency, dict) or dependency.get("required", True) is not False:
+                continue
+            result = outcomes.get(dependency.get("case_version_id"))
+            exports = dependency.get("exports", ())
+            if not isinstance(exports, (list, tuple)):
+                continue
+            values = (
+                result.extracted_variables or {}
+                if result is not None and result.status == "PASSED"
+                else {}
+            )
+            for name in exports:
+                if (
+                    isinstance(name, str)
+                    and name
+                    and (name not in values or values[name] in (None, "", [], {}))
+                ):
+                    unavailable.add(name)
+        return unavailable
 
     @staticmethod
     def _required_dependency_exports(version_snapshots):

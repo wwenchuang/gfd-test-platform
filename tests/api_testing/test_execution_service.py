@@ -469,6 +469,7 @@ class _FakeExecutor:
         self.case_version_ids = []
         self.overrides = []
         self.dependency_overrides = []
+        self.unavailable_dependency_exports = []
 
     def execute_case(
         self,
@@ -483,6 +484,7 @@ class _FakeExecutor:
         self.dependency_overrides.append(
             copy.deepcopy(kwargs.get("dependency_overrides") or {})
         )
+        self.unavailable_dependency_exports.append(kwargs.get("unavailable_dependency_exports", []))
         return self.results.pop(0)
 
 
@@ -907,6 +909,7 @@ def test_optional_dependency_failure_does_not_block_dependent(
     assert executor.case_version_ids == [setup_id, target_id]
     assert executor.overrides[1] == {"Biz": "ZXB"}
     assert executor.dependency_overrides[1] == {}
+    assert executor.unavailable_dependency_exports[1] == ["resourceSn"]
     assert terminal.case_statuses == ("FAILED", "PASSED")
     assert terminal.summary["skipped"] == 0
 

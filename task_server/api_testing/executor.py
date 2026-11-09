@@ -321,6 +321,7 @@ class HttpExecutor:
         overrides,
         *,
         dependency_overrides=None,
+        unavailable_dependency_exports=(),
         cancellation_check=None,
         phase_callback=None,
     ):
@@ -353,6 +354,14 @@ class HttpExecutor:
             pre_aliases = self._processing_aliases(pre_actions)
             setup_steps = tuple(case.processing.get("setup_steps", []))
             cleanup_steps = tuple(case.processing.get("cleanup_steps", []))
+            unavailable_outputs = set(unavailable_dependency_exports)
+            late_targets = self._extraction_targets(case.extractions)
+            for step in setup_steps:
+                if step.get("enabled", True):
+                    targets = self._extraction_targets(step.get("extractions", []))
+                    late_targets.update(targets)
+                    unavailable_outputs.update(targets)
+            stale_pre_alias = any(sources & late_targets for sources in pre_aliases.values())
             has_workflow = bool(setup_steps or cleanup_steps)
             setup_failure = None
             all_secrets = []
@@ -361,9 +370,11 @@ class HttpExecutor:
                 if not step.get("enabled", True):
                     continue
                 if self._skip_conditional_step(callback, trace, "setup", index, step, variables):
+                    unavailable_outputs.update(self._extraction_targets(step.get("extractions", [])))
                     continue
                 missing = self._missing_step_variables(step, variables)
                 if missing:
+                    unavailable_outputs.update(self._extraction_targets(step.get("extractions", [])))
                     self._emit_skipped_step(
                         callback, trace, "setup", index, step, missing
                     )
@@ -391,9 +402,13 @@ class HttpExecutor:
                 )
                 all_secrets.extend(step_secrets)
                 if outcome.status != "PASSED":
+                    unavailable_outputs.update(self._extraction_targets(step.get("extractions", [])))
                     setup_failure = outcome
                     break
                 variables.update(copy.deepcopy(outcome.extracted))
+                unavailable_outputs.difference_update(
+                    self._actual_output_targets(step.get("extractions", []), outcome)
+                )
 
             main_outcome = None
             if setup_failure is None:
@@ -411,6 +426,10 @@ class HttpExecutor:
                 all_secrets.extend(main_outcome.secrets)
                 variables.update(copy.deepcopy(main_outcome.extracted))
                 extracted = copy.deepcopy(main_outcome.extracted)
+                main_targets = self._extraction_targets(case.extractions)
+                actual_main_targets = self._actual_output_targets(case.extractions, main_outcome)
+                unavailable_outputs.update(main_targets - actual_main_targets)
+                unavailable_outputs.difference_update(actual_main_targets)
                 self._apply_processing(case.processing.get("post", []), extracted)
                 request_view = main_outcome.request
                 response_view = main_outcome.response
@@ -425,8 +444,14 @@ class HttpExecutor:
                         main_outcome,
                     )
 
+            if main_outcome is None:
+                unavailable_outputs.update(self._extraction_targets(case.extractions))
             cleanup_problem = None
-            for index, step in enumerate(cleanup_steps):
+            if cleanup_steps and (unavailable_outputs or stale_pre_alias):
+                cleanup_problem = self._stop_cleanup_after_unavailable_outputs(
+                    callback, trace, cleanup_steps, -1, variables=variables
+                )
+            for index, step in enumerate(() if cleanup_problem else cleanup_steps):
                 if not step.get("enabled", True):
                     continue
                 protects_downstream = bool(step.get("extractions")) and any(
@@ -1072,6 +1097,27 @@ class HttpExecutor:
         return True
 
     @staticmethod
+    def _extraction_targets(extractions):
+        names = set()
+        for item in extractions:
+            name = item.get("target") if isinstance(item, dict) else getattr(item, "target", None)
+            if isinstance(name, str) and name:
+                names.add(name)
+        return names
+
+    @classmethod
+    def _actual_output_targets(cls, extractions, outcome):
+        # Optional fallbacks cannot establish that a response supplied an ID.
+        names = set()
+        for item in extractions:
+            name = item.get("target") if isinstance(item, dict) else getattr(item, "target", None)
+            required = item.get("required", True) if isinstance(item, dict) else getattr(item, "required", True)
+            value = outcome.extracted.get(name)
+            if required and name and value not in (None, "", [], {}):
+                names.add(name)
+        return names
+
+    @staticmethod
     def _processing_aliases(actions):
         """Conservatively track aliases copied or encoded before execution."""
         aliases = {}
@@ -1094,15 +1140,21 @@ class HttpExecutor:
         return False
 
     @classmethod
-    def _stop_cleanup_after_unavailable_outputs(cls, callback, trace, cleanup_steps, index):
+    def _stop_cleanup_after_unavailable_outputs(
+        cls, callback, trace, cleanup_steps, index, *, variables=None
+    ):
         # Later steps may refer to a stale variable through aliases or environment
         # defaults, so do not try to infer which individual requests are safe.
-        message = "清理步骤输出不可安全用于后续操作，后续清理已停止；请核对资源归属和实际状态"
+        message = "清理所需数据来源不可靠，清理已停止；请核对资源归属和实际状态"
         outcome = _HttpStepOutcome("SKIPPED", "cleanup_dependency", {}, {}, (), {}, message, ())
         for next_index in range(index + 1, len(cleanup_steps)):
             step = cleanup_steps[next_index]
             if step.get("enabled", True):
-                cls._emit_workflow_step(callback, trace, "cleanup", next_index, step, outcome)
+                missing = cls._missing_step_variables(step, variables) if variables is not None else []
+                if missing:
+                    cls._emit_skipped_step(callback, trace, "cleanup", next_index, step, missing)
+                else:
+                    cls._emit_workflow_step(callback, trace, "cleanup", next_index, step, outcome)
         return _HttpStepOutcome("FAILED", "cleanup", {}, {}, (), {}, message, ())
 
     @classmethod
