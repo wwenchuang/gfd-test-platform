@@ -71,6 +71,10 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
     size=30 if len(frames)>60 else 60
     windows=[frames[i:i+size] for i in range(0,max(1,len(frames)-4),size-4)]
     events=[];questions=[];secrets=list(prior_secrets);multi=False;previous_end=-1
+    def preserve_new_questions(old,event):
+        from .ui_video_business_inputs import _MANUAL
+        questions.extend(f"片段 {event['start_ms']/1000:g}–{event['end_ms']/1000:g} 秒：{q}"
+                         for q in event['uncertainties'] if q and q!=_MANUAL and q not in old['uncertainties'])
     for index,window in enumerate(windows):
         if cancelled():raise ValueError('video_cancelled')
         payload={'phase':'whole-observe','frames':window,'image_frames':window,'duration_ms':duration}
@@ -105,7 +109,8 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             if cancelled():raise ValueError('video_cancelled')
             try:
                 result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
-                    timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False)
+                    timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False,
+                    **({'allow_missing_video_questions':True} if attempt else {}))
                 if cancelled():raise ValueError('video_cancelled')
                 if isinstance(result,dict) and isinstance(result.get('events'),list):
                     secrets.extend(e['value'] for e in result['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
@@ -144,7 +149,9 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             duplicate=next((old for old in reversed(events) if old['action']==event['action'] and
                             old['target']==event['target'] and old['value']==event['value'] and
                             old['frame_refs']==event['frame_refs']),None)
-            if duplicate:continue
+            if duplicate:
+                preserve_new_questions(duplicate,event)
+                continue
             # Adjacent windows can describe the same interaction with a
             # nested subset of its evidence. Keep the complete evidence when
             # either endpoint is shared, not a second action at the boundary.
@@ -176,6 +183,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             old=events[-1] if events else None
             if (old and old['action']==event['action']=='aiInput' and old['target']==event['target'] and
                 event['start_ms']<=old['end_ms']):
+                preserve_new_questions(old,event)
                 times={f['frame_id']:f['timestamp_ms'] for f in frames}
                 refs=sorted(set(old['frame_refs']+event['frame_refs']),key=times.get)
                 if len(refs)>8:refs=[refs[round(i*(len(refs)-1)/7)] for i in range(8)]
@@ -186,7 +194,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         previous_end=window[-1]['timestamp_ms']
     events.sort(key=lambda e:(e['start_ms'],e['end_ms']))
     # Revalidate aggregate budgets, chronology and redaction across all windows.
-    result=validate_analysis({'events':events,'uncertainties':list(dict.fromkeys(questions))[:30],
+    result=validate_analysis({'events':events,'uncertainties':list(dict.fromkeys(questions)),
                               'multiple_scenarios':multi},frames,duration,secrets,max_events=120)
     if progress:progress('planning',len(windows),len(windows),result['events'])
     return result,secrets

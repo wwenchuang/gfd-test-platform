@@ -68,6 +68,28 @@ def test_video_import_is_private_idempotent_and_preserves_edits(env,tmp_path,mon
     assert len(store.list(A['user_id'],APP))==1
 
 
+def test_missing_root_question_warning_survives_import_and_blocks_validate(env,tmp_path,monkeypatch):
+    from task_server.services import ui_video_source_service as video,ui_case_draft_service as drafts
+    from test_ui_case_draft_service import TARGET
+    store=video.VideoStore(tmp_path/'videos');monkeypatch.setattr(video,'service_store',lambda:store)
+    doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'mp4'),3,actor=A)
+    frames=[{'frame_id':'frame-001','timestamp_ms':0},{'frame_id':'frame-end','timestamp_ms':1900}]
+    event={'action':'aiAssert','target':'个人页面出现','value':'','start_ms':0,'end_ms':1900,
+           'frame_refs':['frame-001','frame-end'],'observation':'个人页面出现','evidence_kind':'inferred','uncertainties':[]}
+    warning='片段 0–1.9 秒（原帧 frame-001–frame-end）：该片段模型未报告不确定项，请对照视频核对。'
+    store.transition(doc['source_id'],{'queued'},'ready',media={'duration_ms':2000,'frames':frames},events=[event],uncertainties=[warning])
+    with actor_context(A):
+        draft=video.import_video_draft(A,doc['source_id'],APP)
+        assert warning in draft['questions']
+        body={key:copy.deepcopy(draft[key]) for key in ('title','preconditions','steps','questions')}
+        for step in body['steps']:step['review_state']='confirmed'
+        body['revision']=draft['revision']
+        edited=drafts.update_draft(A,draft['draft_id'],body)
+        gate=drafts.validate_draft(A,draft['draft_id'],{'revision':edited['revision'],'target':TARGET})
+        assert not gate['ready']
+        assert any(warning==item.get('message') for item in gate['blockers'])
+
+
 def test_import_does_not_create_draft_if_source_deleted_before_retention(env,tmp_path,monkeypatch):
     from task_server.services import ui_video_source_service as video, ui_case_draft_service as drafts
     store=video.VideoStore(tmp_path/'videos');monkeypatch.setattr(video,'service_store',lambda:store)

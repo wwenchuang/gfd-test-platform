@@ -58,6 +58,14 @@ def test_trial_rejects_injection_owner_and_unconfirmed(draft_env):
         trial(edited)
 
 
+def test_trial_rejects_unresolved_video_window_question(draft_env):
+    draft, _ = draft_env
+    warning='片段 177.9–190.267 秒（原帧 frame-313–frame-342）：该片段模型未报告不确定项，请对照视频核对。'
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':[warning]})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'unresolved-video-question')
+
+
 def test_dispatch_rejects_forged_trial_or_changed_hash(draft_env):
     draft, _ = draft_env
     batch = trial(draft)

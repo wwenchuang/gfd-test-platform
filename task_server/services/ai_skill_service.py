@@ -451,9 +451,14 @@ def run_ai_skill(
     output_schema=UNSET,
     raw_receipt=None,
     request_proof_hook=None,
+    allow_missing_video_questions=False,
 ):
     """执行 AI skill：优先走统一 Gateway，平台直连仅用于无显式模型的最终兼容兜底。"""
     stage = validate_video_stage(skill_name, payload, image_assets, video_stage, output_schema, version=version)
+    if (type(allow_missing_video_questions) is not bool or
+        (allow_missing_video_questions and (stage or skill_name!='ui_video_observe' or version!='v1' or
+         not isinstance(payload,dict) or payload.get('phase')!='whole-observe'))):
+        raise ValueError('video_question_fallback_invalid')
     if request_proof_hook is not None and (not stage or not callable(request_proof_hook)):
         raise ValueError("video_stage_proof_invalid")
     if stage in {"semantic", "grounding"} or (stage == "audit" and output_schema is not UNSET):
@@ -527,6 +532,14 @@ def run_ai_skill(
                     raise SkillSchemaError(exc.schema_path, '输出不符合当前阶段schema') from None
             if not stage:
                 result = _video_output_defaults(_merge_missing_output_defaults(result, output_defaults), whole_video)
+            if (allow_missing_video_questions and isinstance(result,dict) and 'uncertainties' not in result and
+                isinstance(result.get('events'),list) and type(result.get('multiple_scenarios')) is bool):
+                frames=payload.get('frames');images=payload.get('image_frames')
+                if (isinstance(frames,list) and frames and isinstance(images,list) and
+                    all(isinstance(f,dict) and isinstance(f.get('frame_id'),str) and type(f.get('timestamp_ms')) is int for f in frames) and
+                    all(f in images for f in frames)):
+                    first,last=frames[0],frames[-1]
+                    result['uncertainties']=[f"片段 {first['timestamp_ms']/1000:g}–{last['timestamp_ms']/1000:g} 秒（原帧 {first['frame_id']}–{last['frame_id']}）：该片段模型未返回不确定项字段，无法判断是否存在未决问题，请对照视频核对。"]
             try:
                 validated = validate_ai_skill_output(skill_name, result)
             except Exception as exc:

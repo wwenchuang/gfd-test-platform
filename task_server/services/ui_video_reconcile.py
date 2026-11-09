@@ -840,7 +840,10 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             continue
         combined=[e for e in checked['events'] if not set(e['frame_refs'])<=window_ids]+repaired['events']
         combined.sort(key=lambda e:(e['start_ms'],e['end_ms']))
-        result=validate_analysis({'events':combined,'uncertainties':list(dict.fromkeys(checked['uncertainties']+repaired['uncertainties']))[:30],
+        from .ui_video_business_inputs import _MANUAL
+        prior_questions=[f"复核片段 {e['start_ms']/1000:g}–{e['end_ms']/1000:g} 秒：{q}"
+                         for e in before for q in e['uncertainties'] if q and q!=_MANUAL]
+        result=validate_analysis({'events':combined,'uncertainties':list(dict.fromkeys(checked['uncertainties']+repaired['uncertainties']+prior_questions)),
             'multiple_scenarios':checked['multiple_scenarios'] or repaired['multiple_scenarios']},frames,duration,secrets,max_events=120)
         try:
             check_coverage(before,result['events'],duration,resolutions,'independent_review')

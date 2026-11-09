@@ -419,11 +419,14 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
     from .ui_video_windows import observe_windows
     observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress)
     first_pass=copy.deepcopy(observed['events'])
+    first_root_questions=list(observed['uncertainties'])
+    repaired=False
     from .ui_video_reconcile import needs_reconciliation,reconcile
     if needs_reconciliation(first_pass,frames):
         if progress:progress('reconciling',0,1,first_pass)
         reviewed=reconcile(first_pass,frames,duration,root,cancelled,known_secrets,progress)
         observed={**reviewed,'multiple_scenarios':observed['multiple_scenarios'] or reviewed['multiple_scenarios']}
+        repaired=True
     else:
         from .ui_video_reconcile import _tap_scroll_refs,_overlapping_tap_refs,_overlapping_input_refs,_repair_coverage
         from .ui_video_automatic_motion import review_refs
@@ -431,6 +434,15 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         if drag_refs:
             if progress:progress('reconciling',0,1,first_pass)
             observed=_repair_coverage(first_pass,observed,frames,duration,root,cancelled,known_secrets,drag_refs)
+            repaired=True
+    if repaired:
+        from .ui_video_business_inputs import _MANUAL
+        first_questions=first_root_questions
+        for event in first_pass:
+            first_questions.extend(f"首轮片段 {event['start_ms']/1000:g}–{event['end_ms']/1000:g} 秒：{q}"
+                                   for q in event['uncertainties'] if q and q!=_MANUAL)
+        observed['uncertainties']=list(dict.fromkeys(first_questions+observed['uncertainties']))
+        _check_question_count(observed['uncertainties'],30)
     # The optional audit is never used as action evidence. Persist it only
     # after the complete repair gates have passed, before later stages can fail.
     audit_sink=getattr(progress,'frame_role_audit_sink',None)

@@ -102,7 +102,8 @@ def review_pending_responses(observed,document,root,cancelled,known_secrets=()):
             raise ValueError('video_reference_invalid')
         check=by_key[key];index=check['candidate_index'];seen.add(key)
         if response['frame_refs']!=events[index]['frame_refs']:raise ValueError('video_reference_invalid')
-        revised={**events[index],'action':response['action'],'observation':response['observation'],'uncertainties':[]}
+        revised={**events[index],'action':response['action'],'observation':response['observation'],
+                 'uncertainties':list(events[index]['uncertainties'])}
         if revised['action']!=events[index]['action']:
             revised.pop('outcome',None);revised.pop('reusable_expected',None)
         # Inferred page motion is not enough: the ordinary evidence gate still

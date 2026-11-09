@@ -158,6 +158,24 @@ def test_response_observation_cannot_reintroduce_known_input(monkeypatch,tmp_pat
     assert '[输入内容未保存]' in out['events'][2]['observation']
 
 
+def test_pending_response_review_keeps_original_event_question(monkeypatch,tmp_path):
+    from task_server.services.ui_video_delayed_response import review_pending_responses
+    from task_server.services import ui_video_windows,ai_skill_service as ai
+    fs=[{'frame_id':f'f{i}','timestamp_ms':i*200} for i in range(14)]
+    es=[{**event('aiTap',['f0'],0,0),'target':'提交按钮','observation':'打开确认弹窗'},
+        {**event('aiTap',['f1','f3'],200,600),'target':'确认按钮','observation':'确认弹窗消失'},
+        {**event('aiTap',['f11','f12'],2200,2400),'target':'提交按钮'}]
+    for e in es:e.update(value='',uncertainties=[],evidence_kind='inferred')
+    es[2]['uncertainties']=['是否存在新的触点仍需核对']
+    monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**k:{'events':[{'action':'aiAssert','target':'candidate:2','value':'',
+        'frame_refs':['f11','f12'],'observation':'未见新点击，页面自动加载','uncertainties':[]}],
+        'uncertainties':[],'multiple_scenarios':False})
+    out=review_pending_responses({'events':es,'uncertainties':[],'multiple_scenarios':False},
+        {'media':{'frames':fs,'duration_ms':2800}},tmp_path,lambda:False)
+    assert '是否存在新的触点仍需核对' in out['events'][2]['uncertainties']
+
+
 @pytest.mark.parametrize('note',[
  '未见针对“提交”按钮的新独立触点按下或松开操作，页面自动跳转。',
  '按钮区域无新的独立触点按下或高亮反馈，页面自动加载。',
