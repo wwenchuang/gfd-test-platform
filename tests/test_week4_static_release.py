@@ -34,11 +34,12 @@ class ReleaseTest(unittest.TestCase):
         (self.host/'api-test/assets').mkdir(parents=True)
         (self.docker.root/'api-test/assets').mkdir(parents=True)
         self.entries = {'task-manager.html': b'new-html', 'api-test/index.html': b'new-index'}
-        self.assets = {'js/ui-simple-entry.12345678.js': b'new-js', 'api-test/assets/index-abc.js': b'new-asset'}
+        self.assets = {'js/ui-simple-entry.12345678.js': b'new-js', 'api-test/assets/index-abc.js': b'new-asset', 'api-test/assets/old.js': b'old-asset'}
+        self.baseline_assets = {'api-test/assets/old.js': b'old-asset'}
         for path, data in self.old.items():
             host = self.host/path; host.parent.mkdir(parents=True, exist_ok=True); host.write_bytes(data)
             self.docker.write(path, data)
-        self.r = release.Release(self.host, self.docker, self.backup, self.old, self.entries, self.assets)
+        self.r = release.Release(self.host, self.docker, self.backup, self.old, self.entries, self.assets, self.baseline_assets)
     def test_dry_run_checks_but_writes_nothing(self):
         self.r.preflight()
         self.assertFalse(self.backup.exists())
@@ -86,6 +87,17 @@ class ReleaseTest(unittest.TestCase):
         (self.host/'js/ui-simple-entry.js').write_bytes(b'changed-by-others')
         with self.assertRaises(RuntimeError): self.r.rollback()
         self.assertEqual((self.host/'task-manager.html').read_bytes(), b'new-html')
+
+    def test_rollback_rejects_missing_or_modified_old_api_assets(self):
+        for mutation in ('missing', 'modified'):
+            with self.subTest(mutation=mutation):
+                self.setUp()
+                self.r.apply()
+                target = self.docker.root/'api-test/assets/old.js'
+                if mutation == 'missing': target.unlink()
+                else: target.write_bytes(b'changed')
+                with self.assertRaises(RuntimeError): self.r.rollback()
+                self.assertEqual(self.docker.read('api-test/index.html'), b'new-index')
 
     def test_partial_apply_can_be_rolled_back(self):
         original = self.docker.write

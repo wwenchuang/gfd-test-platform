@@ -158,14 +158,20 @@ def read_payload(repo):
     names = git('ls-tree', '-r', '--name-only', NEW_COMMIT, '--', 'api-test/assets').decode().splitlines()
     if not names: raise RuntimeError('no API frontend assets')
     assets = {name: git('show', NEW_COMMIT + ':' + name) for name in names}
+    old_names = git('ls-tree', '-r', '--name-only', OLD_COMMIT, '--', 'api-test/assets').decode().splitlines()
+    if not old_names: raise RuntimeError('no baseline API frontend assets')
+    baseline_assets = {name: git('show', OLD_COMMIT + ':' + name) for name in old_names}
+    if any(assets.get(name) != data for name, data in baseline_assets.items()):
+        raise RuntimeError('new payload does not preserve all baseline assets')
     assets[js_name] = js
-    return old, entries, assets
+    return old, entries, assets, baseline_assets
 
 
 class Release:
-    def __init__(self, host, docker, backup, old, entries, assets):
+    def __init__(self, host, docker, backup, old, entries, assets, baseline_assets):
         self.host, self.docker, self.backup = Path(host), docker, Path(backup)
         self.old, self.entries, self.assets = old, entries, assets
+        self.baseline_assets = baseline_assets
 
     def preflight(self):
         for rel in ('js', 'api-test', 'api-test/assets'):
@@ -222,6 +228,9 @@ class Release:
                 if getter(rel) != self.old[rel]: raise RuntimeError('rollback refused; old dependency changed: '+side+'/'+rel)
             for rel, new in self.entries.items():
                 if getter(rel) not in (self.old[rel], new): raise RuntimeError('rollback refused; unknown changes: '+side+'/'+rel)
+            if getter('api-test/index.html') == self.entries['api-test/index.html']:
+                for rel, data in self.baseline_assets.items():
+                    if getter(rel) != data: raise RuntimeError('rollback refused; old API asset missing or changed: '+side+'/'+rel)
         for rel, new in reversed(tuple(self.entries.items())):
             for read, write in ((lambda p: host_read(self.host,p), lambda p,d: host_write(self.host,p,d)), (self.docker.read, self.docker.write)):
                 current = read(rel)
@@ -251,9 +260,9 @@ def main():
             raise RuntimeError('invalid backup directory')
     with exclusive_lock(BACKUP_ROOT / '.week4-static-release.lock'):
         docker = Docker(); docker.check_mounts()
-        old, entries, assets = read_payload(args.repo)
+        old, entries, assets, baseline_assets = read_payload(args.repo)
         backup = Path(args.rollback) if args.rollback else BACKUP_ROOT / ('week4-static-' + uuid.uuid4().hex)
-        rel = Release(HOST_ROOT, docker, backup, old, entries, assets)
+        rel = Release(HOST_ROOT, docker, backup, old, entries, assets, baseline_assets)
         print('TARGET', NEW_COMMIT, 'generated HTML SHA256', digest(entries['task-manager.html']))
         print('Old JS is retained; no backend, service restart or old asset deletion.')
         if args.rollback: rel.rollback()
