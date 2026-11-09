@@ -62,11 +62,96 @@ def test_recorded_terminal_distinguishes_feedback_from_unrelated_disappearances(
     assert check('原有的任务进度卡片消失。页面恢复空闲。此过程为系统自动处理，未见用户滚动或点击操作。')
     assert check('页面跳转至反馈页面，包含“取消原因”选项。此前未见针对该页面的入口点击，判断为系统自动触发。')
     assert check('页面跳转至反馈页面，包含“取消原因”选项。鉴于frame-299中未见针对该页面的入口点击，且紧接在任务取消流程结束后出现，判断为自动触发。')
+    assert check('同步弹窗消失后（frame-299），页面自动跳转至“打印遇到什么小问题啦？”的反馈表单页（frame-300），包含“不想打了”“打印不出料”等选项卡片，未观察到用户手动点击导航控件，推测为取消流程结束后的自动引导。')
     assert not check('任务进度卡片没有消失，未见用户滚动或点击操作。')
     assert check('任务卡片“姓名牌”突然消失，页面正在同步。未见用户滚动或点击操作。任务已不在列表中。')
     assert not check('此前页面停留在取消原因反馈页，提交反馈后显示反馈成功，页面跳转回设备详情页。')
     assert check('背景中的任务卡片（姓名牌）消失，布局重排。此过程未见用户触点，属于系统自动同步。')
     assert not check('背景中的任务卡片（姓名牌）没有消失。此过程未见用户触点。')
+
+
+@pytest.mark.parametrize('page,status', [
+    ('反馈表单页','仍在取消中'),
+    ('反馈表单页','仍在打印'),
+    ('取消原因页','仍在工作中'),
+    ('取消原因页','当前打印任务处理中'),
+])
+def test_recovery_terminal_rejects_task_still_active(page,status):
+    from task_server.services.ui_video_print_recovery import eligible_terminal
+    assert not eligible_terminal({'action':'aiAssert','observation':f'页面自动跳转至{page}，但任务{status}。'})
+
+
+def test_navigation_absence_clause_does_not_erase_task_negation_or_uncertainty():
+    from task_server.services.ui_video_print_recovery import eligible_terminal
+    assert not eligible_terminal({'action':'aiAssert','observation':'页面自动跳转至反馈表单页。未观察到用户手动点击导航控件。任务尚未结束。'})
+    assert not eligible_terminal({'action':'aiAssert','observation':'页面可能跳转至反馈表单页。未观察到用户手动点击导航控件。'})
+    assert not eligible_terminal({'action':'aiAssert','observation':'此前任务仍在打印中，随后任务卡片消失，页面恢复空闲并跳转至反馈表单页。未观察到用户手动点击导航控件。'})
+
+
+def test_historical_active_status_remains_rejected_after_later_resolution():
+    from task_server.services.ui_video_print_recovery import eligible_terminal
+    assert not eligible_terminal({'action':'aiAssert','observation':'此前任务仍在打印中，随后同步弹窗消失，出现反馈表单页。'})
+    assert not eligible_terminal({'action':'aiAssert','observation':'此前任务仍在打印中，随后任务卡片消失，出现反馈表单页。'})
+    assert not eligible_terminal({'action':'aiAssert','observation':'此前任务仍在打印中，随后设备明确恢复空闲，出现反馈表单页。'})
+    assert not eligible_terminal({'action':'aiAssert','observation':'此前任务仍在打印中，随后任务卡片消失，但当前任务仍在工作中并出现反馈表单页。'})
+    assert not eligible_terminal({'action':'aiAssert','observation':'此前任务仍在打印中，随后新任务卡片消失，出现反馈表单页。'})
+
+
+@pytest.mark.parametrize('resolution', [
+    '随后弹窗消失，出现反馈表单页。',
+    '随后提示消失，出现反馈表单页。',
+    '随后返回动画结束，出现反馈表单页。',
+    '随后设备恢复空闲，任务卡片仍在，出现反馈表单页。',
+])
+def test_historical_active_status_is_not_cleared_by_non_task_resolution(resolution):
+    from task_server.services.ui_video_print_recovery import eligible_terminal
+    assert not eligible_terminal({'action':'aiAssert','observation':f'此前任务仍在打印中，{resolution}'})
+
+
+@pytest.mark.parametrize('status', [
+    '打印仍在进行中',
+    '打印任务当前状态为打印进行中',
+    '设备任务依旧在处理',
+    '任务仍然在打印',
+    '打印任务依然处于进行状态',
+    '任务依然正在打印中',
+    '打印任务继续打印中',
+])
+def test_additional_explicit_active_task_states_are_rejected(status):
+    from task_server.services.ui_video_print_recovery import eligible_terminal
+    assert not eligible_terminal({'action':'aiAssert','observation':f'页面跳转至反馈表单页，{status}。'})
+
+
+def test_prepare_group_accepts_observed_feedback_terminal_without_rewriting_source():
+    from task_server.services.ui_video_print_recovery import prepare_group
+    observation='同步弹窗消失后（frame-299），页面自动跳转至“打印遇到什么小问题啦？”的反馈表单页（frame-300），包含“不想打了”“打印不出料”等选项卡片，未观察到用户手动点击导航控件，推测为取消流程结束后的自动引导。'
+    candidates=[
+        {'action':'aiTap','target':'确认打印','observation':''},
+        {'action':'aiTap','target':'取消打印','observation':''},
+        {'action':'aiTap','target':'确认','observation':''},
+        {'action':'aiAssert','target':'终态','observation':observation},
+    ]
+    plan={'events':[{'candidate_index':i} for i in range(len(candidates))],
+          'print_recovery':{'submit':0,'cancel':1,'confirm':2,'end':3}}
+    result=prepare_group(plan,candidates,[0,1,2])
+    assert result['print_recovery']=={'submit':0,'cancel':1,'confirm':2}
+    assert result['events']==plan['events']
+    assert candidates[3]['observation']==observation
+
+
+def test_prepare_group_does_not_swallow_reason_selection_before_terminal():
+    from task_server.services.ui_video_print_recovery import prepare_group
+    candidates=[
+        {'action':'aiTap','target':'确认打印','observation':''},
+        {'action':'aiTap','target':'取消打印','observation':''},
+        {'action':'aiTap','target':'确认','observation':''},
+        {'action':'aiTap','target':'不想打了','observation':''},
+        {'action':'aiAssert','target':'终态','observation':'同步弹窗消失后（frame-299），页面自动跳转至“打印遇到什么小问题啦？”的反馈表单页（frame-300），包含“不想打了”“打印不出料”等选项卡片，未观察到用户手动点击导航控件，推测为取消流程结束后的自动引导。'},
+    ]
+    plan={'events':[{'candidate_index':i} for i in range(len(candidates))],
+          'print_recovery':{'submit':0,'cancel':1,'confirm':2,'end':4}}
+    with pytest.raises(ValueError,match='video_retry_invalid'):
+        prepare_group(plan,candidates,[0,1,2,3])
 
 
 @pytest.mark.parametrize('opening_target', ['确认按钮','确认打印按钮'])

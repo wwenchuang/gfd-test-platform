@@ -5,17 +5,31 @@ from .ui_print_recovery import DEFAULTS,SUBMIT_EXPECTED
 from .ui_video_recovery import invalid_retry
 
 
+def _task_still_active(observation):
+    status=r'(?:取消中|处理(?:中|状态)?|打印(?:进行中|进行状态|中)?|进行中|进行状态|工作中|运行中)'
+    qualifier=r'(?:仍然|依然|依旧|继续|持续|仍|还|当前|目前)'
+    patterns=(
+        rf'(?:当前|目前)(?:的)?(?:打印)?任务(?:状态)?(?:为|是|正在|仍在|处于)?{status}',
+        rf'(?:设备|打印)?任务(?:状态)?{qualifier}(?:状态)?(?:正在|在|处于|为|是)?{status}',
+        rf'(?:设备|打印)?任务(?:当前|目前)(?:的)?(?:状态)?(?:为|是|正在|处于)?{status}',
+        rf'(?:设备|打印)?任务(?:正在|处于){status}',
+        rf'(?:打印|处理|工作|运行){qualifier}(?:正在|在|处于)?(?:进行中|进行状态|处理中|工作中|运行中)',
+    )
+    return any(re.search(pattern,observation) for pattern in patterns)
+
+
 def eligible_terminal(terminal):
     # An explicit absence of user input is not a negated business result.
     # Remove only complete, narrowly recognized clauses; keep task negation and
     # uncertainty intact, and preserve the original candidate for audit.
     observation='，'.join(clause for clause in re.split(r'[，。；,;\n]',terminal['observation'])
-        if not re.fullmatch(r'(?:(?:期间|此过程|全过程)?未(?:见|观察到)用户(?:手动|新的)?(?:点击(?:(?:导航)?入口|操作|触点)?|滚动或点击操作|操作|触点)|(?:此前|鉴于frame-\d+中)?未见针对该页面的入口点击)',clause.strip()))
+        if not re.fullmatch(r'(?:(?:期间|此过程|全过程)?未(?:见|观察到)用户(?:手动|新的)?(?:点击(?:(?:导航)?入口|操作|触点)?|滚动或点击操作|操作|触点)|(?:此前|鉴于frame-\d+中)?未见针对该页面的入口点击|未观察到用户手动点击导航控件)',clause.strip()))
     # Unselected feedback options describe form state, not an unfinished task.
     observation=re.sub(r'(?<=为)未选中状态', '待选择状态', observation)
     # Toast persistence is independent of whether the print task has ended.
     observation=re.sub(r'(?:Toast|提示)(?:提示)?未消失', '提示仍显示', observation, flags=re.I)
     return not (terminal['action'] not in ('aiAssert','aiWaitFor') or
+        _task_still_active(observation) or
         re.search(r'反馈(?:提交)?成功|提交反馈[^，。；,;\n]{0,30}成功',observation) or
         re.search(r'未|没有|无法|不能|可能|不确定',observation) or
         not re.search(r'取消原因|反馈(?:表单)?(?:页|界面)|任务(?:进度)?(?:卡片)?(?:区域)?(?:“[^“”]{1,40}”|（[^（）]{1,40}）)?(?:已|突然|自动|刷新|并|被|区域)*(?:移除|消失)|无任务卡片',observation))

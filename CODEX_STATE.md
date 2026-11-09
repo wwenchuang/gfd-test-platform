@@ -14484,3 +14484,9 @@ git diff --check
 - `probe` 对该类型至多重试一次同一帧，并接受共享预算；单次 `observe_windows` 的全部窗口共用一次预算。原 schema 修正预算及取消检查保留，不产生默认/空触点。
 - 新增分类、异常链及预算测试；新增测试、touch-target/schema/reference 相邻回归 97 项通过，相关三模块 py_compile 与 diff check 通过。仅本地修改，未提交或推送。
 - 复核修正：专用 Gateway 结束请求超时异常继承 `RuntimeError`，且 `run_ai_skill` 显式透传，避免 Python 3.11+ 中 `concurrent.futures.TimeoutError` 与 `TimeoutError` 同一导致硬超时误分类。新增完整HTTPError→Gateway→run_ai_skill→probe测试及仍运行后台线程的普通本地超时不重试测试。当前容器 Python 3.9.6；建议在 Python 3.12.5 复跑 `python3.12 -m pytest -q tests/test_ui_video_touch_target_timeout_retry.py tests/test_ui_video_touch_targets.py tests/test_ui_video_schema_recovery.py tests/test_ui_video_reference_feedback.py`。
+
+## 2026-11-09 姓名牌取消终态判定（本地）
+
+- QA 第 7 次整片在两轮各 14 段观察后，于规划阶段 `prepare_group` 的终态检查失败，未生成草稿。保留了来源快照、原片及 358 帧并逐项校验；模型最终规划回复未完整留存，不能断言最终使用的 end 索引。
+- 原视频约 170 秒可见取消原因反馈表单；一条时间相关的规划回复预览选择 end=60，该候选原始 observation 中的“未观察到用户手动点击导航控件”被错误当作终态否定。仅将该完整独立从句归为无手动操作描述，保留原始证据；对于明确提到任务仍在运行的文本保守拒绝。静态分类不能证明真实打印任务归属或结束，仍需 Runner 核验。
+- 本地相关回归 84 项通过；实际部署、整片生成和安卓三次执行仍待验证。观察阶段耗时仍未优化完成。
