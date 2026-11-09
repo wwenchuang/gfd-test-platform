@@ -163,6 +163,7 @@ class _TargetHandler(BaseHTTPRequestHandler):
             type(self).captured_authorization = self.headers.get("Authorization")
             type(self).captured_cookie = self.headers.get("Cookie")
             type(self).captured_preview_token = self.headers.get("X-Preview-Token")
+            type(self).captured_scope_values = self.headers.get_all("X-Scope")
             self._send(200, {"code": 0})
         else:
             self._send(404, {"message": "missing"})
@@ -2557,3 +2558,71 @@ def test_future_cleanup_output_cannot_authorize_nested_override_control(target_s
     result = _executor(target_server, _case('/ok', processing=_workflow_processing(cleanup_steps=[first, later]))).execute_case('v', 'env', {'resourceSn': 'another-run', 'oldAlias': '{{resourceSn}}'})
     assert result.status == 'FAILED'
     assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+@pytest.mark.parametrize('stage', ['setup', 'main', 'cleanup'])
+@pytest.mark.parametrize('source', ['dependency', 'override', 'setup_output'])
+def test_configured_service_url_never_uses_stale_override_for_any_stage(target_server, stage, source):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    base_url, handler = target_server
+    class Env:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            current = _PlaceholderResolver({'resourceSn': 'another-run', **overrides})
+            configured = _PlaceholderResolver({'resourceSn': 'another-run'})
+            danger = base_url + '/workflow/{{resourceSn}}'
+            return ResolvedEnvironment(revision_id='env', environment_id='env', name='test',
+                base_urls={'default': base_url, 'danger': configured.render(danger)},
+                public_variables=current.resolve_all(), secrets={}, headers={}, service_metadata={},
+                unresolved_services=(), _renderer=current.render, _reference_finder=current.referenced_variables,
+                service_base_url_references={'default': frozenset(), 'danger': frozenset(configured.referenced_variables(danger))})
+    danger = _workflow_step('动态服务基址', 'POST', 'cancel', body={'operation': 'delete'})
+    danger['request']['service'] = 'danger'
+    setup = [_workflow_step('本次输出', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])] if source == 'setup_output' else []
+    if stage == 'setup':
+        setup.append(danger)
+    case = _case('/ok', processing=_workflow_processing(setup_steps=setup, cleanup_steps=[danger] if stage == 'cleanup' else []))
+    if stage == 'main':
+        case.request = danger['request']
+    executor = _executor(target_server, case)
+    executor.environment_service = Env()
+    handler.workflow_calls = []
+    overrides = {'resourceSn': 'this-run'} if source == 'override' else {}
+    dependency = {'resourceSn': 'this-run'} if source == 'dependency' else {}
+    result = executor.execute_case('v', 'env', overrides, dependency_overrides=dependency)
+    assert result.status != 'PASSED'
+    assert not any('/another-run/' in call[1] for call in handler.workflow_calls)
+
+
+@pytest.mark.parametrize(('override_name', 'override_value', 'expect_pass'), [
+    ('X-Scope', 'literal', True), ('x-scope', 'literal', True),
+    ('x-scope', '', False), ('unrelated', 'literal', False), ('x-scope', '{{resourceSn}}', False),
+])
+def test_default_header_provenance_follows_effective_case_insensitive_override(target_server, override_name, override_value, expect_pass):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    base_url, handler = target_server
+    class Env:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            resolver = _PlaceholderResolver({'resourceSn': 'another-run', **overrides})
+            raw_headers = {'X-Scope': '{{resourceSn}}'}
+            runtime = ResolvedEnvironment(revision_id='env', environment_id='env', name='test',
+                base_urls={'default': base_url}, public_variables=resolver.resolve_all(), secrets={},
+                headers=resolver.render(raw_headers), service_metadata={}, unresolved_services=(),
+                _renderer=resolver.render, _reference_finder=resolver.referenced_variables,
+                default_header_references=frozenset(resolver.referenced_variables(raw_headers)),
+                service_base_url_references={'default': frozenset()})
+            object.__setattr__(runtime, 'default_header_reference_map', {'X-Scope': frozenset({'resourceSn'})})
+            return runtime
+    executor = _executor(target_server, _case('/capture', headers={override_name: override_value}))
+    executor.environment_service = Env()
+    handler.workflow_calls = []
+    result = executor.execute_case('v', 'env', {}, unavailable_dependency_exports={'resourceSn'})
+    if expect_pass:
+        assert result.status == 'PASSED'
+        values = [v for k, v in result.sanitized_request['headers'].items() if k.lower() == 'x-scope']
+        assert values == ['literal']
+        assert handler.captured_scope_values == ['literal']
+    else:
+        assert result.status == 'BROKEN'
+        assert not handler.workflow_calls

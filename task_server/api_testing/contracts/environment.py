@@ -116,6 +116,7 @@ class ResolvedEnvironment:
     _renderer: Callable[[Any], Any] = field(repr=False, compare=False)
     _reference_finder: Optional[Callable[[Any], Any]] = field(default=None, repr=False, compare=False)
     default_header_references: frozenset = field(default_factory=frozenset, repr=False, compare=False)
+    default_header_reference_map: Optional[Mapping[str, frozenset]] = field(default=None, repr=False, compare=False)
     service_base_url_references: Optional[Mapping[str, frozenset]] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
@@ -125,6 +126,10 @@ class ResolvedEnvironment:
         object.__setattr__(self, "headers", _frozen_mapping(self.headers))
         object.__setattr__(self, "service_metadata", _frozen_mapping(self.service_metadata))
         object.__setattr__(self, "unresolved_services", tuple(self.unresolved_services))
+        if self.default_header_reference_map is not None:
+            object.__setattr__(self, "default_header_reference_map", MappingProxyType({
+                name: frozenset(refs) for name, refs in self.default_header_reference_map.items()
+            }))
         if self.service_base_url_references is not None:
             object.__setattr__(self, "service_base_url_references", MappingProxyType({
                 name: frozenset(refs) for name, refs in self.service_base_url_references.items()

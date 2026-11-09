@@ -880,6 +880,7 @@ def test_runtime_preserves_nested_default_header_references(environment_service,
     runtime = environment_service.resolve_runtime(view.revision_id, {'resourceSn': 'new'})
     assert runtime.headers['X-Resource'] == 'new'
     assert {'alias', 'resourceSn'} <= runtime.default_header_references
+    assert runtime.default_header_reference_map['X-Resource'] == {'alias', 'resourceSn'}
     assert runtime.referenced_variables({'body': '{{alias}}'}) == {'alias', 'resourceSn'}
 
 

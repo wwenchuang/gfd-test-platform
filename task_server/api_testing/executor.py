@@ -416,6 +416,7 @@ class HttpExecutor:
                     callback,
                     trace,
                     unavailable_outputs=unavailable_outputs,
+                    configured_source_unavailable=late_targets | set(variables) | set(unavailable_dependency_exports),
                 )
                 all_secrets.extend(step_secrets)
                 if outcome.status != "PASSED":
@@ -441,6 +442,7 @@ class HttpExecutor:
                     trace,
                     record_main_phases=True,
                     unavailable_outputs=unavailable_outputs,
+                    configured_source_unavailable=late_targets | set(variables) | set(unavailable_dependency_exports),
                 )
                 all_secrets.extend(main_outcome.secrets)
                 variables.update(copy.deepcopy(main_outcome.extracted))
@@ -533,8 +535,7 @@ class HttpExecutor:
                     "cleanup", index, step, environment_revision_id, variables,
                     lambda _phase: False, callback, trace,
                     unavailable_outputs=unavailable_outputs | future_cleanup_targets,
-                    configured_source_unavailable=(late_targets | set(dependency_overrides or {})
-                        | set(overrides or {}) | set(row_values) | set(unavailable_dependency_exports)),
+                    configured_source_unavailable=late_targets | set(variables) | set(unavailable_dependency_exports),
                     require_independent_literal=cleanup_output_failed,
                     fresh_cleanup_outputs=fresh_cleanup_outputs,
                 )
@@ -815,7 +816,21 @@ class HttpExecutor:
                 variables,
                 service_name=request.get("service", "default"),
             )
-            references = self._request_references(runtime, {
+            rendered_request_headers = runtime.render(request.get("headers") or {})
+            overridden_names = {
+                name.lower() for name, value in rendered_request_headers.items()
+                if isinstance(name, str) and value is not None
+                and (not isinstance(value, str) or value.strip())
+            }
+            if runtime.render(request.get("cookies") or {}):
+                overridden_names.add("cookie")
+            header_map = getattr(runtime, "default_header_reference_map", None)
+            if header_map is None:
+                header_refs = set(getattr(runtime, "default_header_references", ()))
+            else:
+                header_refs = set().union(*(refs for name, refs in header_map.items()
+                    if name.lower() not in overridden_names)) if header_map else set()
+            references = header_refs | self._request_references(runtime, {
                 "request": request,
                 "assertions": [
                     {"expected": item.expected, "path": getattr(item, "path", None)}
@@ -880,16 +895,18 @@ class HttpExecutor:
                     )
                 )
             headers = dict(runtime.headers)
-            headers.update(
-                {
-                    key: value
-                    for key, value in (rendered.get("headers") or {}).items()
-                    if value is not None
-                    and (not isinstance(value, str) or value.strip())
-                }
-            )
+            for key, value in (rendered.get("headers") or {}).items():
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    continue
+                for existing in list(headers):
+                    if isinstance(existing, str) and isinstance(key, str) and existing.lower() == key.lower():
+                        del headers[existing]
+                headers[key] = value
             cookies = rendered.get("cookies") or {}
             if cookies:
+                for existing in list(headers):
+                    if isinstance(existing, str) and existing.lower() == "cookie":
+                        del headers[existing]
                 headers["Cookie"] = "; ".join(
                     f"{key}={value}" for key, value in cookies.items()
                 )
@@ -899,7 +916,8 @@ class HttpExecutor:
                 body_bytes = json.dumps(
                     body, ensure_ascii=False, separators=(",", ":")
                 ).encode("utf-8")
-                headers.setdefault("Content-Type", "application/json")
+                if not any(isinstance(name, str) and name.lower() == "content-type" for name in headers):
+                    headers["Content-Type"] = "application/json"
             request_view = redact(
                 {
                     "method": rendered["method"],
@@ -1217,7 +1235,7 @@ class HttpExecutor:
     def _request_references(runtime, request, variables):
         finder = getattr(runtime, "referenced_variables", None)
         if finder is not None:
-            return set(finder(request)) | set(getattr(runtime, "default_header_references", ()))
+            return set(finder(request))
         # In-process custom runtimes must expose raw variables to resolve aliases;
         # otherwise treat every supplied variable as referenced when provenance matters.
         raw_values = getattr(runtime, "values", None)

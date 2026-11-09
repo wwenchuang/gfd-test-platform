@@ -877,6 +877,10 @@ class EnvironmentService:
             _renderer=resolver.render,
             _reference_finder=resolver.referenced_variables,
             default_header_references=frozenset(resolver.referenced_variables(revision.default_headers)),
+            default_header_reference_map={
+                name: frozenset(resolver.referenced_variables(value))
+                for name, value in revision.default_headers.items()
+            },
             service_base_url_references={
                 name: frozenset(configured_resolver.referenced_variables(item["base_url"]))
                 for name, item in services.items()
