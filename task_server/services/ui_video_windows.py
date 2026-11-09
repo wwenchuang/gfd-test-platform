@@ -72,13 +72,13 @@ def observation_windows(frames):
 
 def observe_windows(frames,duration,root,cancelled,progress=None,review_events=None,prior_secrets=()):
     from . import ai_skill_service as ai
-    from .ui_video_analysis import _bind_whole_evidence,validate_analysis
+    from .ui_video_analysis import _bind_whole_evidence,validate_analysis,_text,_check_question_count
     windows=observation_windows(frames)
     events=[];questions=[];secrets=list(prior_secrets);multi=False;previous_end=-1
     touch_target_timeout_retry_budget={'used':False}
     def preserve_new_questions(old,event):
         from .ui_video_business_inputs import _MANUAL
-        questions.extend(f"片段 {event['start_ms']/1000:g}–{event['end_ms']/1000:g} 秒：{q}"
+        questions.extend('局部事件待核对：'+q
                          for q in event['uncertainties'] if q and q!=_MANUAL and q not in old['uncertainties'])
     for index,window in enumerate(windows):
         if cancelled():raise ValueError('video_cancelled')
@@ -109,10 +109,18 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         from .ui_video_touch_detail import append_details
         payload['detail_frames']=append_details(images,root,assets,cancelled,current_ids)
         from .ui_video_touch_targets import probe,conflict,bind_uncertain_hints
+        from .ui_video_reconcile import _redact_audit
         payload['touch_targets']=probe(images,payload['detail_frames'],assets,duration,cancelled,
                                        touch_target_timeout_retry_budget)
+        sticky_questions=[];sticky_multiple=False
         for attempt in range(2):
             if cancelled():raise ValueError('video_cancelled')
+            attempt_questions=[];attempt_multiple=False
+            payload['touch_targets']=_redact_audit(payload['touch_targets'],secrets)
+            if 'prior_events' in payload:
+                payload['prior_events']=_redact_audit(payload['prior_events'],secrets)
+            if 'validation_feedback' in payload:
+                payload['validation_feedback']=_redact_audit(payload['validation_feedback'],secrets)
             try:
                 result=ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
                     timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False,
@@ -120,8 +128,21 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                 if cancelled():raise ValueError('video_cancelled')
                 if isinstance(result,dict) and isinstance(result.get('events'),list):
                     secrets.extend(e['value'] for e in result['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
+                    for event in result['events']:
+                        if isinstance(event,dict) and isinstance(event.get('uncertainties'),list):
+                            _check_question_count(event['uncertainties'],10)
+                            attempt_questions.extend('初次观察待核对：'+_text(q) for q in event['uncertainties'] if q)
+                if isinstance(result,dict) and isinstance(result.get('uncertainties'),list):
+                    _check_question_count(result['uncertainties'],30)
+                    attempt_questions.extend(_text(q) for q in result['uncertainties'])
+                if isinstance(result,dict) and type(result.get('multiple_scenarios')) is bool:
+                    attempt_multiple|=result['multiple_scenarios']
                 result=_bind_whole_evidence(result,window)
                 checked=validate_analysis(result,window,duration,secrets)
+                all_questions=list(dict.fromkeys(_redact_audit(checked['uncertainties']+sticky_questions,secrets)))
+                _check_question_count(all_questions,30)
+                checked['uncertainties']=all_questions
+                checked['multiple_scenarios']|=sticky_multiple
                 target_diagnostic={};target_evidence={}
                 target_conflict=conflict(checked['events'],payload['touch_targets'],images,target_diagnostic,evidence=target_evidence)
                 if target_conflict:
@@ -145,6 +166,8 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                 break
             except ValueError as error:
                 if cancelled() or attempt or getattr(error,'target_diagnostic',{}).get('ambiguous_bare_probe'):raise
+                sticky_questions.extend(attempt_questions)
+                sticky_multiple|=attempt_multiple
                 if getattr(error,'reference_reason',None)=='outside_window':
                     # Re-observe original local pixels; never trim invalid model
                     # references or accept context-only events as evidence.

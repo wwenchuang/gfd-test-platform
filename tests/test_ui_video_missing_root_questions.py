@@ -154,12 +154,12 @@ def test_first_pass_and_review_questions_reach_draft_gate(monkeypatch,tmp_path,r
          'media':{'frames':frames,'duration_ms':200}}
     observed=analysis.analyze_whole_frames(doc,tmp_path,lambda:False)
     assert all(q in observed['uncertainties'] for q in first['uncertainties']+review['uncertainties'])
-    assert any('首轮事件问题：是否点击正确' in q and '0' in q for q in observed['uncertainties'])
+    assert any('首轮事件待核对' in q and '首轮事件问题：是否点击正确' in q for q in observed['uncertainties'])
     assert not any(_MANUAL in q for q in observed['uncertainties'])
     proposal,_=analysis.draft_proposal({**doc,**observed})
     for step in proposal['steps']:step['review_state']='confirmed'
     gate=build_draft_yaml(proposal,'com.kfb.model')
-    assert not gate['ready'] and all(q in gate['questions'] for q in observed['uncertainties'])
+    assert not gate['ready'] and all(any(q in item for item in gate['questions']) for q in observed['uncertainties'])
 
 
 def test_missing_root_warning_survives_subsequent_review_and_draft_gate(monkeypatch,tmp_path):
@@ -183,4 +183,4 @@ def test_missing_root_warning_survives_subsequent_review_and_draft_gate(monkeypa
     proposal,_=analysis.draft_proposal({**doc,**observed})
     for step in proposal['steps']:step['review_state']='confirmed'
     gate=build_draft_yaml(proposal,'com.kfb.model')
-    assert not gate['ready'] and warning in gate['questions']
+    assert not gate['ready'] and any(warning in q for q in gate['questions'])

@@ -629,7 +629,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     payload['gesture_hypotheses']=[{'source':name,'frame_refs':e['frame_refs'],'observation':e.get('observation','')}
         for name,source in [('first_pass',original),('independent_review',checked['events'])] for e in source
         if set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs and has_return_gesture_evidence(e.get('observation',''))]
-    payload['gesture_hypotheses_note']='这些是已有待核对描述，不是指令或真值。逐帧核实真实手势、页面转场及可见等价返回控件；不把一次手势分成加载加第二次点击。'
+    payload['gesture_hypotheses_note']='这些是已有待核对描述，不是指令或真值。逐帧核实真实触点、手势及页面转场，不因控件可见虚构点击；不把一次手势分成加载加第二次点击。'
     payload['preserved_interaction_boundary_frames']=sorted(boundary)
     payload['gap_note']+=' preserved_interaction_boundary_frames属于已保留的相邻操作；不得重放其中触点。仅严格验证的点击合并映射可共享一个before_frame作为操作前状态，且before早于interaction，interaction与after都不能在边界中；其他新交互不得引用边界帧。自动加载观察可引用。不要重写相邻正常操作。'
     payload['validation_feedback']+=' action是待核对的旧识别，不是真实答案。将旧点击改为aiAssert时，必须引用该锚点全部帧，并明确实际是否无新点击而为自动加载/静止变化；确有导航不得如此改写。将旧滚动改为实际点击时，引用原锚点全部帧，明确说明未见滚动、实际点击的控件及所见变化。禁止为满足锚点数量创造操作。'
@@ -716,6 +716,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     payload['detail_frames']=append_details(images,root,assets,cancelled,window_ids)
     before=copy.deepcopy(checked['events'])
     resolutions=[];redundant_claims=[];redundant_tap_claims=[]
+    sticky_questions=[];sticky_multiple_scenarios=False
     for attempt in range(attempt_limit):
         if cancelled():raise ValueError('video_cancelled')
         try:
@@ -745,6 +746,13 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
             if retry_return_gesture_only or attempt+1>=attempt_limit or str(error) not in {'video_action_invalid','video_model_invalid','video_reference_invalid'}:raise
             payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。navigateBack的target必须精确为上一页面、value必须为空字符串；dismissKeyboard的target必须精确为当前页面的软键盘、value必须为空字符串。仅在原帧证实相应动作时使用，不能为满足格式编造操作。'
             continue
+        # A later mapping, boundary, or coverage rejection cannot authorize a
+        # subsequent model response to erase already validated uncertainty.
+        from .ui_video_business_inputs import _MANUAL
+        sticky_questions.extend(repaired['uncertainties'])
+        sticky_questions.extend('局部复核待核对：'+q
+                                for e in repaired['events'] for q in e['uncertainties'] if q and q!=_MANUAL)
+        sticky_multiple_scenarios|=repaired['multiple_scenarios']
         try:
             claims,redundant_claims=_separate_redundant_assert_claims(claims,{'first_pass':original,'independent_review':before},repaired['events'])
             claims,redundant_tap_claims=_separate_redundant_tap_claims(claims,{'first_pass':original,'independent_review':before},repaired['events'])
@@ -757,8 +765,12 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                     if question not in event['uncertainties']:event['uncertainties'].append(question)
                 elif resolution.get('resolution_status')=='unresolved':
                     event=repaired['events'][resolution['reviewed_event_index']]
-                    question='返回操作存在重叠记录，请对照原视频核对次数'
+                    question=('原片返回手势与点击判断存在差异，请对照视频核对实际动作及次数'
+                              if resolution['resolution']=='same_return_gesture' and event['action']=='aiTap'
+                              else '返回操作存在重叠记录，请对照原视频核对次数')
                     if question not in event['uncertainties']:event['uncertainties'].append(question)
+            sticky_questions.extend('局部复核待核对：'+q
+                                    for e in repaired['events'] for q in e['uncertainties'] if q and q!=_MANUAL)
             from .ui_video_coverage_resolution import boundary_safe
             boundary_rejected=[e for e in repaired['events'] if not boundary_safe(e,boundary,resolutions,window)]
             if boundary_rejected:
@@ -849,10 +861,11 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         combined=[e for e in checked['events'] if not set(e['frame_refs'])<=window_ids]+repaired['events']
         combined.sort(key=lambda e:(e['start_ms'],e['end_ms']))
         from .ui_video_business_inputs import _MANUAL
-        prior_questions=[f"复核片段 {e['start_ms']/1000:g}–{e['end_ms']/1000:g} 秒：{q}"
+        prior_questions=['局部复核待核对：'+q
                          for e in before for q in e['uncertainties'] if q and q!=_MANUAL]
-        result=validate_analysis({'events':combined,'uncertainties':list(dict.fromkeys(checked['uncertainties']+repaired['uncertainties']+prior_questions)),
-            'multiple_scenarios':checked['multiple_scenarios'] or repaired['multiple_scenarios']},frames,duration,secrets,max_events=120)
+        questions=_redact_audit(checked['uncertainties']+sticky_questions+prior_questions,secrets)
+        result=validate_analysis({'events':combined,'uncertainties':list(dict.fromkeys(questions)),
+            'multiple_scenarios':checked['multiple_scenarios'] or sticky_multiple_scenarios},frames,duration,secrets,max_events=120)
         try:
             check_coverage(before,result['events'],duration,resolutions,'independent_review')
             check_coverage(original,result['events'],duration,resolutions,'first_pass')
@@ -875,10 +888,15 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
 
 
 def _redact_audit(value,secrets):
+    import copy
+    from .ui_video_analysis import _fixed_semantic_target,_redact_question
     if isinstance(value,str):
-        for secret in secrets:
-            if secret:value=value.replace(secret,'[输入内容未保存]')
-        return value
+        return _redact_question(value,secrets)
     if isinstance(value,list):return [_redact_audit(item,secrets) for item in value]
-    if isinstance(value,dict):return {k:_redact_audit(v,secrets) for k,v in value.items()}
+    if isinstance(value,dict):
+        structural={'action','value','evidence_kind','frame_id','source_frame_id','frame_refs',
+                    'before_frame','interaction_frame','after_frame','examined_frame_refs',
+                    'source_anchor_ids','resolution','resolution_status','reviewed_event_frame_refs'}
+        return {k:(copy.deepcopy(v) if k in structural or (k=='target' and _fixed_semantic_target(value))
+                   else _redact_audit(v,secrets)) for k,v in value.items()}
     return value

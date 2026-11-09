@@ -302,3 +302,251 @@ def test_staged_trial_freezes_all_tasks_and_rejects_partial_stage_evidence(draft
     with actor_context(ACTORS['a']), patch.object(execution.UiExecutionStore,'get_batch',return_value=partial):
         with pytest.raises(execution.BatchValidationError,match='draft_trial_steps_required'):
             execution._verified_publish_batch(ACTORS['a'],draft,batch['ui_batch_id'])
+
+
+@pytest.mark.parametrize('unbound_event',[False,True])
+def test_unresolved_empty_probe_blocks_actual_draft_trial(draft_env,monkeypatch,unbound_event):
+    from task_server.services import ui_video_touch_targets as targets
+    frames=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(1,4)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms']} for f in frames+[detail]]
+    events=[{'action':'aiTap','target':'入口','value':'','frame_refs':['frame-003'],
+             'observation':'页面显示','uncertainties':[]}] if unbound_event else []
+    monkeypatch.setattr(targets.ai,'run_ai_skill',lambda *a,**kw:{'events':events,
+        'uncertainties':['无法判断是点击还是返回'],'multiple_scenarios':False})
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    questions=targets.bind_uncertain_hints([],hints)
+    assert any('局部复核待核对' in q and '无法判断' in q for q in questions)
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':questions})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'unresolved-empty-probe')
+
+
+@pytest.mark.parametrize('outcome_retry',[False,True])
+def test_legacy_analysis_questions_block_actual_trial(draft_env,monkeypatch,tmp_path,outcome_retry):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    root=tmp_path/'legacy';(root/'frames').mkdir(parents=True)
+    for frame in frames:(root/'frames'/(frame['frame_id']+'.jpg')).write_bytes(b'mock')
+    event={'action':'aiTap','target':'我的','value':'','start_ms':100,'end_ms':200,
+           'frame_refs':['frame-001','frame-002'],'observation':'我的页面','evidence_kind':'inferred','uncertainties':[]}
+    def model(name,payload,**kwargs):
+        if payload['phase']=='consolidate' or payload.get('validation_feedback'):
+            return {'events':[event],'uncertainties':[],'multiple_scenarios':False}
+        raw={**event,'uncertainties':['无法确认点击是否发生']}
+        if outcome_retry:raw['outcome']={'observation':'我的页面','frame_refs':['unknown']}
+        return {'events':[raw],'uncertainties':['页面状态尚待核对'],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model);monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
+    doc={'app_id':APP,'goal':'','media':{'duration_ms':1000,'frames':frames}}
+    result=analysis.analyze_frames(doc,root,lambda:False)
+    assert any('无法确认点击是否发生' in q for q in result['uncertainties'])
+    assert any('页面状态尚待核对' in q for q in result['uncertainties'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':result['uncertainties']})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'legacy-unresolved-question')
+
+
+def test_retry_repair_preserves_first_uncertainties_through_actual_trial(draft_env,monkeypatch,tmp_path):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai
+    from test_ui_video_coverage_resolution import tap_return_conflict_fixture
+    frames,back,tap,claim=tap_return_conflict_fixture()
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(1); candidate=copy.deepcopy(claim)
+        event={k:v for k,v in back.items() if k not in {'start_ms','end_ms','evidence_kind'}}
+        if len(calls)==1:
+            candidate['evidence']['interaction']='未见点击返回箭头，实际执行返回操作'
+            event['uncertainties']=['触点归属不确定']
+        return {'events':[event],'coverage_resolutions':[candidate],
+                'uncertainties':['返回方式未确定'] if len(calls)==1 else [],
+                'multiple_scenarios':len(calls)==1}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=vr._repair_window([back],{'events':[tap],'uncertainties':[],'multiple_scenarios':False},
+                             frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3'},attempt_limit=2)
+    assert len(calls)==2 and result['multiple_scenarios']
+    assert any('返回方式未确定' in q for q in result['uncertainties'])
+    assert any('触点归属不确定' in q for q in result['uncertainties'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':result['uncertainties']})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'unresolved-repair-retry')
+
+
+@pytest.mark.parametrize('field',['target','expected'])
+def test_redacted_executable_field_cannot_be_compiled_or_trialled(draft_env,field):
+    from task_server.services.ui_case_draft_contract import build_draft_yaml
+    draft,_=draft_env
+    steps=copy.deepcopy(draft['steps']);steps[0][field]='测试[输入内容未保存]字段'
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'steps':steps})
+    built=build_draft_yaml({key:edited[key] for key in ('title','preconditions','steps','questions')},APP)
+    assert not built['ready'] and not built['yaml_content']
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'redacted-'+field)
+    reset=DraftStore().revise(edited['draft_id'],'u-a',edited['revision'],{'steps':draft['steps'],'questions':[]})
+    assert trial(reset,'redacted-reset-'+field)['ui_batch_id']
+
+
+def test_redacted_field_validate_http_returns_blocker_objects(draft_env,monkeypatch):
+    import re
+    from task_server import ui_case_draft_http
+    monkeypatch.setenv('UI_SIMPLE_FLOW_ENABLED','1')
+    draft,_=draft_env
+    steps=copy.deepcopy(draft['steps']);steps[0]['target']='按钮[输入内容未保存]'
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'steps':steps})
+    routes={}
+    def register(pattern):
+        def bind(fn):routes[pattern]=fn;return fn
+        return bind
+    ui_case_draft_http.register_routes(register,register,register,register)
+    class Handler:
+        headers={}
+        def _body(self):return {'revision':edited['revision'],'target':TARGET}
+        def _json(self,body,status=200):self.response=body;self.status=status
+    handler=Handler()
+    with actor_context(ACTORS['a']):
+        for pattern,fn in routes.items():
+            match=re.fullmatch(pattern,f"/api/ui-case-drafts/{edited['draft_id']}/validate")
+            if match:fn(handler,{},match);break
+    assert handler.status==200 and handler.response['gate']['ready'] is False
+    assert handler.response['gate']['blockers']
+    assert all(set(item)=={'code','message'} for item in handler.response['gate']['blockers'])
+
+
+def test_repeated_video_question_keeps_global_notice_and_blocks_trial(draft_env):
+    from task_server.services.ui_video_analysis import _merge_legacy_questions,draft_proposal
+    events=[{'action':'aiAssert','target':'列表可见','value':'','frame_refs':[f'frame-00{i}'],
+             'start_ms':i*100,'end_ms':i*100,'evidence_kind':'inferred','observation':'列表可见',
+             'uncertainties':['点击是否发生']} for i in (1,2)]
+    questions=_merge_legacy_questions([],events,[],[])
+    assert len(questions)==1
+    doc={'app_id':APP,'source_id':'uvs_'+'0'*32,'analysis_version':1,'goal':'',
+         'media':{'duration_ms':1000,'frames':[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2)]},
+         'events':events,'uncertainties':questions}
+    proposal,_=draft_proposal(doc)
+    assert any('同一问题可能涉及视频多处，请核对完整视频中所有相关操作后再解除' in q for q in proposal['questions'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':proposal['questions']})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'repeated-video-issue')
+
+
+@pytest.mark.parametrize('field',['target','expected'])
+def test_planner_cannot_clear_source_redaction_before_actual_trial(draft_env,field):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence,validate_analysis,draft_proposal
+    frames=[{'frame_id':'frame-001','timestamp_ms':100},{'frame_id':'frame-002','timestamp_ms':200}]
+    candidate={'action':'aiTap','target':'按钮[输入内容未保存]' if field=='target' else '按钮',
+        'value':'','start_ms':100,'end_ms':200,'frame_refs':['frame-001','frame-002'],
+        'observation':'页面显示结果[输入内容未保存]' if field=='expected' else '页面显示',
+        'evidence_kind':'inferred','uncertainties':[]}
+    planned={'events':[{'candidate_index':0,'action':'aiTap','target':'按钮A','value':'',
+                        'observation':'页面显示结果A','uncertainties':[]}],
+             'uncertainties':[],'multiple_scenarios':False}
+    result=validate_analysis(_bind_candidate_evidence(planned,[candidate],[0]),frames,1000)
+    doc={'app_id':APP,'source_id':'uvs_'+'0'*32,'analysis_version':1,'goal':'',
+         'media':{'duration_ms':1000,'frames':frames},**result}
+    proposal,_=draft_proposal(doc)
+    assert any('[输入内容未保存]' in s[field] for s in proposal['steps'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'steps':proposal['steps'],'questions':[]})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'planner-redaction-'+field)
+
+
+@pytest.mark.parametrize('indexed',[False,True])
+def test_masked_source_outcome_cannot_be_replaced_by_clean_planned_outcome(draft_env,indexed):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence,validate_analysis,draft_proposal,_expected_candidate
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    candidate={'action':'aiTap','target':'按钮','value':'','start_ms':100,'end_ms':200,
+        'frame_refs':['frame-001','frame-002'],'observation':'按钮已点击',
+        'outcome':{'observation':'页面显示结果[输入内容未保存]','frame_refs':['frame-003']},
+        'evidence_kind':'inferred','uncertainties':[]}
+    event={'action':'aiTap','target':'按钮','value':'','observation':'按钮已点击',
+           'outcome':{'observation':'页面显示结果成功','frame_refs':['frame-003']},'uncertainties':[]}
+    if indexed:event['candidate_index']=0
+    else:event.update(start_ms=100,end_ms=200,frame_refs=['frame-001','frame-002'],evidence_kind='inferred')
+    planned={'events':[event],'uncertainties':[],'multiple_scenarios':False}
+    checked=validate_analysis(_bind_candidate_evidence(planned,[candidate],[0]),frames,1000)
+    assert '[输入内容未保存]' in checked['events'][0]['outcome']['observation']
+    assert '[输入内容未保存]' in _expected_candidate(checked['events'][0],'')['text']
+    doc={'app_id':APP,'source_id':'uvs_'+'0'*32,'analysis_version':1,'goal':'',
+         'media':{'duration_ms':1000,'frames':frames},**checked}
+    proposal,_=draft_proposal(doc)
+    assert any('[输入内容未保存]' in s['expected'] for s in proposal['steps'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'steps':proposal['steps'],'questions':[]})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'masked-outcome-'+str(indexed))
+
+
+def test_each_video_question_keeps_notice_after_another_is_resolved(draft_env):
+    from task_server.services.ui_video_analysis import draft_proposal
+    events=[{'action':'aiAssert','target':'列表可见','value':'','frame_refs':['frame-001'],
+             'start_ms':100,'end_ms':100,'evidence_kind':'inferred','observation':'列表可见','uncertainties':[]}]
+    doc={'app_id':APP,'source_id':'uvs_'+'0'*32,'analysis_version':1,'goal':'',
+         'media':{'duration_ms':1000,'frames':[{'frame_id':'frame-001','timestamp_ms':100}]},
+         'events':events,'uncertainties':['问题甲','问题乙']}
+    proposal,_=draft_proposal(doc)
+    notice='同一问题可能涉及视频多处，请核对完整视频中所有相关操作后再解除。'
+    assert all(notice in q for q in proposal['questions'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':proposal['questions'][1:]})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'one-question-still-unresolved')
+
+
+@pytest.mark.parametrize('indexed',[False,True])
+@pytest.mark.parametrize('source_outcome',['页面显示结果[输入内容未保存]','页面显示成功，正在加载[输入内容未保存]'])
+def test_masked_outcome_cannot_be_lost_by_loading_clause_filter(draft_env,indexed,source_outcome):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence,validate_analysis,draft_proposal,_expected_candidate
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    candidate={'action':'aiTap','target':'按钮','value':'','start_ms':100,'end_ms':200,
+        'frame_refs':['frame-001','frame-002'],'observation':'按钮已点击',
+        'outcome':{'observation':source_outcome,'frame_refs':['frame-003']},
+        'evidence_kind':'inferred','uncertainties':[]}
+    event={'action':'aiTap','target':'按钮','value':'','observation':'按钮已点击',
+        'outcome':{'observation':'页面显示结果成功，正在加载','frame_refs':['frame-003']},'uncertainties':[]}
+    if indexed:event['candidate_index']=0
+    else:event.update(start_ms=100,end_ms=200,frame_refs=['frame-001','frame-002'],evidence_kind='inferred')
+    planned={'events':[event],'uncertainties':[],'multiple_scenarios':False}
+    checked=validate_analysis(_bind_candidate_evidence(planned,[candidate],[0]),frames,1000)
+    assert '[输入内容未保存]' in _expected_candidate(checked['events'][0],'')['text']
+    doc={'app_id':APP,'source_id':'uvs_'+'0'*32,'analysis_version':1,'goal':'',
+         'media':{'duration_ms':1000,'frames':frames},**checked}
+    proposal,_=draft_proposal(doc)
+    assert any('[输入内容未保存]' in s['expected'] for s in proposal['steps'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'steps':proposal['steps'],'questions':[]})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'masked-loading-outcome-'+str(indexed))
+
+
+@pytest.mark.parametrize('indexed',[False,True])
+@pytest.mark.parametrize('field',['selection','reusable_expected'])
+def test_planner_cannot_erase_masked_executable_source_field(draft_env,indexed,field):
+    from task_server.services.ui_video_analysis import _bind_candidate_evidence,validate_analysis,draft_proposal
+    from task_server.services.ui_case_draft_contract import build_draft_yaml
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2)]
+    target='{{本次对象}}删除按钮' if field=='selection' else '按钮'
+    candidate={'action':'aiTap','target':target,'value':'','start_ms':100,'end_ms':200,
+        'frame_refs':['frame-001','frame-002'],'observation':'页面显示结果成功',
+        'evidence_kind':'inferred','uncertainties':[],field:'结果[输入内容未保存]'}
+    event={'action':'aiTap','target':target,'value':'','observation':'页面显示结果成功','uncertainties':[],field:'安全结果'}
+    if field=='selection':
+        candidate['reusable_expected']=event['reusable_expected']='{{本次对象}}消失，{{保留对象}}仍显示'
+    if indexed:event['candidate_index']=0
+    else:event.update(start_ms=100,end_ms=200,frame_refs=['frame-001','frame-002'],evidence_kind='inferred')
+    planned={'events':[event],'uncertainties':[],'multiple_scenarios':False}
+    checked=validate_analysis(_bind_candidate_evidence(planned,[candidate],[0]),frames,1000)
+    assert '[输入内容未保存]' in checked['events'][0][field]
+    doc={'app_id':APP,'source_id':'uvs_'+'0'*32,'analysis_version':1,'goal':'',
+         'media':{'duration_ms':1000,'frames':frames},**checked}
+    proposal,_=draft_proposal(doc)
+    built=build_draft_yaml(proposal,APP)
+    assert not built['ready'] and not built['yaml_content']
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'steps':proposal['steps'],'questions':[]})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'masked-'+field+'-'+str(indexed))

@@ -80,14 +80,14 @@ def test_missing_root_question_warning_survives_import_and_blocks_validate(env,t
     store.transition(doc['source_id'],{'queued'},'ready',media={'duration_ms':2000,'frames':frames},events=[event],uncertainties=[warning])
     with actor_context(A):
         draft=video.import_video_draft(A,doc['source_id'],APP)
-        assert warning in draft['questions']
+        assert any(warning in q for q in draft['questions'])
         body={key:copy.deepcopy(draft[key]) for key in ('title','preconditions','steps','questions')}
         for step in body['steps']:step['review_state']='confirmed'
         body['revision']=draft['revision']
         edited=drafts.update_draft(A,draft['draft_id'],body)
         gate=drafts.validate_draft(A,draft['draft_id'],{'revision':edited['revision'],'target':TARGET})
         assert not gate['ready']
-        assert any(warning==item.get('message') for item in gate['blockers'])
+        assert any(warning in item.get('message','') for item in gate['blockers'])
 
 
 def test_import_does_not_create_draft_if_source_deleted_before_retention(env,tmp_path,monkeypatch):
@@ -558,7 +558,7 @@ def test_global_consolidation_preserves_audit_and_bounded_explicit_images(monkey
     monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6);monkeypatch.setattr(ai,'run_ai_skill',model)
     output=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
     assert len(calls)==4 and calls[-1][0]['phase']=='consolidate'
-    assert output['events']==[delete,confirm,result] and output['uncertainties']==[]
+    assert output['events']==[delete,confirm,result] and output['uncertainties']==['局部静止，没有操作']
     assert output['raw_events']==[opening,delete,confirm,result]
     assert output['raw_uncertainties']==['局部静止，没有操作']
 
@@ -1069,3 +1069,129 @@ def test_failed_boundary_evidence_is_owner_app_scoped_and_cannot_be_imported(env
     with actor_context(B):
         with pytest.raises(KeyError):video.owned_source(B,doc['source_id'],APP)
     with pytest.raises(KeyError):store.get(doc['source_id'],A['user_id'],'foreign.app')
+
+
+@pytest.mark.parametrize('outcome_retry',[False,True])
+def test_legacy_consolidation_and_outcome_retry_keep_source_uncertainties(monkeypatch,tmp_path,outcome_retry):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    from task_server.services.ui_case_draft_contract import build_draft_yaml
+    frames,event=_consolidation_fixture(tmp_path)
+    action=event('aiTap',0,1,'首页入口')
+    state={'retried':False}
+    def model(name,payload,**kwargs):
+        phase=payload['phase']
+        if phase=='consolidate':
+            return {'events':[action], 'uncertainties':[], 'multiple_scenarios':False}
+        if payload['frames'][0]['timestamp_ms']!=0:
+            return {'events':[], 'uncertainties':[], 'multiple_scenarios':False}
+        if payload.get('validation_feedback'):
+            state['retried']=True
+            return {'events':[action], 'uncertainties':[], 'multiple_scenarios':False}
+        uncertain={**action,'uncertainties':['这是否为真实点击']}
+        if outcome_retry:uncertain['outcome']={'observation':'结果页可见','frame_refs':['unknown-frame']}
+        return {'events':[uncertain],'uncertainties':['目标页面尚待确认'],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model);monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
+    doc={'app_id':APP,'goal':'','source_id':'uvs_'+'0'*32,'analysis_version':1,
+         'media':{'duration_ms':12000,'frames':frames}}
+    output=analysis.analyze_frames(doc,tmp_path,lambda:False)
+    assert state['retried'] is outcome_retry
+    assert any('目标页面尚待确认' in q for q in output['uncertainties'])
+    assert any('这是否为真实点击' in q for q in output['uncertainties'])
+    proposal,_=analysis.draft_proposal({**doc,**output})
+    assert not build_draft_yaml(proposal,APP)['ready']
+
+
+def test_legacy_prior_questions_redact_later_discovered_input(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    first=event('aiTap',0,1,'首页入口')
+    typed=event('aiInput',6,7,'名称输入框');typed['value']='fixture-private-value'
+    def model(name,payload,**kwargs):
+        if payload['phase']=='consolidate':
+            assert 'fixture-private-value' not in repr(payload)
+            return {'events':payload['candidate_events'],'uncertainties':[],'multiple_scenarios':False}
+        if payload['frames'][0]['timestamp_ms']==0:
+            return {'events':[first],'uncertainties':['核对 fixture-private-value 的来源'],'multiple_scenarios':False}
+        if payload['frames'][0]['timestamp_ms']==5000:
+            return {'events':[typed],'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model);monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
+    result=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert 'fixture-private-value' not in repr(result)
+    assert any('[输入内容未保存]' in q for q in result['uncertainties'])
+
+
+def test_legacy_question_limit_is_counted_after_deduplication():
+    from task_server.services.ui_video_analysis import _merge_legacy_questions
+    hundred=[f'疑问{i}' for i in range(100)]
+    assert len(_merge_legacy_questions(hundred,[],hundred,[]))==100
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        _merge_legacy_questions(hundred+['第101个问题'],[],[],[])
+
+
+def test_legacy_later_short_input_keeps_earlier_frame_ids(monkeypatch,tmp_path):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    first=event('aiTap',0,1,'入口1')
+    typed=event('aiInput',6,7,'名称1输入框');typed['value']='1'
+    def model(name,payload,**kwargs):
+        if payload['phase']=='consolidate':
+            assert payload['candidate_events'][0]['frame_refs']==['f0','f1']
+            return {'events':payload['candidate_events'],'uncertainties':[],'multiple_scenarios':False}
+        if payload['frames'][0]['timestamp_ms']==0:
+            return {'events':[first],'uncertainties':['核对1'],'multiple_scenarios':False}
+        if payload['frames'][0]['timestamp_ms']==5000:
+            return {'events':[typed],'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model);monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
+    result=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert result['events'][0]['frame_refs']==['f0','f1']
+    assert '1' not in result['events'][0]['target']
+    assert result['events'][1]['value']==''
+
+
+def test_legacy_draft_question_limit_checks_deduplicated_and_generated_questions():
+    from task_server.services.ui_video_analysis import draft_proposal
+    event={'action':'aiAssert','target':'页面显示列表','value':'','frame_refs':['frame-001'],
+           'start_ms':100,'end_ms':100,'evidence_kind':'inferred','observation':'页面显示列表','uncertainties':[]}
+    questions=[f'问题{i}' for i in range(100)]
+    doc={'app_id':APP,'source_id':'uvs_'+'0'*32,'analysis_version':1,'goal':'',
+         'media':{'duration_ms':1000,'frames':[{'frame_id':'frame-001','timestamp_ms':100}]},
+         'events':[event],'uncertainties':questions+questions[:1]}
+    proposal,_=draft_proposal(doc)
+    assert len(proposal['questions'])==100
+    doc['uncertainties']=questions+['第101个问题']
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        draft_proposal(doc)
+    doc['uncertainties']=questions
+    doc['events']=[{**event,'action':'aiInput','target':'名称输入框','observation':'无法识别结果','value':''}]
+    with pytest.raises(ValueError,match='video_model_invalid'):
+        draft_proposal(doc)
+
+
+@pytest.mark.parametrize('action,target,secret',[('navigateBack','上一页面','上'),('dismissKeyboard','当前页面的软键盘','当前')])
+def test_legacy_later_input_keeps_fixed_target_but_redacts_free_text(monkeypatch,tmp_path,action,target,secret):
+    from task_server.services import ui_video_analysis as analysis,ai_skill_service as ai
+    frames,event=_consolidation_fixture(tmp_path)
+    first=event(action,0,1,target)
+    typed=event('aiInput',6,7,'名称输入框');typed['value']=secret
+    def model(name,payload,**kwargs):
+        if payload['phase']=='consolidate':
+            assert payload['candidate_events'][0]['target']==target
+            return {'events':payload['candidate_events'],'uncertainties':[],'multiple_scenarios':False}
+        if payload['frames'][0]['timestamp_ms']==0:
+            return {'events':[first],'uncertainties':['核对'+secret],'multiple_scenarios':False}
+        if payload['frames'][0]['timestamp_ms']==5000:
+            return {'events':[typed],'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model);monkeypatch.setattr(ai,'AI_VISION_IMAGE_LIMIT',6)
+    result=analysis.analyze_frames({'app_id':APP,'goal':'','media':{'duration_ms':12000,'frames':frames}},tmp_path,lambda:False)
+    assert result['events'][0]['target']==target
+    assert any('[输入内容未保存]' in q for q in result['uncertainties'])
+
+
+def test_legacy_anchored_question_redacts_only_natural_text():
+    from task_server.services.ui_video_analysis import _merge_legacy_questions
+    events=[{'start_ms':1000,'end_ms':1100,'uncertainties':['输入1是否正确']}]
+    questions=_merge_legacy_questions([],events,[],['1'])
+    assert questions==['局部事件待核对：输入[输入内容未保存]是否正确']

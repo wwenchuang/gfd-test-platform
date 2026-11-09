@@ -10,9 +10,21 @@ import uuid
 from .ui_case_draft_contract import ACTIONS, normalize_steps
 
 
+def _redact_question(value,secrets):
+    marker='[输入内容未保存]'
+    for secret in secrets:
+        if secret:value=marker.join(part.replace(secret,marker) for part in value.split(marker))
+    return value
+
+
 def _text(value, limit=2000):
     if not isinstance(value, str) or len(value)>limit: raise ValueError('video_model_invalid')
     return value.strip()
+
+
+def _fixed_semantic_target(event):
+    return (event.get('action'),event.get('target'),event.get('value')) in (
+        ('navigateBack','上一页面',''),('dismissKeyboard','当前页面的软键盘',''))
 
 
 def _scroll_object(value):
@@ -70,6 +82,16 @@ def _check_question_count(questions,limit):
         error.question_count=len(questions)
         error.question_limit=limit
         raise error
+
+
+def _merge_legacy_questions(raw_questions,raw_events,planned_questions,secrets):
+    event_questions=['局部事件待核对：'+q
+                     for event in raw_events for q in event['uncertainties'] if q]
+    questions=raw_questions+event_questions+planned_questions
+    questions=[_redact_question(q,secrets) for q in questions]
+    questions=list(dict.fromkeys(questions))
+    _check_question_count(questions,100)
+    return questions
 
 
 def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=50, max_questions=30):
@@ -152,10 +174,14 @@ def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=
     secrets=list(prior_secrets)+[e['value'] for e in events if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value']]
     def redact(value):
         if isinstance(value,str):
-            for secret in secrets:value=value.replace(secret,'[输入内容未保存]')
-            return value
+            return _redact_question(value,secrets)
         if isinstance(value,list):return [redact(v) for v in value]
-        if isinstance(value,dict):return {k:redact(v) for k,v in value.items()}
+        if isinstance(value,dict):
+            # These validated fields are identifiers/enums, not user text.
+            # aiInput values have already been cleared; scroll values validated.
+            return {k:(copy.deepcopy(v) if k in {'action','frame_refs','evidence_kind','value'} or
+                       (k=='target' and _fixed_semantic_target(value)) else redact(v))
+                    for k,v in value.items()}
         return value
     return redact({'events':clean,'uncertainties':questions,'multiple_scenarios':result['multiple_scenarios'],**({'title':title} if title else {})})
 
@@ -280,12 +306,47 @@ def _bind_candidate_evidence(result, candidates, required_indices=()):
         error=ValueError('video_action_invalid')
         error.model_feedback=(
             'aiTap的target只能包含实际可见的可点击控件，不得包含手势或屏幕边缘描述，即使放在括号中也不允许。'
-            '仅当操作前附图明确可见应用返回箭头时，才可用该箭头表达等价返回；'
-            '原片手势事实和等价替代推断只写入observation或uncertainties，不删除原始观察。'
-            '没有可见等价控件时保留具体待确认问题，不伪造可执行目标。')  # Fixed platform text only.
+            '有独立证据支持返回但没有实际点击证据时，保持navigateBack、target为上一页面、value为空；'
+            '箭头可见不等于点击。只有原片确证实际点击箭头才可使用aiTap；'
+            '无法确认时保留具体待确认问题，不伪造可执行目标。')  # Fixed platform text only.
         raise error
     indexed=[isinstance(event,dict) and 'candidate_index' in event for event in events]
-    if not any(indexed):return result
+    marker='[输入内容未保存]'
+    def tainted_expected(candidate):
+        observation=candidate.get('observation','')
+        outcome=candidate.get('outcome') or {}
+        if marker not in observation and marker not in outcome.get('observation',''):return False
+        executable=candidate.get('action') in {'aiTap','aiInput','aiScroll','dismissKeyboard','navigateBack'}
+        if not executable:return False
+        # An explicit result is a potential executable expectation even when
+        # presentation filtering would discard the clause containing its mask.
+        if marker in outcome.get('observation',''):return True
+        return marker in _expected_candidate(candidate,'')['text']
+    def tainted(candidate):
+        return (marker in candidate.get('target','') or tainted_expected(candidate) or
+                any(marker in candidate.get(k,'') for k in ('selection','reusable_expected')))
+    def retain_taint(event,candidate):
+        if marker in candidate.get('target',''):event['target']=candidate['target']
+        for key in ('selection','reusable_expected'):
+            if marker in candidate.get(key,''):event[key]=candidate[key]
+        if tainted_expected(candidate):
+            if not isinstance(event.get('observation'),str):raise ValueError('video_model_invalid')
+            event['observation']+='（原始结果含[输入内容未保存]）'
+            if 'outcome' in event:
+                outcome=event['outcome']
+                if not isinstance(outcome,dict) or not isinstance(outcome.get('observation'),str):
+                    raise ValueError('video_model_invalid')
+                outcome['observation']+='（原始结果含[输入内容未保存]）'
+    if not any(indexed):
+        bound=copy.deepcopy(result);used=set()
+        for candidate in candidates:
+            if not tainted(candidate):continue
+            owners=[c for c in candidates if all(c.get(k)==candidate.get(k) for k in ('action','start_ms','end_ms','frame_refs'))]
+            matches=[i for i,event in enumerate(bound['events']) if isinstance(event,dict) and
+                     all(event.get(k)==candidate.get(k) for k in ('action','start_ms','end_ms','frame_refs'))]
+            if len(owners)!=1 or len(matches)!=1 or matches[0] in used:raise ValueError('video_model_timeline')
+            used.add(matches[0]);retain_taint(bound['events'][matches[0]],candidate)
+        return bound
     if not all(indexed):raise ValueError('video_model_timeline')
     bound=copy.deepcopy(result);last=-1;seen=set()
     owned=('start_ms','end_ms','frame_refs','evidence_kind')
@@ -296,9 +357,11 @@ def _bind_candidate_evidence(result, candidates, required_indices=()):
         candidate=candidates[index]
         if any(key in event for key in owned) or event.get('action')!=candidate['action']:
             raise ValueError('video_model_timeline')
+        retain_taint(event,candidate)
         for key in owned:event[key]=copy.deepcopy(candidate[key])
         last=index;seen.add(index)
-    if not set(required_indices)<=seen:raise ValueError('video_required_action_missing')
+    if not (set(required_indices)|{i for i,c in enumerate(candidates) if tainted(c)})<=seen:
+        raise ValueError('video_required_action_missing')
     return bound
 
 
@@ -484,7 +547,7 @@ def analyze_whole_frames(document, root, cancelled, progress=None):
         from .ui_video_business_inputs import _MANUAL
         first_questions=first_root_questions
         for event in first_pass:
-            first_questions.extend(f"首轮片段 {event['start_ms']/1000:g}–{event['end_ms']/1000:g} 秒：{q}"
+            first_questions.extend('首轮事件待核对：'+q
                                    for q in event['uncertainties'] if q and q!=_MANUAL)
         observed['uncertainties']=list(dict.fromkeys(first_questions+observed['uncertainties']))
         _check_question_count(observed['uncertainties'],30)
@@ -790,6 +853,11 @@ def analyze_frames(document, root, cancelled):
             action_only=copy.deepcopy(result)
             for event in action_only.get('events',[]):event.pop('outcome',None)
             original=validate_analysis(action_only,batch,document['media']['duration_ms'],known_secrets)
+            # A correction of optional outcome refs may not erase unresolved
+            # questions from the independently validated original actions.
+            questions.extend(original['uncertainties'])
+            questions.extend('局部事件待核对：'+q
+                             for event in original['events'] for q in event['uncertainties'] if q)
             known_secrets.extend(e['value'] for e in result['events'] if e['action']=='aiInput' and isinstance(e['value'],str) and e['value'])
             repair_used=True
             if cancelled():raise ValueError('video_cancelled')
@@ -815,9 +883,22 @@ def analyze_frames(document, root, cancelled):
             events.append(event);last_end=event['start_ms']
         questions.extend(checked['uncertainties']);multi|=checked['multiple_scenarios']
         if len(events)>50: raise ValueError('video_split_required')
-    raw_events=copy.deepcopy(audit_events)
+    # Later batches can reveal input strings also mentioned by earlier
+    # untrusted observations. Redact the complete accumulated evidence before
+    # exposing it to planning or storing it as an audit snapshot.
+    def redact_known(value):
+        if isinstance(value,str):
+            return _redact_question(value,known_secrets)
+        if isinstance(value,list):return [redact_known(v) for v in value]
+        if isinstance(value,dict):
+            return {k:(copy.deepcopy(v) if k in {'action','frame_refs','evidence_kind','value'} or
+                       (k=='target' and _fixed_semantic_target(value)) else redact_known(v))
+                    for k,v in value.items()}
+        return value
+    raw_events=redact_known(audit_events)
+    events=redact_known(events)
     candidates=copy.deepcopy(events)
-    raw_questions=list(dict.fromkeys(questions))
+    raw_questions=list(dict.fromkeys(redact_known(questions)))
     if events:
         if cancelled():raise ValueError('video_cancelled')
         required_indices=_required_interactions(candidates,document['media']['duration_ms'])
@@ -878,8 +959,12 @@ def analyze_frames(document, root, cancelled):
                     '后续操作使用{{本次对象}}，最终结果使用{{本次对象}}和{{保留对象}}；'
                     '观察仍保留原事实，reusable_expected单独给出无历史编号的检查建议。'
                     '不适用的可选字段省略，不得改动允许范围或新增业务操作。'}
-        events=checked['events'];questions=checked['uncertainties'];title=checked.get('title','')
+        events=checked['events']
+        questions=_merge_legacy_questions(raw_questions,raw_events,checked['uncertainties'],known_secrets)
+        title=checked.get('title','')
         multi=multi or checked['multiple_scenarios']
+    else:
+        questions=_merge_legacy_questions(raw_questions,raw_events,[],known_secrets)
     return {'events':events,'uncertainties':list(dict.fromkeys(questions)), 'multiple_scenarios':multi,
             'raw_events':raw_events,'raw_uncertainties':raw_questions,**({'title':title} if title else {})}
 
@@ -917,6 +1002,11 @@ def _stable_visible_observation(observation):
 def _expected_candidate(event, goal):
     """A sourced visible check suggestion, never an established business outcome."""
     outcome=event.get('outcome')
+    if ('原始结果含[输入内容未保存]' in event['observation'] or
+            (outcome and '原始结果含[输入内容未保存]' in outcome['observation'])):
+        return {'text':'[输入内容未保存]','basis':'unresolved',
+                'frame_refs':list(outcome['frame_refs'] if outcome else event['frame_refs']),
+                'requires_confirmation':True}
     observation=_stable_visible_observation((outcome['observation'] if outcome else event['observation']).strip())
     concrete=(len(observation)>=6 and _visible_state(observation)
               and not re.search(r'不明确|不确定|无法|可能|似乎|未知|跳帧|页面变化|界面变化',observation))
@@ -1036,6 +1126,11 @@ def draft_proposal(document):
             if event['action'] in {'aiWaitFor','aiAssert'}:target=reusable
             else:expected=reusable
             add_event('请确认复用后的结果检查与原录屏一致：'+reusable)
+        if ('[输入内容未保存]' in event.get('reusable_expected','') or
+                '原始结果含[输入内容未保存]' in event['observation'] or
+                '[输入内容未保存]' in event['expected_candidate']['text']):
+            if event['action'] in {'aiAssert','aiWaitFor'}:target='[输入内容未保存]'
+            else:expected='[输入内容未保存]'
         if event.get('selection'):
             event['selection_step_id']=str(uuid.uuid4())
             steps.append({'step_id':event['selection_step_id'],'action':'selectRecord','target':event['selection'],'value':'',
@@ -1044,7 +1139,9 @@ def draft_proposal(document):
         steps.append({'step_id':step_id,'action':event['action'],'target':target,'value':event['value'],
                       'expected':expected,'source_ref':ref,'review_state':'needs_review'})
         event_issues[index].extend(event['uncertainties'])
-        questions.extend(f'片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒：{q}' for q in event['uncertainties'] if q not in root_event_questions)
+        questions.extend((f'片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒：{q}' if business
+                          else '局部事件待核对：'+q)
+                         for q in event['uncertainties'] if q not in root_event_questions)
         if re.search('删除|移除',event['target']) and re.search(r'\d{12,}|\d{4}[-/]\d{2}[-/]\d{2}',event['target']) and not event.get('selection'):
             add_event('删除目标包含录屏中的一次性编号或日期，请改为选取本次测试对象；特定对象用例请确认数据仍存在。')
         if re.search('删除|支付|付款|打印|下单',event['target']): add_event('含删除/支付/打印等有副作用动作，请核对测试数据与授权后再手工试跑')
@@ -1074,11 +1171,20 @@ def draft_proposal(document):
         if any(e.get('selection') for e in snapshot['events']):raise ValueError('video_retry_invalid')
         from .ui_video_print_recovery import apply_group
         steps=apply_group(steps,document['print_recovery'])
+    questions=list(dict.fromkeys(questions))
+    notice='同一问题可能涉及视频多处，请核对完整视频中所有相关操作后再解除。'
+    questions=[q if notice in q else q+' '+notice for q in questions]
+    if not business:
+        questions=list(dict.fromkeys(questions))
+        _check_question_count(questions,100)
     payload={'title':document.get('title') or '录屏操作验证','preconditions':[],'steps':steps,'questions':questions}
     needs_groups=business and (len(questions)>100 or any(len(q)>2000 for q in questions))
     normalized=None if needs_groups else normalize_steps(payload,document['app_id'])
+    if not business:
+        _check_question_count(normalized['questions'],100)
     if business and (needs_groups or len(normalized['questions'])>100):
         payload['questions']=_pack_business_review_questions(document['uncertainties'],event_issues,snapshot,global_questions,steps)
+        payload['questions']=[q if notice in q else q+' '+notice for q in payload['questions']]
         normalized=normalize_steps(payload,document['app_id'])
         # Normalization can append unresolved step questions. Validate that final
         # presentation too, with the same unchanged normal draft contract.

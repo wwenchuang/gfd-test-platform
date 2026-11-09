@@ -344,7 +344,8 @@ def validate(claims,sources,reviewed,frames,*,allow_unresolved_return=False):
         used.update(ids);destinations.add(index);targets[touch]=new['target']
         normalized='same_interaction_with_action_correction' if any(old['action']!=new['action'] for old in anchors) else 'same_interaction'
         result.append({**copy.deepcopy(claim),'resolution':'same_return_gesture' if gesture else 'same_scroll_gesture' if drag else normalized,'reviewed_event':copy.deepcopy(new),
-                       **({'review_required':True,'resolution_status':'unresolved'} if gesture and contextual_again else {}),
+                       **({'review_required':True,'resolution_status':'unresolved'}
+                          if gesture and (contextual_again or new['action']=='aiTap') else {}),
                        'source_anchors':{aid:copy.deepcopy(sources[aid.split(':')[0]][int(aid.split(':')[1])]) for aid in ids}})
     return result
 

@@ -148,6 +148,8 @@ def normalize_steps(payload, app_id):
             if action != 'aiInput' and value:
                 raise ValueError(f'{action} 不支持 value')
         unresolved = []
+        if '[输入内容未保存]' in target or '[输入内容未保存]' in expected:
+            unresolved.append('目标或预期包含已脱敏内容，请重新填写后再试跑')
         if action == 'launch':
             if target != app_id:
                 raise ValueError('禁止跨应用 launch')
@@ -209,6 +211,9 @@ def build_draft_yaml(draft, app_id, *, execution_contract=None):
     app_id = _app_id(app_id)
     normalized = normalize_steps(draft, app_id)
     steps = normalized['steps']
+    if any('[输入内容未保存]' in s['target'] or '[输入内容未保存]' in s['expected'] for s in steps):
+        return {'yaml_content':'','step_ids':[],'compiler_roles':[],
+                'questions':normalized['questions'],'ready':False}
     flow, step_ids, roles = [], [], []
     deferred_checks = {}
     if steps[0]['action'] != 'launch':

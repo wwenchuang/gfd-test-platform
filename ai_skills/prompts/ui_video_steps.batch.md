@@ -4,7 +4,7 @@
 {"action":"aiTap","target":"操作前真实控件","value":"","start_ms":0,"end_ms":1000,"frame_refs":["真实帧ID"],"observation":"图片中看到的事实","evidence_kind":"inferred","uncertainties":[]}
 本阶段绝不输出title、selection、reusable_expected、outcome、expected或任何{{}}对象引用；goal的复用要求留给后续规划，不在本阶段改写真实记录身份。
 
-action仅aiTap/aiInput/aiScroll/aiWaitFor/aiAssert。aiScroll的value是JSON对象，其他value=""（所有输入值留空，密码/验证码/令牌不得转录）。滚动只允许direction、scrollType、distance；没有距离证据不填distance。direction按浏览方向：内容往上移动、底部内容进入视野=down；内容往下移动、顶部内容回到视野=up。不是手指方向。scrollType为singleAction，或scrollToBottom/Top/Right/Left（这些不带direction/distance）。方向看不清则value={}并具体提问，不猜。
+action仅aiTap/aiInput/aiScroll/aiWaitFor/aiAssert/navigateBack/dismissKeyboard。aiScroll的value是JSON对象，其他value=""（所有输入值留空，密码/验证码/令牌不得转录）。滚动只允许direction、scrollType、distance；没有距离证据不填distance。direction按浏览方向：内容往上移动、底部内容进入视野=down；内容往下移动、顶部内容回到视野=up。不是手指方向。scrollType为singleAction，或scrollToBottom/Top/Right/Left（这些不带direction/distance）。方向看不清则value={}并具体提问，不猜。
 
 frame_refs只能引用本批实际帧，按时间排序，1至8张；start_ms/end_ms覆盖这些帧且在视频范围内，事件按时间排序。previous_events只防止重复，不得重复已完成动作。只在明确触点/手势时标observed；跨页面导航即使没有触点也可inferred，不为此重复追问。静止、自动轮播、广告切换、加载动画不是交互；不能仅凭轮播内容变化生成 aiScroll 或 aiWaitFor，无操作时events=[]。首尾桌面/最近任务/录屏控制忽略，平台自动启动关闭应用。
 
@@ -16,7 +16,7 @@ frame_refs只能引用本批实际帧，按时间排序，1至8张；start_ms/en
 {{payload}}
 
 带触点/指针轨迹录屏：白点、十字线、移动轨迹及顶部P/X/Y/压力/速度数字属于系统输入可视化层，不是应用控件、输入值或业务结果；录屏计时和悬浮控制同样忽略。对照触点出现→移动→消失与前后画面：在同一控件明确按下并松开可记录点击，未见页面响应时保留“点击后未观察到响应”的失败事实，不能抹掉点击，也不能推断成功；内容随轨迹连续位移才判滚动；从屏幕边缘向内移动且回到上一页面是返回手势，不能写成点击轨迹下碰巧可见的卡片，也不能改成列表滚动。仅触点存在、旧轨迹残留或指针悬停不能证明发生新的操作；多次抖动/采样点属于同一手势，不逐点生成步骤。触点被遮住或不能辨认时结合页面判断并保留必要歧义，不声称观察到了触点。
-执行语义必须跨端：目标写真实可见控件的中文名称/所属区域，不输出触点坐标、压力数字或像素距离。返回手势若操作前已有可见的应用返回箭头，可用该箭头表达等价返回并标明推断；没有可见等价入口或涉及长按/多指缩放等白名单不支持动作时，保留具体待确认问题，不伪造aiTap或aiScroll通过执行门禁。
+执行语义必须跨端：实际点击目标写真实可见控件的中文名称/所属区域，不输出触点坐标、压力数字或像素距离。有独立证据支持主动返回但没有实际点击证据时，保留navigateBack、target为上一页面、value为空；仅在有独立证据支持主动收起软键盘时使用dismissKeyboard，target为当前页面的软键盘、value为空；即使箭头可见也不能虚构点击。原图确证实际点击返回箭头才使用aiTap。无法确认或涉及不支持动作时保留具体疑问，不伪造动作通过门禁。
 触点只证明操作，不证明成功。操作后的预期必须由可见结果支持；用户在模型加载尚未完成时主动返回，保留加载中退出的事实，可检查目标页面标题/返回后的上一页，不补写模型生成或加载成功，不强行等待视频未出现的成功状态。开始和结束的系统操作仍由平台预置，不把退出桌面/停止录屏手势生成业务步骤。
 
 下拉刷新按实际拖动阶段判断：内容被向下拉、出现释放刷新提示时，应为 direction=up。释放后的内容回弹是自动动画，不另生成反向滚动，也不能以回弹结束画面反推原手势为down。若之后有新的独立滚动则保留；证据不足时提出疑问。核对observation描述的内容移动方向与value一致。
