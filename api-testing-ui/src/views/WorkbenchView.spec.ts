@@ -61,7 +61,7 @@ describe('WorkbenchView debug workflow', () => {
     })
     const cases = useCasesStore()
     vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
-    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const restoreAi = vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
     vi.spyOn(useTasksStore(), 'list').mockResolvedValue([])
     vi.spyOn(useTasksStore(), 'restore').mockResolvedValue(null)
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
@@ -74,13 +74,113 @@ describe('WorkbenchView debug workflow', () => {
     } } })
     await flushPromises()
     await wrapper.get('[data-testid="old"]').trigger('click')
+    expect(assets.endpoints).toEqual([])
     await wrapper.get('[data-testid="new"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-testid="select"]').trigger('click')
     finishOld(false)
     await flushPromises()
+    expect(restoreAi).not.toHaveBeenCalledWith('p', 'old')
     expect(context.sourceRevisionId).toBe('new')
     expect(wrapper.findComponent({ name: 'EndpointTree' }).props('selectedIds')).toEqual(['endpoint-1'])
+    wrapper.unmount()
+  })
+
+  it('does not restore AI history after the environment changes while loading a source', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'p', sourceRevisionId: 'initial', environmentRevisionId: 'e' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    let finishOld!: (value: undefined) => void
+    vi.spyOn(assets, 'load').mockImplementation(async source => {
+      if (source === 'old') return new Promise<void>(resolve => { finishOld = resolve })
+      assets.endpoints = [ENDPOINT]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    const restoreAi = vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(useTasksStore(), 'list').mockResolvedValue([])
+    vi.spyOn(useTasksStore(), 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: { emits: ['update:sourceRevisionId', 'update:environmentRevisionId'], template: '<div><button data-testid="old" @click="$emit(\'update:sourceRevisionId\', \'old\')">old</button><button data-testid="env" @click="$emit(\'update:environmentRevisionId\', \'new-environment\')">env</button><button data-testid="new" @click="$emit(\'update:sourceRevisionId\', \'new\')">new</button></div>' },
+      EndpointTree: { name: 'EndpointTree', props: ['selectedIds'], emits: ['selection-change'], template: '<button data-testid="select" @click="$emit(\'selection-change\', [\'endpoint-1\'])">select</button>' },
+      TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, AiAssistant: true, DebugDrawer: true,
+    } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="old"]').trigger('click')
+    expect(assets.endpoints).toEqual([])
+    await wrapper.get('[data-testid="env"]').trigger('click')
+    finishOld(undefined)
+    await flushPromises()
+    expect(restoreAi).not.toHaveBeenCalledWith('p', 'old')
+    expect(context.environmentRevisionId).toBe('new-environment')
+    wrapper.unmount()
+  })
+
+  it('keeps the newest endpoint selection when an earlier detail finishes late', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'p', sourceRevisionId: 's', environmentRevisionId: 'e' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    const newer = { ...ENDPOINT, id: 'new', path: '/new', summary: '新的接口' }
+    assets.endpoints = [ENDPOINT, newer]; assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    let finishOld!: (endpoint: ApiEndpoint | null) => void
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async id => id === ENDPOINT.id
+      ? new Promise(resolve => { finishOld = resolve }) : newer)
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true,
+      EndpointTree: { name: 'EndpointTree', emits: ['activate'], template: '<div />' },
+      EndpointDetail: { name: 'EndpointDetail', props: ['endpoint'], template: '<div />' },
+      CaseEditor: true, AiAssistant: true, DebugDrawer: true,
+    } } })
+    await flushPromises()
+    const tree = wrapper.findComponent({ name: 'EndpointTree' })
+    tree.vm.$emit('activate', ENDPOINT); tree.vm.$emit('activate', newer)
+    await flushPromises()
+    finishOld(ENDPOINT); await flushPromises()
+    expect(wrapper.findComponent({ name: 'EndpointDetail' }).props('endpoint')).toEqual(newer)
+    expect(cases.drafts[ENDPOINT.id]).toBeUndefined()
+    tree.vm.$emit('activate', ENDPOINT)
+    assets.invalidateLoad()
+    finishOld(null); await flushPromises()
+    expect(wrapper.text()).not.toContain('接口详情读取失败，请重试')
+    expect(wrapper.findComponent({ name: 'EndpointDetail' }).props('endpoint')).toEqual(newer)
+    wrapper.unmount()
+  })
+
+  it('does not reopen a pending endpoint after starting a new task', async () => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p', sourceRevisionId: 's' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'; vi.spyOn(assets, 'load').mockResolvedValue()
+    let finish!: (endpoint: ApiEndpoint) => void
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true,
+      TaskStatusStrip: { name: 'TaskStatusStrip', emits: ['new'], template: '<div />' },
+      EndpointTree: { name: 'EndpointTree', emits: ['activate'], template: '<div />' },
+      EndpointDetail: { name: 'EndpointDetail', props: ['endpoint'], template: '<div />' },
+      CaseEditor: true, AiAssistant: true, DebugDrawer: true,
+    } } })
+    await flushPromises()
+    wrapper.findComponent({ name: 'EndpointTree' }).vm.$emit('activate', ENDPOINT)
+    wrapper.findComponent({ name: 'TaskStatusStrip' }).vm.$emit('new')
+    finish(ENDPOINT); await flushPromises()
+    expect(wrapper.findComponent({ name: 'EndpointDetail' }).props('endpoint')).toBeNull()
+    expect(cases.drafts[ENDPOINT.id]).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -439,6 +539,162 @@ describe('WorkbenchView debug workflow', () => {
 
     await wrapper.get('[data-testid="switch-old"]').trigger('click')
     await flushPromises()
+    expect(context.sourceRevisionId).toBe('source-old')
+    expect(tasks.task?.id).toBe('task-old')
+    expect(wrapper.text()).toContain('已保存 1 个接口')
+  })
+
+  it('keeps the newer selection when task restoration is waiting on an older detail', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-old', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [
+        { id: 'source-old', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 7, endpoint_count: 1007 },
+        { id: 'source-new', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 10, endpoint_count: 1025 },
+      ],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 29 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async sourceRevisionId => {
+      assets.endpoints = sourceRevisionId === 'source-old' ? [ENDPOINT, { ...ENDPOINT, id: 'endpoint-second', summary: 'second' }] : [{ ...ENDPOINT, id: 'endpoint-new' }]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const oldTask = {
+      id: 'task-old', project_id: 'project-1', source_revision_id: 'source-old', environment_revision_id: 'environment-1',
+      name: '3D家用接口测试', state: 'ready', selected_endpoint_ids: [ENDPOINT.id], runnable_baseline_count: 1,
+      latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockImplementation(async () => {
+      tasks.task = oldTask
+      tasks.tasks = [oldTask]
+      return oldTask
+    })
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', name: 'workbench', component: WorkbenchView },
+      { path: '/tasks', name: 'tasks', component: { template: '<div />' } },
+    ] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: {
+            emits: ['update:sourceRevisionId'],
+            template: '<div><button data-testid="switch-new" @click="$emit(\'update:sourceRevisionId\', \'source-new\')">v10</button><button data-testid="switch-old" @click="$emit(\'update:sourceRevisionId\', \'source-old\')">v7</button></div>',
+          },
+          EndpointDetail: { name: 'EndpointDetail', props: ['endpoint'], template: '<div />' }, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: { name: 'EndpointTree', emits: ['activate'], template: '<div />' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('3D家用接口测试')
+    await wrapper.get('[data-testid="switch-new"]').trigger('click')
+    await flushPromises()
+    expect(context.sourceRevisionId).toBe('source-new')
+    expect(tasks.task).toBeNull()
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v7')
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v10')
+
+    let finishOld!: (endpoint: ApiEndpoint) => void
+    const second = { ...ENDPOINT, id: 'endpoint-second', summary: 'second' }
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async id => id === ENDPOINT.id
+      ? new Promise(resolve => { finishOld = resolve }) : second)
+    await wrapper.get('[data-testid="switch-old"]').trigger('click')
+    await flushPromises()
+    wrapper.findComponent({ name: 'EndpointTree' }).vm.$emit('activate', second)
+    await flushPromises()
+    finishOld(ENDPOINT)
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'EndpointDetail' }).props('endpoint')).toEqual(second)
+    expect(context.sourceRevisionId).toBe('source-old')
+    expect(tasks.task?.id).toBe('task-old')
+    expect(wrapper.text()).toContain('已保存 1 个接口')
+  })
+
+  it('does not restore task AI history after the environment changes during task loading', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-old', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [
+        { id: 'source-old', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 7, endpoint_count: 1007 },
+        { id: 'source-new', source_id: 'source-asset', project_id: 'project-1', name: '默认模块', revision_number: 10, endpoint_count: 1025 },
+      ],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 29 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async sourceRevisionId => {
+      assets.endpoints = sourceRevisionId === 'source-old' ? [ENDPOINT, { ...ENDPOINT, id: 'endpoint-second', summary: 'second' }] : [{ ...ENDPOINT, id: 'endpoint-new' }]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    const restoreAi = vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const oldTask = {
+      id: 'task-old', project_id: 'project-1', source_revision_id: 'source-old', environment_revision_id: 'environment-1',
+      name: '3D家用接口测试', state: 'ready', selected_endpoint_ids: [ENDPOINT.id], runnable_baseline_count: 1,
+      latest_ai_job_id: null, latest_execution_id: null, summary: {}, created_at: '', updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockImplementation(async () => {
+      tasks.task = oldTask
+      tasks.tasks = [oldTask]
+      return oldTask
+    })
+
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', name: 'workbench', component: WorkbenchView },
+      { path: '/tasks', name: 'tasks', component: { template: '<div />' } },
+    ] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: {
+            emits: ['update:sourceRevisionId', 'update:environmentRevisionId'],
+            template: '<div><button data-testid="switch-new" @click="$emit(\'update:sourceRevisionId\', \'source-new\')">v10</button><button data-testid="switch-env" @click="$emit(\'update:environmentRevisionId\', \'environment-2\')">env</button><button data-testid="switch-old" @click="$emit(\'update:sourceRevisionId\', \'source-old\')">v7</button></div>',
+          },
+          EndpointDetail: { name: 'EndpointDetail', props: ['endpoint'], template: '<div />' }, CaseEditor: true, AiAssistant: true, DebugDrawer: true, EndpointTree: { name: 'EndpointTree', emits: ['activate'], template: '<div />' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('3D家用接口测试')
+    await wrapper.get('[data-testid="switch-new"]').trigger('click')
+    await flushPromises()
+    expect(context.sourceRevisionId).toBe('source-new')
+    expect(tasks.task).toBeNull()
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v7')
+    expect(wrapper.get('[data-testid="source-version-mismatch"]').text()).toContain('v10')
+
+    let finishOld!: (endpoint: ApiEndpoint) => void
+    const second = { ...ENDPOINT, id: 'endpoint-second', summary: 'second' }
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(async id => id === ENDPOINT.id
+      ? new Promise(resolve => { finishOld = resolve }) : second)
+    restoreAi.mockClear()
+    await wrapper.get('[data-testid="switch-old"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="switch-env"]').trigger('click')
+    await flushPromises()
+    finishOld(ENDPOINT)
+    await flushPromises()
+    expect(restoreAi).not.toHaveBeenCalledWith('project-1', 'source-old')
+    expect(context.environmentRevisionId).toBe('environment-2')
     expect(context.sourceRevisionId).toBe('source-old')
     expect(tasks.task?.id).toBe('task-old')
     expect(wrapper.text()).toContain('已保存 1 个接口')

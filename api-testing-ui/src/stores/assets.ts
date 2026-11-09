@@ -9,7 +9,9 @@ export const useAssetsStore = defineStore('api-assets', {
     detailedEndpointIds: {} as Record<string, true>,
     state: 'idle' as LoadState,
     error: '',
+    detailError: '',
     loadGeneration: 0,
+    detailGeneration: 0,
   }),
   actions: {
     invalidateLoad(): void {
@@ -39,6 +41,9 @@ export const useAssetsStore = defineStore('api-assets', {
       endpointId: string,
       client: Pick<ApiClient, 'get'> = apiClient,
     ): Promise<ApiEndpoint | null> {
+      const generation = this.loadGeneration
+      const detailGeneration = ++this.detailGeneration
+      this.detailError = ''
       const current = this.endpoints.find(item => item.id === endpointId)
       if (!current) return null
       if (this.detailedEndpointIds[endpointId]) return current
@@ -49,13 +54,16 @@ export const useAssetsStore = defineStore('api-assets', {
         const response = await client.get<{ endpoint: ApiEndpoint }>(
           `/api/api-testing/v1/endpoints/${encodeURIComponent(endpointId)}`,
         )
+        if (generation !== this.loadGeneration || detailGeneration !== this.detailGeneration) return null
         const detailed = response.data.endpoint
         const index = this.endpoints.findIndex(item => item.id === endpointId)
-        if (index >= 0) this.endpoints[index] = detailed
+        if (index < 0) return null
+        this.endpoints[index] = detailed
         this.detailedEndpointIds[endpointId] = true
         return detailed
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '接口详情读取失败'
+        if (generation !== this.loadGeneration || detailGeneration !== this.detailGeneration) return null
+        this.detailError = error instanceof Error ? error.message : '接口详情读取失败'
         return null
       }
     },

@@ -32,6 +32,7 @@ const debugOpen = ref(false)
 const localError = ref('')
 const sourceLoadError = ref('')
 let sourceLoadGeneration = 0
+let manualDetailGeneration = 0
 const mobileDetailOpen = ref(false)
 const endpointPickerOpen = ref(false)
 const taskReadNote = ref('')
@@ -159,6 +160,7 @@ async function loadSource(sourceRevisionId: string, preserveDrafts = false): Pro
 
 function changeProject(projectId: string | null): void {
   if (projectId === context.projectId) return
+  manualDetailGeneration += 1
   sourceLoadGeneration += 1
   assets.invalidateLoad()
   cases.invalidateLoad()
@@ -178,8 +180,10 @@ function changeProject(projectId: string | null): void {
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
   if (sourceRevisionId === context.sourceRevisionId) return
+  manualDetailGeneration += 1
   sourceLoadGeneration += 1
   assets.invalidateLoad()
+  assets.endpoints = []
   cases.invalidateLoad()
   sourceLoadError.value = ''
   localError.value = ''
@@ -190,9 +194,16 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
   debugOpen.value = false
   activeEndpoint.value = null
   selectedIds.value = []
-  if (sourceRevisionId) await loadSource(sourceRevisionId)
-  else assets.endpoints = []
-  if (sourceRevisionId && context.projectId) await cases.restoreLatestAiJob(context.projectId, sourceRevisionId)
+  if (sourceRevisionId) {
+    const projectId = context.projectId
+    const selectionGeneration = context.selectionGeneration
+    const loading = loadSource(sourceRevisionId)
+    const generation = sourceLoadGeneration
+    await loading
+    if (generation !== sourceLoadGeneration || context.selectionGeneration !== selectionGeneration || context.projectId !== projectId
+        || context.sourceRevisionId !== sourceRevisionId) return
+    if (projectId) await cases.restoreLatestAiJob(projectId, sourceRevisionId)
+  }
 }
 
 function changeEnvironment(environmentRevisionId: string | null): void {
@@ -213,6 +224,7 @@ async function saveScope(): Promise<void> {
 }
 
 function editCaseVersion(version: CaseVersion): void {
+  manualDetailGeneration += 1
   const endpointId = version.current_endpoint_id || version.endpoint_id
   const endpoint = assets.endpoints.find(item => item.id === endpointId)
   if (!endpoint) {
@@ -229,6 +241,7 @@ function editCaseVersion(version: CaseVersion): void {
 }
 
 function editGeneratedPreview(preview: GeneratedCasePreview): void {
+  manualDetailGeneration += 1
   const endpoint = assets.endpoints.find(item => item.id === preview.endpoint_id)
   if (!endpoint) {
     localError.value = '该候选用例对应的接口不在当前接口版本中'
@@ -241,10 +254,18 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
 }
 
 async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
+  const generation = ++manualDetailGeneration
+  const sourceGeneration = sourceLoadGeneration
+  const assetsGeneration = assets.loadGeneration
+  const projectId = context.projectId
+  const sourceRevisionId = context.sourceRevisionId
   localError.value = ''
   const detailed = await assets.ensureEndpointDetail(endpoint.id)
+  if (generation !== manualDetailGeneration || sourceGeneration !== sourceLoadGeneration
+      || assetsGeneration !== assets.loadGeneration
+      || projectId !== context.projectId || sourceRevisionId !== context.sourceRevisionId) return
   if (!detailed) {
-    localError.value = assets.error || '接口详情读取失败，请重试'
+    localError.value = assets.detailError || '接口详情读取失败，请重试'
     return
   }
   activeEndpoint.value = detailed
@@ -621,7 +642,7 @@ function defaultTaskName(): string {
       :endpoints="assets.endpoints"
       :case-count-by-endpoint="caseCountByEndpoint"
       :busy="cases.saving || cases.basicGenerating || cases.aiPolling"
-      @close="endpointPickerOpen = false"
+      @close="manualDetailGeneration += 1; endpointPickerOpen = false"
       @create-manual="createManualCase"
       @generate-basic="generateBasicForEndpoint"
       @generate-ai="generateAiForEndpoint"
