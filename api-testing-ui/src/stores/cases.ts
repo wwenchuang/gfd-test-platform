@@ -14,8 +14,11 @@ export const useCasesStore = defineStore('api-cases', {
   state: () => ({
     drafts: {} as Record<string, CaseDraft>,
     versions: {} as Record<string, CaseVersion>,
+    loadGeneration: 0,
+    versionMutationGeneration: 0,
     versionIdsByEndpoint: {} as Record<string, string[]>,
     activeVersionByEndpoint: {} as Record<string, string>,
+    missingDraftVersionByEndpoint: {} as Record<string, string>,
     generatedPreviews: [] as GeneratedCasePreview[],
     activeGeneratedPreviewId: '',
     aiJob: null as AiJob | null,
@@ -45,6 +48,7 @@ export const useCasesStore = defineStore('api-cases', {
     startManualDraft(endpoint: ApiEndpoint): CaseDraft {
       this.aiRestoreGeneration += 1
       delete this.activeVersionByEndpoint[endpoint.id]
+      delete this.missingDraftVersionByEndpoint[endpoint.id]
       this.activeGeneratedPreviewId = ''
       this.drafts[endpoint.id] = blankDraft(endpoint)
       this.validationErrors = {}
@@ -76,6 +80,7 @@ export const useCasesStore = defineStore('api-cases', {
       if (!this.versionIdsByEndpoint[endpointId]?.includes(versionId)) return
       this.aiRestoreGeneration += 1
       this.activeVersionByEndpoint[endpointId] = versionId
+      delete this.missingDraftVersionByEndpoint[endpointId]
       this.activeGeneratedPreviewId = ''
       const version = this.versions[versionId]
       if (version) this.drafts[endpointId] = fromVersion(version)
@@ -85,6 +90,7 @@ export const useCasesStore = defineStore('api-cases', {
       this.clearBaselineFeedback()
     },
     registerVersion(version: CaseVersion, makeActive = true): void {
+      this.versionMutationGeneration += 1
       const sameVersion = this.versions[version.id]
       const nextVersion = sameVersion
         ? { ...version, lifecycle: { ...(sameVersion.lifecycle || {}), ...(version.lifecycle || {}) } }
@@ -112,20 +118,49 @@ export const useCasesStore = defineStore('api-cases', {
         this.drafts[endpointId] = fromVersion(nextVersion)
       }
     },
-    async loadSavedCases(sourceRevisionId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<void> {
-      const response = await client.get<{ case_versions: CaseVersion[] }>(
-        `/api/api-testing/v1/cases?source_revision_id=${encodeURIComponent(sourceRevisionId)}`,
-      )
+    invalidateLoad(): void { this.loadGeneration += 1 },
+    async loadSavedCases(sourceRevisionId: string, client: Pick<ApiClient, 'get'> = apiClient, options: { preserveDrafts?: boolean } = {}): Promise<void | false> {
+      const generation = ++this.loadGeneration
+      const mutationGeneration = this.versionMutationGeneration
+      let response
+      try {
+        response = await client.get<{ case_versions: CaseVersion[] }>(
+          `/api/api-testing/v1/cases?source_revision_id=${encodeURIComponent(sourceRevisionId)}`,
+        )
+      } catch (error) {
+        if (generation !== this.loadGeneration) return false
+        throw error
+      }
+      if (generation !== this.loadGeneration || mutationGeneration !== this.versionMutationGeneration) return false
+      const drafts = options.preserveDrafts ? { ...this.drafts } : null
+      const previews = options.preserveDrafts ? this.generatedPreviews : []
+      const activePreview = options.preserveDrafts ? this.activeGeneratedPreviewId : ''
+      const activeVersions = options.preserveDrafts ? { ...this.activeVersionByEndpoint } : {}
+      const missingVersions = options.preserveDrafts ? { ...this.missingDraftVersionByEndpoint } : {}
       this.versions = {}
       this.versionIdsByEndpoint = {}
       this.activeVersionByEndpoint = {}
-      this.generatedPreviews = []
-      this.activeGeneratedPreviewId = ''
+      this.missingDraftVersionByEndpoint = {}
+      this.generatedPreviews = previews
+      this.activeGeneratedPreviewId = activePreview
       for (const version of response.data.case_versions) this.registerVersion(version, false)
+      if (drafts) {
+        this.drafts = { ...this.drafts, ...drafts }
+        for (const endpointId of Object.keys(drafts)) {
+          const versionId = missingVersions[endpointId] || activeVersions[endpointId]
+          if (!versionId) delete this.activeVersionByEndpoint[endpointId]
+          else if (this.versions[versionId]) this.activeVersionByEndpoint[endpointId] = versionId
+          else {
+            delete this.activeVersionByEndpoint[endpointId]
+            this.missingDraftVersionByEndpoint[endpointId] = versionId
+          }
+        }
+      }
     },
     async save(endpointId: string, environmentRevisionId?: string, options: { requireValidation?: boolean } = {}): Promise<CaseVersion> {
       const draft = this.drafts[endpointId]
       if (!draft) throw new Error('请先编辑测试用例')
+      if (this.missingDraftVersionByEndpoint[endpointId]) throw new Error('原用例版本已不在当前列表中；草稿已保留，请重新选择用例或新建草稿后再保存')
       this.saving = true
       this.savedMessage = ''
       try {
@@ -235,6 +270,7 @@ export const useCasesStore = defineStore('api-cases', {
       if (!preview) return
       this.drafts[preview.endpoint_id] = cloneJson(preview.case)
       delete this.activeVersionByEndpoint[preview.endpoint_id]
+      delete this.missingDraftVersionByEndpoint[preview.endpoint_id]
       this.activeGeneratedPreviewId = preview.id
       this.validationErrors = {}
       this.validationWarnings = {}
@@ -447,6 +483,7 @@ export const useCasesStore = defineStore('api-cases', {
       const version = this.versions[versionId]
       if (!version) throw new Error('请选择要删除的用例')
       await apiClient.delete(`/api/api-testing/v1/cases/${version.case_id}`)
+      this.versionMutationGeneration += 1
       for (const [id, item] of Object.entries(this.versions)) {
         if (item.case_id === version.case_id) delete this.versions[id]
       }

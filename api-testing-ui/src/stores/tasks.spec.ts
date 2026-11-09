@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 import type { ApiTestTask } from '../api/contracts'
-import { apiClient } from '../api/client'
+import { apiClient, type ApiClient } from '../api/client'
 import { useTasksStore } from './tasks'
 
 const TASK: ApiTestTask = {
@@ -25,6 +25,56 @@ describe('tasks store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+  })
+
+  it('keeps a failed task-list read until that same resource succeeds', async () => {
+    const store = useTasksStore()
+    const failure = { get: vi.fn().mockRejectedValue(new Error('任务列表 502')) } as unknown as Pick<ApiClient, 'get'>
+    const restore = { get: vi.fn().mockResolvedValue({ data: { task: TASK } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.list('project-1', failure)
+    await store.restore('project-1', restore)
+    expect(store.readErrors.list).toBe('任务列表 502')
+    expect(store.readErrors.restore).toBe('')
+    await store.list('project-1', { get: vi.fn().mockResolvedValue({ data: { tasks: [TASK] } }) } as unknown as Pick<ApiClient, 'get'>)
+    expect(store.readErrors.list).toBe('')
+  })
+
+  it('does not restore a task from the previous project after context changes', async () => {
+    let finish!: (value: unknown) => void
+    const get = vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const store = useTasksStore()
+    const pending = store.restore('old-project', { get } as unknown as Pick<ApiClient, 'get'>)
+    store.clear()
+    finish({ data: { task: TASK } })
+    await pending
+    expect(store.task).toBeNull()
+    expect(store.readErrors.restore).toBe('')
+  })
+
+  it('ends loading when a task selection supersedes an in-flight restore', async () => {
+    let finish!: (value: unknown) => void
+    const get = vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const store = useTasksStore()
+    store.tasks = [TASK]
+    const pending = store.restore('project-1', { get } as unknown as Pick<ApiClient, 'get'>)
+    store.select(TASK.id)
+    finish({ data: { task: null } })
+    await pending
+    expect(store.task?.id).toBe(TASK.id)
+    expect(store.loading).toBe(false)
+  })
+
+  it('stays loading while either independent read is in flight', async () => {
+    let finishRestore!: (value: unknown) => void
+    const client = { get: vi.fn().mockResolvedValueOnce({ data: { tasks: [] } }).mockImplementationOnce(() => new Promise(resolve => { finishRestore = resolve })) } as unknown as Pick<ApiClient, 'get'>
+    const store = useTasksStore()
+    const listing = store.list('project-1', client)
+    const restoring = store.restore('project-1', client)
+    await listing
+    expect(store.loading).toBe(true)
+    finishRestore({ data: { task: null } })
+    await restoring
+    expect(store.loading).toBe(false)
   })
 
   it('restores the active task and its saved endpoint selection', async () => {

@@ -31,6 +31,13 @@ export const useContextStore = defineStore('context', {
     loading: false,
     optionsLoading: false,
     error: '',
+    errorSource: '' as '' | 'workspace' | 'options' | 'save',
+    readErrors: { workspace: '', options: '' },
+    saveError: '',
+    workspaceLoadGeneration: 0,
+    optionsLoadGeneration: 0,
+    saveGeneration: 0,
+    selectionGeneration: 0,
     projects: [] as ProjectOption[],
     sourceRevisions: [] as SourceRevisionOption[],
     environmentRevisions: [] as EnvironmentRevisionOption[],
@@ -46,6 +53,7 @@ export const useContextStore = defineStore('context', {
   },
   actions: {
     applyWorkspace(workspace: WorkspaceContext | null): void {
+      if (contextSignature(workspace || {}) !== contextSignature(this)) this.selectionGeneration += 1
       if (!workspace) {
         this.projectId = null
         this.sourceRevisionId = null
@@ -60,43 +68,79 @@ export const useContextStore = defineStore('context', {
       this.environmentRevisionId = workspace.environment_revision_id
       this.savedContextSignature = contextSignature(workspace)
     },
-    async loadSavedContext(client: Pick<ContextApi, 'get'> = apiClient): Promise<void> {
+    async loadSavedContext(client: Pick<ContextApi, 'get'> = apiClient, options: { preserveSelection?: boolean } = {}): Promise<void> {
+      const generation = ++this.workspaceLoadGeneration
+      const selectionGeneration = this.selectionGeneration
+      const saveGeneration = this.saveGeneration
+      const hadSelection = Boolean(this.projectId || this.sourceRevisionId || this.environmentRevisionId)
       this.loading = true
       this.error = ''
+      this.errorSource = ''
       try {
         const response = await client.get(WORKSPACE_PATH)
-        this.applyWorkspace(validateWorkspace(response.data.workspace, true))
+        const workspace = validateWorkspace(response.data.workspace, true)
+        if (generation !== this.workspaceLoadGeneration) return
+        // A delayed read must not replace changes made while it was in flight.
+        // A manual retry can also leave an already-selected scope untouched.
+        if (saveGeneration === this.saveGeneration) {
+          if (selectionGeneration === this.selectionGeneration && !(options.preserveSelection && hadSelection)) this.applyWorkspace(workspace)
+          else this.savedContextSignature = workspace ? contextSignature(workspace) : ''
+        }
+        this.readErrors.workspace = ''
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '无法恢复已保存的工作区'
+        if (generation !== this.workspaceLoadGeneration) return
+        const message = error instanceof Error ? error.message : '无法恢复已保存的工作区'
+        this.error = message
+        this.errorSource = 'workspace'
+        this.readErrors.workspace = message
       } finally {
-        this.loading = false
+        if (generation === this.workspaceLoadGeneration) this.loading = false
       }
     },
     async saveContext(client: Pick<ContextApi, 'put'> = apiClient): Promise<void> {
+      const generation = ++this.saveGeneration
+      const selectionGeneration = this.selectionGeneration
       this.error = ''
+      this.errorSource = ''
       try {
         const response = await client.put(WORKSPACE_PATH, {
           project_id: this.projectId,
           source_revision_id: this.sourceRevisionId,
           environment_revision_id: this.environmentRevisionId,
         })
-        this.applyWorkspace(validateWorkspace(response.data.workspace, false))
+        const workspace = validateWorkspace(response.data.workspace, false)
+        if (generation !== this.saveGeneration) return
+        if (selectionGeneration === this.selectionGeneration) this.applyWorkspace(workspace)
+        else this.savedContextSignature = contextSignature(workspace!)
+        this.saveError = ''
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '无法保存工作区'
+        if (generation !== this.saveGeneration) return
+        const message = error instanceof Error ? error.message : '无法保存工作区'
+        this.error = message
+        this.errorSource = 'save'
+        this.saveError = message
       }
     },
     async loadOptions(client: Pick<ContextApi, 'get'> = apiClient): Promise<void> {
+      const generation = ++this.optionsLoadGeneration
       this.optionsLoading = true
       this.error = ''
+      this.errorSource = ''
       try {
         const response = await client.get(CONTEXT_OPTIONS_PATH) as unknown as { data: ContextOptionsResponse }
+        if (generation !== this.optionsLoadGeneration) return
         this.projects = Array.isArray(response.data.projects) ? response.data.projects : []
         this.sourceRevisions = Array.isArray(response.data.source_revisions) ? response.data.source_revisions : []
         this.environmentRevisions = Array.isArray(response.data.environment_revisions) ? response.data.environment_revisions : []
+        this.readErrors.options = ''
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '无法读取已保存的项目和环境'
+        if (generation !== this.optionsLoadGeneration) return
+        const message = error instanceof Error ? error.message : '无法读取已保存的项目和环境'
+        this.error = message
+        this.errorSource = 'options'
+        this.readErrors.options = message
       } finally {
-        this.optionsLoading = false
+        if (generation === this.optionsLoadGeneration) this.optionsLoading = false
       }
     },
     async loadEnvironmentVariableNames(revisionId: string | null, client: Pick<EnvironmentRevisionApi, 'get'> = apiClient): Promise<void> {
@@ -117,20 +161,24 @@ export const useContextStore = defineStore('context', {
     },
     selectProject(projectId: string | null): void {
       if (projectId === this.projectId) return
+      this.selectionGeneration += 1
       this.projectId = projectId
       this.sourceRevisionId = null
       this.environmentRevisionId = null
       this.environmentVariableNames = []
     },
     selectSourceRevision(revisionId: string | null): void {
+      if (revisionId !== this.sourceRevisionId) this.selectionGeneration += 1
       this.sourceRevisionId = revisionId
     },
     selectEnvironmentRevision(revisionId: string | null): void {
+      if (revisionId !== this.environmentRevisionId) this.selectionGeneration += 1
       if (revisionId !== this.environmentRevisionId) this.environmentVariableNames = []
       this.environmentRevisionId = revisionId
     },
     restoreExecutionContext(workspace: WorkspaceContext): void {
       const restored = validateWorkspace(workspace, false)
+      if (contextSignature(restored!) !== contextSignature(this)) this.selectionGeneration += 1
       if (restored!.environment_revision_id !== this.environmentRevisionId) this.environmentVariableNames = []
       this.projectId = restored!.project_id
       this.sourceRevisionId = restored!.source_revision_id

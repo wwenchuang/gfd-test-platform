@@ -31,6 +31,7 @@ const endpointTreeTab = ref<'all' | 'selected'>('all')
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
+let sourceLoadGeneration = 0
 const workspaceRestoring = ref(true)
 const workspaceRestoreFailed = ref(false)
 const taskNameDraft = ref('')
@@ -204,12 +205,14 @@ async function loadSource(
   client: Pick<ApiClient, 'get'> = apiClient,
   throwOnError = false,
 ): Promise<void> {
+  const generation = ++sourceLoadGeneration
   localError.value = ''
   try {
-    await Promise.all([
+    const results = await Promise.all([
       assets.load(sourceRevisionId, client),
       cases.loadSavedCases(sourceRevisionId, client),
     ])
+    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId || results.includes(false)) return
     if (assets.error) throw new Error(assets.error)
     activeEndpoint.value = null
     const available = new Set(assets.endpoints.map(item => item.id))
@@ -220,12 +223,16 @@ async function loadSource(
       if (endpoint) await activate(endpoint, client)
     }
   } catch (error) {
+    if (generation !== sourceLoadGeneration || context.sourceRevisionId !== sourceRevisionId) return
     localError.value = error instanceof Error ? error.message : '无法读取已保存接口和用例'
     if (throwOnError) throw new Error(localError.value)
   }
 }
 
 function changeProject(projectId: string | null): void {
+  sourceLoadGeneration += 1
+  assets.invalidateLoad()
+  cases.invalidateLoad()
   context.selectProject(projectId)
   tasks.clear()
   tasks.tasks = []
@@ -241,6 +248,9 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
+  sourceLoadGeneration += 1
+  assets.invalidateLoad()
+  cases.invalidateLoad()
   const recoverableTask = tasks.task || outdatedRestoredTask.value
   context.selectSourceRevision(sourceRevisionId)
   tasks.clear()

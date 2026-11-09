@@ -7,6 +7,31 @@ import { useAssetsStore } from './assets'
 describe('assets store endpoint details', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
+  it('does not replace current source data or error with a late older response', async () => {
+    let resolveOld!: (value: unknown) => void
+    const get = vi.fn().mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+      .mockResolvedValueOnce({ data: { endpoints: [{ id: 'new', method: 'GET', path: '/new', summary: '', tags: [] }] } })
+    const store = useAssetsStore()
+    const old = store.load('old', { get } as unknown as Pick<ApiClient, 'get'>)
+    await store.load('new', { get } as unknown as Pick<ApiClient, 'get'>)
+    resolveOld({ data: { endpoints: [{ id: 'old', method: 'GET', path: '/old', summary: '', tags: [] }] } })
+    expect(await old).toBe(false)
+    expect(store.endpoints.map(item => item.id)).toEqual(['new'])
+  })
+
+  it('ignores an older failed request after the current source loads', async () => {
+    let failOld!: (error: Error) => void
+    const get = vi.fn().mockImplementationOnce(() => new Promise((_, reject) => { failOld = reject }))
+      .mockResolvedValueOnce({ data: { endpoints: [{ id: 'new', method: 'GET', path: '/new', summary: '', tags: [] }] } })
+    const store = useAssetsStore()
+    const old = store.load('old', { get } as unknown as Pick<ApiClient, 'get'>)
+    await store.load('new', { get } as unknown as Pick<ApiClient, 'get'>)
+    failOld(new Error('旧请求 502')); await old
+    expect(store.state).toBe('ready')
+    expect(store.error).toBe('')
+    expect(store.endpoints.map(item => item.id)).toEqual(['new'])
+  })
+
   it('loads lightweight rows first and fetches one operation on demand', async () => {
     const get = vi.fn(async (path: string) => {
       if (path.includes('?source_revision_id=')) {

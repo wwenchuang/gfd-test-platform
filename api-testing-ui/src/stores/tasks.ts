@@ -15,57 +15,91 @@ export const useTasksStore = defineStore('api-test-tasks', {
     task: null as ApiTestTask | null,
     tasks: [] as ApiTestTask[],
     loading: false,
+    listLoading: false,
+    restoreLoading: false,
     saving: false,
     running: false,
     error: '',
+    errorSource: '' as '' | 'list' | 'restore' | 'operation',
+    operationError: '',
+    readErrors: { list: '', restore: '' },
+    listGeneration: 0,
+    restoreGeneration: 0,
   }),
   actions: {
     async list(projectId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<ApiTestTask[]> {
+      const generation = ++this.listGeneration
+      this.listLoading = true
       this.loading = true
       this.error = ''
+      this.errorSource = ''
       try {
         const response = await client.get<{ tasks: ApiTestTask[] }>(
           `/api/api-testing/v1/tasks?project_id=${encodeURIComponent(projectId)}`,
         )
+        if (generation !== this.listGeneration) return []
+        this.readErrors.list = ''
         this.tasks = response.data.tasks
         if (this.task) this.task = this.tasks.find(item => item.id === this.task?.id) || this.task
         return this.tasks
       } catch (error) {
+        if (generation !== this.listGeneration) return []
         this.error = error instanceof Error ? error.message : '无法读取测试任务列表'
+        this.errorSource = 'list'
+        this.readErrors.list = this.error
         return []
       } finally {
-        this.loading = false
+        if (generation === this.listGeneration) {
+          this.listLoading = false
+          this.loading = this.restoreLoading
+        }
       }
     },
     select(taskId: string): ApiTestTask | null {
+      this.restoreGeneration += 1
+      this.restoreLoading = false
+      this.loading = this.listLoading
       const task = this.tasks.find(item => item.id === taskId) || null
       this.task = task
       this.error = ''
+      this.errorSource = ''
       return task
     },
     async restore(projectId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<ApiTestTask | null> {
+      const generation = ++this.restoreGeneration
+      this.restoreLoading = true
       this.loading = true
       this.error = ''
+      this.errorSource = ''
       try {
         const response = await client.get<{ task: ApiTestTask | null }>(
           `/api/api-testing/v1/tasks/active?project_id=${encodeURIComponent(projectId)}`,
         )
+        if (generation !== this.restoreGeneration) return null
+        this.readErrors.restore = ''
         this.task = response.data.task
         if (this.task && !this.tasks.some(item => item.id === this.task?.id)) {
           this.tasks = [this.task, ...this.tasks]
         }
         return this.task
       } catch (error) {
+        if (generation !== this.restoreGeneration) return null
         this.error = error instanceof Error ? error.message : '无法恢复当前测试任务'
+        this.errorSource = 'restore'
+        this.readErrors.restore = this.error
         return null
       } finally {
-        this.loading = false
+        if (generation === this.restoreGeneration) {
+          this.restoreLoading = false
+          this.loading = this.listLoading
+        }
       }
     },
     async saveSelection(context: TaskContext, endpointIds: string[], name: string): Promise<ApiTestTask> {
       if (!endpointIds.length) throw new Error('请至少选择一个接口')
       this.saving = true
       this.error = ''
+      this.errorSource = ''
       try {
         const payload = {
           project_id: context.projectId,
@@ -88,6 +122,8 @@ export const useTasksStore = defineStore('api-test-tasks', {
         return this.task
       } catch (error) {
         this.error = error instanceof Error ? error.message : '测试任务保存失败'
+        this.errorSource = 'operation'
+        this.operationError = this.error
         throw error
       } finally {
         this.saving = false
@@ -98,6 +134,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
       if (!selectedEndpointIds.length) throw new Error('请至少选择一个接口')
       this.saving = true
       this.error = ''
+      this.errorSource = ''
       try {
         const response = await apiClient.post<{ task: ApiTestTask }>('/api/api-testing/v1/tasks', {
           project_id: context.projectId,
@@ -111,6 +148,8 @@ export const useTasksStore = defineStore('api-test-tasks', {
         return this.task
       } catch (error) {
         this.error = error instanceof Error ? error.message : '测试任务创建失败'
+        this.errorSource = 'operation'
+        this.operationError = this.error
         throw error
       } finally {
         this.saving = false
@@ -121,6 +160,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
       if (!nextName) throw new Error('任务名称不能为空')
       this.saving = true
       this.error = ''
+      this.errorSource = ''
       try {
         const response = await apiClient.put<{ task: ApiTestTask }>(
           `/api/api-testing/v1/tasks/${encodeURIComponent(taskId)}/name`,
@@ -131,6 +171,8 @@ export const useTasksStore = defineStore('api-test-tasks', {
         return response.data.task
       } catch (error) {
         this.error = error instanceof Error ? error.message : '任务名称保存失败'
+        this.errorSource = 'operation'
+        this.operationError = this.error
         throw error
       } finally {
         this.saving = false
@@ -140,6 +182,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
       if (!this.task) throw new Error('请先保存本次测试任务')
       this.running = true
       this.error = ''
+      this.errorSource = ''
       try {
         const payload: Record<string, string> = { idempotency_key: createIdempotencyKey() }
         if (environmentRevisionId) payload.environment_revision_id = environmentRevisionId
@@ -152,6 +195,8 @@ export const useTasksStore = defineStore('api-test-tasks', {
         return response.data.execution
       } catch (error) {
         this.error = error instanceof Error ? error.message : '测试任务执行失败'
+        this.errorSource = 'operation'
+        this.operationError = this.error
         throw error
       } finally {
         this.running = false
@@ -160,6 +205,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
     async remove(taskId: string): Promise<ApiTestTask> {
       this.saving = true
       this.error = ''
+      this.errorSource = ''
       try {
         const response = await apiClient.delete<{ task: ApiTestTask }>(
           `/api/api-testing/v1/tasks/${encodeURIComponent(taskId)}`,
@@ -169,14 +215,24 @@ export const useTasksStore = defineStore('api-test-tasks', {
         return response.data.task
       } catch (error) {
         this.error = error instanceof Error ? error.message : '测试任务删除失败'
+        this.errorSource = 'operation'
+        this.operationError = this.error
         throw error
       } finally {
         this.saving = false
       }
     },
     clear(): void {
+      this.listGeneration += 1
+      this.restoreGeneration += 1
       this.task = null
       this.error = ''
+      this.errorSource = ''
+      this.readErrors = { list: '', restore: '' }
+      this.operationError = ''
+      this.listLoading = false
+      this.restoreLoading = false
+      this.loading = false
     },
     upsertTask(task: ApiTestTask): void {
       const index = this.tasks.findIndex(item => item.id === task.id)

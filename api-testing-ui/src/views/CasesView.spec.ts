@@ -63,6 +63,89 @@ describe('CasesView', () => {
     expect(wrapper.get('.inline-error').text()).toContain('接口服务返回 503')
   })
 
+  it('keeps each load error until that resource recovers without hiding unrelated failures', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', source_id: 'source-1', project_id: 'project-1', name: '默认模块', revision_number: 1, endpoint_count: 1 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => { assets.state = 'ready'; assets.error = ''; assets.endpoints = [ENDPOINT] })
+    const cases = useCasesStore()
+    let finishRetry!: () => void
+    vi.spyOn(cases, 'loadSavedCases').mockRejectedValueOnce(new Error('用例服务 502')).mockImplementationOnce(() => new Promise<void>(resolve => { finishRetry = resolve }))
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { ContextBar: true, EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('用例服务 502')
+    tasks.error = '任务状态 503'
+    context.error = '工作区 504'
+    wrapper.findComponent(CaseListPanel).vm.$emit('run-version', {
+      ...savedCase('missing-version', '不存在的用例'), endpoint_id: 'missing-endpoint',
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('该用例对应的接口不在当前接口版本中')
+    await wrapper.get('button[title="重新读取用例"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('用例服务 502')
+    finishRetry()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('用例服务 502')
+    expect(wrapper.text()).toContain('任务状态 503')
+    expect(wrapper.text()).toContain('工作区 504')
+    expect(wrapper.text()).toContain('该用例对应的接口不在当前接口版本中')
+    expect(wrapper.text()).toContain('任务信息')
+    expect(wrapper.text()).toContain('项目与环境')
+  })
+
+  it('retries only the failed task read and keeps the other task error visible', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'project-1', sourceRevisionId: 'source-1' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(useAssetsStore(), 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore()
+    const list = vi.spyOn(tasks, 'list').mockImplementation(async () => { tasks.readErrors.list = ''; return [] })
+    const restore = vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { ContextBar: true, EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises(); list.mockClear(); restore.mockClear()
+    tasks.readErrors.list = '列表 502'; tasks.readErrors.restore = '当前任务 503'; tasks.operationError = '任务保存失败'
+    await flushPromises()
+    await wrapper.get('[data-testid="retry-task-list"]').trigger('click'); await flushPromises()
+    expect(list).toHaveBeenCalledOnce()
+    expect(restore).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('列表 502')
+    expect(wrapper.text()).toContain('当前任务 503')
+    expect(wrapper.text()).toContain('任务保存失败')
+  })
+
+  it('retries project options without hiding an independent workspace failure', async () => {
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    const loadOptions = vi.spyOn(context, 'loadOptions').mockImplementation(async () => { context.readErrors.options = '' })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { ContextBar: true, EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises(); loadOptions.mockClear()
+    context.readErrors.workspace = '工作区 502'; context.readErrors.options = '项目选项 503'
+    await flushPromises()
+    await wrapper.get('[data-testid="retry-context-options"]').trigger('click'); await flushPromises()
+    expect(loadOptions).toHaveBeenCalledOnce()
+    expect(wrapper.text()).toContain('工作区 502')
+    expect(wrapper.text()).not.toContain('项目选项 503')
+  })
+
   it('shows case management as an independent page and edits a saved case', async () => {
     const context = useContextStore()
     Object.assign(context, {

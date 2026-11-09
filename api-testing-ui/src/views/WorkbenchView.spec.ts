@@ -47,6 +47,43 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(useContextStore(), 'loadEnvironmentVariableNames').mockResolvedValue()
   })
 
+  it('keeps the current selection when an earlier source load finishes late', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'p', sourceRevisionId: 'initial', environmentRevisionId: 'e' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore()
+    let finishOld!: (value: false) => void
+    vi.spyOn(assets, 'load').mockImplementation(async source => {
+      if (source === 'old') return new Promise<false>(resolve => { finishOld = resolve })
+      assets.endpoints = [ENDPOINT]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    vi.spyOn(useTasksStore(), 'list').mockResolvedValue([])
+    vi.spyOn(useTasksStore(), 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: { emits: ['update:sourceRevisionId'], template: '<div><button data-testid="old" @click="$emit(\'update:sourceRevisionId\', \'old\')">old</button><button data-testid="new" @click="$emit(\'update:sourceRevisionId\', \'new\')">new</button></div>' },
+      EndpointTree: { name: 'EndpointTree', props: ['selectedIds'], emits: ['selection-change'], template: '<button data-testid="select" @click="$emit(\'selection-change\', [\'endpoint-1\'])">select</button>' },
+      TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, AiAssistant: true, DebugDrawer: true,
+    } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="old"]').trigger('click')
+    await wrapper.get('[data-testid="new"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="select"]').trigger('click')
+    finishOld(false)
+    await flushPromises()
+    expect(context.sourceRevisionId).toBe('new')
+    expect(wrapper.findComponent({ name: 'EndpointTree' }).props('selectedIds')).toEqual(['endpoint-1'])
+    wrapper.unmount()
+  })
+
   it('keeps restored task details hidden until the routed workspace context is ready', async () => {
     const context = useContextStore()
     let finishContext!: () => void

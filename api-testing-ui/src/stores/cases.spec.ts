@@ -298,6 +298,87 @@ describe('cases store', () => {
     expect(store.validationErrors['assertions[0].operator']).toContain('等于')
   })
 
+  it('does not replace the latest source cases with an older response', async () => {
+    let resolveOld!: (value: unknown) => void
+    const newVersion = { ...VERSION, id: 'new-version', case_id: 'new-case' }
+    const get = vi.fn().mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+      .mockResolvedValueOnce({ data: { case_versions: [newVersion] } })
+    const store = useCasesStore()
+    const old = store.loadSavedCases('old', { get } as unknown as Pick<ApiClient, 'get'>)
+    await store.loadSavedCases('new', { get } as unknown as Pick<ApiClient, 'get'>)
+    resolveOld({ data: { case_versions: [VERSION] } })
+    expect(await old).toBe(false)
+    expect(Object.keys(store.versions)).toEqual(['new-version'])
+  })
+
+  it('preserves an edited draft and active preview when retrying the same source', async () => {
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+    store.drafts[VERSION.endpoint_id].name = '未保存的修改'
+    const preview = { id: 'preview-1', endpoint_id: VERSION.endpoint_id } as GeneratedCasePreview
+    store.generatedPreviews = [preview]
+    store.activeGeneratedPreviewId = preview.id
+    const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-1', client, { preserveDrafts: true })
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('未保存的修改')
+    expect(store.generatedPreviews).toEqual([preview])
+    expect(store.activeGeneratedPreviewId).toBe(preview.id)
+  })
+
+  it('does not bind a new manual draft to a returned existing case on refresh', async () => {
+    const store = useCasesStore()
+    store.startManualDraft({ id: VERSION.endpoint_id, method: 'GET', path: '/favorite/list', summary: '收藏', tags: [] } as ApiEndpoint)
+    const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [VERSION] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-1', client, { preserveDrafts: true })
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBeUndefined()
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_version: VERSION } })
+    vi.spyOn(store, 'validate').mockResolvedValue()
+    await store.save(VERSION.endpoint_id)
+    expect(post.mock.calls[0][0]).toBe('/api/api-testing/v1/cases')
+  })
+
+  it('retains draft and blocks saving when its original case version disappeared', async () => {
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+    store.drafts[VERSION.endpoint_id].name = '未保存的修改'
+    const other = { ...VERSION, id: 'other', case_id: 'other-case' }
+    const client = { get: vi.fn().mockResolvedValue({ data: { case_versions: [other] } }) } as unknown as Pick<ApiClient, 'get'>
+    await store.loadSavedCases('source-1', client, { preserveDrafts: true })
+    const post = vi.spyOn(apiClient, 'post')
+    await expect(store.save(VERSION.endpoint_id)).rejects.toThrow('原用例版本已不在当前列表中')
+    expect(post).not.toHaveBeenCalled()
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('未保存的修改')
+  })
+
+  it('does not bind a draft to an older version when a refresh finishes after save', async () => {
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+    let finish!: (value: unknown) => void
+    const client = { get: vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>
+    const pending = store.loadSavedCases('source-1', client, { preserveDrafts: true })
+    const saved = { ...VERSION, id: 'new-version', version: 2 }
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_version: saved } })
+    vi.spyOn(store, 'validate').mockResolvedValue()
+    await store.save(VERSION.endpoint_id)
+    finish({ data: { case_versions: [VERSION] } })
+    await pending
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('new-version')
+    expect(store.versions['new-version']).toEqual(saved)
+  })
+
+  it('does not resurrect a case archived while an older refresh was pending', async () => {
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+    let finish!: (value: unknown) => void
+    const client = { get: vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>
+    const pending = store.loadSavedCases('source-1', client, { preserveDrafts: true })
+    vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: {} })
+    await store.archiveCase(VERSION.endpoint_id, VERSION.id)
+    finish({ data: { case_versions: [VERSION] } })
+    expect(await pending).toBe(false)
+    expect(store.versions[VERSION.id]).toBeUndefined()
+  })
+
   it('restores every persisted case version for the saved source revision', async () => {
     const second = { ...VERSION, id: 'version-2', case_id: 'case-2', name: '收藏列表鉴权失败' }
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { case_versions: [VERSION, second] } })

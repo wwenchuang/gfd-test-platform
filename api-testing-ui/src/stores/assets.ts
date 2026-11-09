@@ -9,9 +9,15 @@ export const useAssetsStore = defineStore('api-assets', {
     detailedEndpointIds: {} as Record<string, true>,
     state: 'idle' as LoadState,
     error: '',
+    loadGeneration: 0,
   }),
   actions: {
-    async load(sourceRevisionId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<void> {
+    invalidateLoad(): void {
+      this.loadGeneration += 1
+      if (this.state === 'loading') this.state = 'idle'
+    },
+    async load(sourceRevisionId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<void | false> {
+      const generation = ++this.loadGeneration
       this.state = 'loading'
       this.error = ''
       this.detailedEndpointIds = {}
@@ -19,9 +25,11 @@ export const useAssetsStore = defineStore('api-assets', {
         const response = await client.get<{ endpoints: ApiEndpoint[] }>(
           `/api/api-testing/v1/endpoints?source_revision_id=${encodeURIComponent(sourceRevisionId)}`,
         )
+        if (generation !== this.loadGeneration) return false
         this.endpoints = response.data.endpoints
         this.state = this.endpoints.length ? 'ready' : 'empty'
       } catch (error) {
+        if (generation !== this.loadGeneration) return false
         this.endpoints = []
         this.state = 'failed'
         this.error = error instanceof Error ? error.message : '接口读取失败'

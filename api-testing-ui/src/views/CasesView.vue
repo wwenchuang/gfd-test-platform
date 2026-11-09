@@ -30,8 +30,11 @@ const selectedIds = ref<string[]>([])
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
+const sourceLoadError = ref('')
+let sourceLoadGeneration = 0
 const mobileDetailOpen = ref(false)
 const endpointPickerOpen = ref(false)
+const taskReadNote = ref('')
 
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
@@ -131,20 +134,36 @@ function routeValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-async function loadSource(sourceRevisionId: string): Promise<void> {
-  localError.value = ''
+async function loadSource(sourceRevisionId: string, preserveDrafts = false): Promise<void> {
+  const generation = ++sourceLoadGeneration
   try {
-    await Promise.all([assets.load(sourceRevisionId), cases.loadSavedCases(sourceRevisionId)])
+    const caseLoad = preserveDrafts
+      ? cases.loadSavedCases(sourceRevisionId, undefined, { preserveDrafts: true })
+      : cases.loadSavedCases(sourceRevisionId)
+    const results = await Promise.all([assets.load(sourceRevisionId), caseLoad])
+    if (generation !== sourceLoadGeneration || sourceRevisionId !== context.sourceRevisionId) return
+    if (results.includes(false)) {
+      sourceLoadError.value = '读取期间数据发生变化，请重新读取用例。'
+      return
+    }
     if (assets.error) throw new Error(assets.error)
-    activeEndpoint.value = null
+    sourceLoadError.value = ''
+    if (!preserveDrafts) activeEndpoint.value = null
     const available = new Set(assets.endpoints.map(item => item.id))
     selectedIds.value = selectedIds.value.filter(item => available.has(item))
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '无法读取接口和用例'
+    if (generation !== sourceLoadGeneration || sourceRevisionId !== context.sourceRevisionId) return
+    sourceLoadError.value = error instanceof Error ? error.message : '无法读取接口和用例'
   }
 }
 
 function changeProject(projectId: string | null): void {
+  if (projectId === context.projectId) return
+  sourceLoadGeneration += 1
+  assets.invalidateLoad()
+  cases.invalidateLoad()
+  sourceLoadError.value = ''
+  localError.value = ''
   context.selectProject(projectId)
   tasks.clear()
   tasks.tasks = []
@@ -158,6 +177,12 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
+  if (sourceRevisionId === context.sourceRevisionId) return
+  sourceLoadGeneration += 1
+  assets.invalidateLoad()
+  cases.invalidateLoad()
+  sourceLoadError.value = ''
+  localError.value = ''
   context.selectSourceRevision(sourceRevisionId)
   tasks.clear()
   cases.clearDebug()
@@ -516,7 +541,31 @@ function openAiGenerationResults(): void {
 }
 
 async function refreshCases(): Promise<void> {
-  if (context.sourceRevisionId) await loadSource(context.sourceRevisionId)
+  if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, true)
+}
+
+async function retryTaskRead(kind: 'list' | 'restore'): Promise<void> {
+  const projectId = context.projectId
+  if (!projectId) return
+  taskReadNote.value = ''
+  if (kind === 'list') await tasks.list(projectId)
+  else await tasks.restore(projectId)
+  if (context.projectId === projectId && !tasks.readErrors[kind]) {
+    taskReadNote.value = kind === 'list' ? '任务列表已重新读取。' : '当前任务已重新读取；当前勾选范围未改变。'
+  }
+}
+
+async function retryWorkspaceRead(): Promise<void> {
+  const hadSelection = Boolean(context.projectId || context.sourceRevisionId || context.environmentRevisionId)
+  await context.loadSavedContext(undefined, { preserveSelection: true })
+  if (context.readErrors.workspace || hadSelection || !context.projectId || !context.sourceRevisionId) return
+  const projectId = context.projectId
+  const sourceRevisionId = context.sourceRevisionId
+  await tasks.list(projectId)
+  if (context.projectId !== projectId || context.sourceRevisionId !== sourceRevisionId) return
+  await tasks.restore(projectId)
+  if (context.projectId !== projectId || context.sourceRevisionId !== sourceRevisionId) return
+  await loadSource(sourceRevisionId)
 }
 
 async function openWorkbenchForTask(): Promise<void> {
@@ -617,7 +666,17 @@ function defaultTaskName(): string {
         <button v-else-if="aiJobFailed" class="secondary-command" type="button" @click="endpointPickerOpen = true">重新选择接口</button>
       </div>
     </section>
-    <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
+    <p v-if="context.readErrors.workspace" class="inline-error" role="alert">工作区：{{ context.readErrors.workspace }}。 <button data-testid="retry-workspace" type="button" :disabled="context.loading" @click="retryWorkspaceRead">重试工作区</button></p>
+    <p v-if="context.readErrors.options" class="inline-error" role="alert">项目与环境：{{ context.readErrors.options }}。 <button data-testid="retry-context-options" type="button" :disabled="context.optionsLoading" @click="context.loadOptions()">重试项目与环境</button></p>
+    <p v-if="context.saveError" class="inline-error" role="alert">工作区保存：{{ context.saveError }}。请重新保存测试范围。</p>
+    <p v-if="context.error && !context.errorSource" class="inline-error" role="alert">项目与环境：{{ context.error }}。重新读取用例不会重试此请求。</p>
+    <p v-if="tasks.readErrors.list" class="inline-error" role="alert">任务列表：{{ tasks.readErrors.list }}。重新读取用例不会重试此请求。 <button data-testid="retry-task-list" type="button" :disabled="!context.projectId || tasks.loading" @click="retryTaskRead('list')">重试任务列表</button></p>
+    <p v-if="tasks.readErrors.restore" class="inline-error" role="alert">当前任务：{{ tasks.readErrors.restore }}。重新读取用例不会重试此请求。 <button data-testid="retry-task-restore" type="button" :disabled="!context.projectId || tasks.loading" @click="retryTaskRead('restore')">重试当前任务</button></p>
+    <p v-if="tasks.operationError" class="inline-error" role="alert">上次任务操作：{{ tasks.operationError }}。 <button type="button" @click="tasks.operationError = ''">关闭提示</button></p>
+    <p v-if="tasks.error && !tasks.errorSource" class="inline-error" role="alert">任务信息：{{ tasks.error }}。重新读取用例不会重试此请求。</p>
+    <p v-if="taskReadNote" role="status">{{ taskReadNote }}</p>
+    <p v-if="sourceLoadError" class="inline-error" role="alert">接口和用例：{{ sourceLoadError }}</p>
+    <p v-if="localError" class="inline-error" role="alert">{{ localError }}</p>
     <div :class="['management-shell', 'case-management-shell', { 'mobile-detail-open': mobileDetailOpen }]" data-testid="case-management-shell">
       <CaseListPanel
         :endpoints="assets.endpoints"
