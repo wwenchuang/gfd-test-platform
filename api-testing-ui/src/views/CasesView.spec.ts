@@ -120,6 +120,35 @@ describe('CasesView', () => {
     wrapper.unmount()
   })
 
+  it.each(['success', 'failure'])('disables editing while re-reading the source before %s', async outcome => {
+    const context = useContextStore(); Object.assign(context, { projectId: 'p', sourceRevisionId: 's' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    let finish!: () => void; let fail!: (error: Error) => void
+    vi.spyOn(assets, 'load').mockResolvedValueOnce().mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject }))
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const version = savedCase('version-a', 'original'); cases.registerVersion(version)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: { ContextBar: true, EndpointDetail: true, DebugDrawer: true } } })
+    await flushPromises(); wrapper.findComponent(CaseListPanel).vm.$emit('edit-version', version); await flushPromises()
+    await wrapper.get('[data-testid="raw-tab"]').trigger('click')
+    await wrapper.get('button[title="重新读取用例"]').trigger('click')
+    expect(wrapper.get('[data-testid="case-edit-guard"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.raw-editor textarea').element.matches(':disabled')).toBe(true)
+    if (outcome === 'success') {
+      finish(); await flushPromises()
+      expect(wrapper.get('[data-testid="case-edit-guard"]').attributes('disabled')).toBeUndefined()
+    } else {
+      fail(new Error('来源读取失败')); await flushPromises()
+      expect(wrapper.find('[data-testid="case-edit-guard"]').exists()).toBe(false)
+      expect(wrapper.text()).toContain('来源读取失败')
+    }
+    wrapper.unmount()
+  })
+
   it('does not open an old manual draft after switching projects during detail loading', async () => {
     const context = useContextStore()
     Object.assign(context, { projectId: 'old-project', sourceRevisionId: 'old-source' })

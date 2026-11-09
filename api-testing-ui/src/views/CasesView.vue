@@ -40,6 +40,7 @@ const debugOpen = ref(false)
 const executionStarting = ref(false)
 const localError = ref('')
 const sourceLoadError = ref('')
+const sourceReadPending = ref(false)
 let sourceLoadGeneration = 0
 let manualDetailGeneration = 0
 let taskSelectionGeneration = 0
@@ -154,6 +155,7 @@ function routeValue(value: unknown): string {
 
 async function loadSource(sourceRevisionId: string, preserveDrafts = false): Promise<void> {
   const generation = ++sourceLoadGeneration
+  sourceReadPending.value = true
   try {
     const caseLoad = preserveDrafts
       ? cases.loadSavedCases(sourceRevisionId, undefined, { preserveDrafts: true })
@@ -176,6 +178,8 @@ async function loadSource(sourceRevisionId: string, preserveDrafts = false): Pro
     activeEndpoint.value = null
     endpointPickerOpen.value = false
     sourceLoadError.value = error instanceof Error ? error.message : '无法读取接口和用例'
+  } finally {
+    if (generation === sourceLoadGeneration) sourceReadPending.value = false
   }
 }
 
@@ -183,6 +187,7 @@ function changeProject(projectId: string | null): void {
   if (projectId === context.projectId || !rawEditorGuard.confirmDiscardRaw()) return
   manualDetailGeneration += 1
   sourceLoadGeneration += 1
+  sourceReadPending.value = false
   assets.invalidateLoad()
   cases.invalidateLoad()
   cases.hideDraftScope()
@@ -204,6 +209,7 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
   if (sourceRevisionId === context.sourceRevisionId || !rawEditorGuard.confirmDiscardRaw()) return
   manualDetailGeneration += 1
   sourceLoadGeneration += 1
+  sourceReadPending.value = false
   assets.invalidateLoad()
   assets.endpoints = []
   cases.invalidateLoad()
@@ -921,8 +927,9 @@ function defaultTaskName(): string {
         </header>
         <div class="management-detail-body">
           <EndpointDetail :endpoint="activeEndpoint" @open-history="openEndpointHistory" />
+          <fieldset v-if="activeDraft" data-testid="case-edit-guard" class="case-edit-guard" :disabled="sourceReadPending">
+            <p v-if="sourceReadPending" role="status">正在重新读取，请稍候再编辑。</p>
           <CaseEditor
-            v-if="activeDraft"
             ref="caseEditor"
             :model-value="activeDraft"
             :draft-identity="`${activeEndpoint?.id || ''}:${activeVersionId}:${cases.activeGeneratedPreviewId || ''}`"
@@ -942,6 +949,7 @@ function defaultTaskName(): string {
             @save="saveDraft"
             @debug="submitDebug"
           />
+          </fieldset>
           <div v-else class="state-message center-empty">从左侧选择一个用例后，可查看接口信息并编辑测试数据。</div>
         </div>
       </main>
@@ -966,3 +974,7 @@ function defaultTaskName(): string {
     />
   </section>
 </template>
+
+<style scoped>
+.case-edit-guard { border: 0; padding: 0; margin: 0; min-width: 0; }
+</style>
