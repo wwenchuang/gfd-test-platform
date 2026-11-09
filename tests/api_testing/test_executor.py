@@ -2419,3 +2419,19 @@ def test_unscoped_environment_alias_of_future_cleanup_output_is_not_yet_guarded(
     handler.workflow_calls = []
     executor.execute_case('v', 'env', {'resourceSn': 'another-run'})
     assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+@pytest.mark.xfail(strict=True, reason='response extraction alone does not prove the server resource belongs to this run')
+def test_extracted_response_id_does_not_by_itself_authorize_cleanup(target_server):
+    """The proposed opt-in contract needs server ownership proof before cleanup."""
+    _, handler = target_server
+    cleanup = _workflow_step('清理未证实的资源', 'POST', '/workflow/cancel',
+                             body={'target': '{{resourceSn}}'}, required_variables=['resourceSn'])
+    processing = _workflow_processing(cleanup_steps=[cleanup])
+    processing['resource_ownership'] = {'mode': 'created', 'target_variable': 'resourceSn',
+                                        'correlation_variable': 'run_marker'}
+    case = _case('/workflow/setup', extractions=[_extraction('resourceSn', 'json_path', '$.data.resourceSn')],
+                 processing=processing)
+    handler.workflow_calls = []
+    _executor(target_server, case).execute_case('v', 'env', {})
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
