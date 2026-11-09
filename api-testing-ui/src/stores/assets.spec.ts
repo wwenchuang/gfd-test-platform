@@ -125,4 +125,56 @@ describe('assets store endpoint details', () => {
     expect(detailed?.operation).toEqual({ requestBody: { required: true } })
     expect(get).toHaveBeenCalledTimes(2)
   })
+
+  it('rejects cached detail after a same-source account change until the source is reloaded', async () => {
+    let token = 'account-a'
+    vi.stubGlobal('sessionStorage', { getItem: () => token })
+    try {
+      const endpoint = { id: 'a', method: 'GET', path: '/a', summary: 'a', tags: [], operation: {} }
+      const get = vi.fn().mockResolvedValueOnce({ data: { endpoints: [endpoint] } })
+        .mockResolvedValueOnce({ data: { endpoint: { ...endpoint, operation: { description: 'old account' } } } })
+      const client = { get } as unknown as Pick<ApiClient, 'get'>
+      const store = useAssetsStore()
+      await store.load('source-1', client)
+      expect((await store.ensureEndpointDetail('a', client))?.operation).toEqual({ description: 'old account' })
+      token = 'account-b'
+      expect(await store.ensureEndpointDetail('a', client)).toBeNull()
+      expect(get).toHaveBeenCalledTimes(2)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('does not cache detail that finishes after account change', async () => {
+    let token = 'account-a'
+    vi.stubGlobal('sessionStorage', { getItem: () => token })
+    try {
+      const endpoint = { id: 'a', method: 'GET', path: '/a', summary: 'a', tags: [], operation: {} }
+      let finish!: (value: unknown) => void
+      const get = vi.fn().mockResolvedValueOnce({ data: { endpoints: [endpoint] } })
+        .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      const client = { get } as unknown as Pick<ApiClient, 'get'>
+      const store = useAssetsStore()
+      await store.load('source-1', client)
+      const pending = store.ensureEndpointDetail('a', client)
+      token = 'account-b'
+      finish({ data: { endpoint: { ...endpoint, operation: { description: 'old account' } } } })
+      expect(await pending).toBeNull()
+      expect(store.endpoints[0].operation).toEqual({})
+      expect(store.detailedEndpointIds).toEqual({})
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('does not publish a source list that finishes after account change', async () => {
+    let token = 'account-a'
+    vi.stubGlobal('sessionStorage', { getItem: () => token })
+    try {
+      let finish!: (value: unknown) => void
+      const client = { get: vi.fn(() => new Promise(resolve => { finish = resolve })) } as unknown as Pick<ApiClient, 'get'>
+      const store = useAssetsStore()
+      const pending = store.load('source-1', client)
+      token = 'account-b'
+      finish({ data: { endpoints: [{ id: 'old', method: 'GET', path: '/old', tags: [], operation: {} }] } })
+      expect(await pending).toBe(false)
+      expect(store.endpoints).toEqual([])
+    } finally { vi.unstubAllGlobals() }
+  })
 })

@@ -554,6 +554,23 @@ describe('cases store', () => {
     expect(store.generatedPreviews).toEqual([])
   })
 
+  it('does not publish a pending preview after login changes for the same source', async () => {
+    let token = 'account-a'
+    vi.stubGlobal('sessionStorage', { getItem: () => token })
+    try {
+      const store = useCasesStore()
+      const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
+      await store.loadSavedCases('source-a', ready)
+      let finish!: (value: unknown) => void
+      vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+      const pending = store.previewBasicPositive(['endpoint-1'], 'environment-a')
+      token = 'account-b'
+      finish({ data: { case_previews: [{ id: 'preview-old', endpoint_id: 'endpoint-1', case: {} }] } })
+      await expect(pending).rejects.toThrow('范围已切换')
+      expect(store.generatedPreviews).toEqual([])
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('does not register persisted generated cases in a newly selected source', async () => {
     const store = useCasesStore()
     const ready = { get: vi.fn().mockResolvedValue({ data: { case_versions: [] } }) } as unknown as Pick<ApiClient, 'get'>
