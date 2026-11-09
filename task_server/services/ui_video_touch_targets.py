@@ -4,12 +4,14 @@ from . import ai_skill_service as ai
 
 
 def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=None):
-    from .ui_video_analysis import _bind_whole_evidence, validate_analysis
+    from .ui_video_analysis import _bind_whole_evidence, validate_analysis,_text,_check_question_count,_redact_question
     from .ui_video_automatic_motion import explicit_no_action_assertion
     timeout_retry_budget = timeout_retry_budget if isinstance(timeout_retry_budget, dict) else {'used': False}
     by_name = {asset['name']: asset for asset in assets}
     hints = []
+    probe_secrets=[]
     schema_correction_used = False
+    format_review='局部复核首轮输出未通过格式校验，重答可能遗漏相关操作，请核对原视频。'
     for detail in details[:6]:
         if cancelled():
             raise ValueError('video_cancelled')
@@ -25,6 +27,7 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
             continue
         payload = {'phase':'whole-observe', 'frames':selected, 'image_frames':selected,
                    'detail_frames':[detail], 'duration_ms':duration}
+        pending_questions=[];pending_multiple=False
         # One extra schema correction for the entire probe, not per detail.
         # Never turn malformed output into an empty successful observation.
         while True:
@@ -33,6 +36,12 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
                 result = ai.run_ai_skill('ui_video_observe', payload, version='touch-target',
                     image_assets=[by_name[f['frame_id']] for f in selected]+[by_name[detail['frame_id']]],
                     timeout=120, retry_count=0, max_tokens=5000, repair_invalid_json=False)
+                if cancelled():raise ValueError('video_cancelled')
+                if isinstance(result,dict) and isinstance(result.get('events'),list):
+                    for event in result['events']:
+                        if isinstance(event,dict) and event.get('action') in {'aiInput','navigateBack'} and isinstance(event.get('value'),str) and event['value']:
+                            probe_secrets.append(_text(event['value'],4000))
+                checked = validate_analysis(_bind_whole_evidence(result, selected), selected, duration,probe_secrets)
                 break
             except ai.TouchTargetProviderTimeoutError:
                 if cancelled():raise ValueError('video_cancelled') from None
@@ -44,11 +53,37 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
                 if cancelled():raise ValueError('video_cancelled') from None
                 if schema_correction_used:raise
                 schema_correction_used = True
+                pending_questions.append(format_review)
                 payload['validation_feedback'] = error.model_feedback + ' 重新核对同一组原帧，按规定JSON结构输出；不补造操作，不省略events字段。'
+            except ValueError as error:
+                if cancelled():raise ValueError('video_cancelled') from None
+                if getattr(error,'action_reason',None)!='navigate_back_contract' or schema_correction_used:raise
+                # Root and event questions are unverified, but must not vanish
+                # when a malformed action receives its single format retry.
+                roots=result.get('uncertainties')
+                events=result.get('events')
+                _check_question_count(roots,30)
+                if len(events)>50:raise ValueError('video_model_invalid')
+                pending_questions.extend(_text(q) for q in roots if q)
+                for event in events:
+                    if not isinstance(event,dict) or not isinstance(event.get('uncertainties',[]),list):
+                        raise ValueError('video_model_invalid')
+                    _check_question_count(event.get('uncertainties',[]),10)
+                    pending_questions.extend('局部复核待核对：'+_text(q) for q in event.get('uncertainties',[]) if q)
+                # A corrected reply may omit other candidates from the invalid
+                # reply. Do not repeat unverified actions or their content;
+                # require a human to check the recording before execution.
+                pending_questions.append(format_review)
+                pending_questions=list(dict.fromkeys(_redact_question(q,probe_secrets) for q in pending_questions))
+                _check_question_count(pending_questions,30)
+                pending_multiple|=result['multiple_scenarios']
+                schema_correction_used = True
+                payload['validation_feedback']='上次返回动作格式不符合合同。仅在原帧支持主动返回时使用navigateBack，target必须为上一页面、value必须为空字符串；不能确认时保留疑问，不编造动作。重新核对同一组原帧。'
         if cancelled():
             raise ValueError('video_cancelled')
-        checked = validate_analysis(_bind_whole_evidence(result, selected), selected, duration)
-        root_questions=list(checked['uncertainties'])
+        root_questions=list(dict.fromkeys(checked['uncertainties']+[_redact_question(q,probe_secrets) for q in pending_questions]))
+        _check_question_count(root_questions,30)
+        checked['multiple_scenarios']|=pending_multiple
         # A question about a non-parent event is still grounded only in that
         # event's referenced frame, never in the parent's detail image.
         for event in checked['events']:
@@ -99,6 +134,12 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
         if (event['action'] == 'aiTap' and not event['uncertainties'] and
                 parent['frame_id'] in event['frame_refs'] and event['target']):
             hints.append({'frame_id':parent['frame_id'], 'target':event['target'],'observation':event['observation']})
+    # Later details can identify input strings previously mentioned in hints.
+    for hint in hints:
+        for key in ('target','observation'):
+            if key in hint and not (key=='target' and hint.get('action')=='navigateBack' and hint[key]=='上一页面'):
+                hint[key]=_redact_question(hint[key],probe_secrets)
+        if 'questions' in hint:hint['questions']=[_redact_question(q,probe_secrets) for q in hint['questions']]
     return hints
 
 

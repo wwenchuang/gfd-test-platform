@@ -387,8 +387,11 @@ def test_probe_schema_correction_is_bounded_and_keeps_pixels(monkeypatch,always_
     monkeypatch.setattr(targets.ai,'run_ai_skill',call)
     if always_invalid:
         with pytest.raises(targets.ai.SkillSchemaError):targets.probe(frames,[detail],assets,1000,lambda:False)
-    else:assert targets.probe(frames,[detail],assets,1000,lambda:False)==[{
-        'frame_id':'frame-001','frame_refs':['frame-001','frame-002'],'scope':'probe','kind':'unresolved_observation','questions':['无可靠点击'],'multiple_scenarios':False}]
+    else:
+        hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+        assert len(hints)==1 and hints[0]['kind']=='unresolved_observation'
+        assert '无可靠点击' in hints[0]['questions']
+        assert any('首轮' in q and '遗漏' in q for q in hints[0]['questions'])
     assert len(calls)==2 and calls[0][1]==calls[1][1]
     assert calls[0][0]['frames']==calls[1][0]['frames']
     assert 'events' in calls[1][0]['validation_feedback']
@@ -651,3 +654,126 @@ def test_probe_root_and_event_questions_keep_full_trusted_refs_when_redacted(mon
     assert any('事件[输入内容未保存]不确定' in q for q in checked['uncertainties'])
     assert any('整体[输入内容未保存]不确定' in q for q in checked['uncertainties'])
     assert all('frame-' not in q for q in checked['uncertainties'])
+
+
+@pytest.mark.parametrize('invalid_field',['target','value'])
+def test_probe_retries_only_navigation_contract_with_sticky_questions(monkeypatch,invalid_field):
+    import copy
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id'],'timestamp_ms':f['timestamp_ms']} for f in frames+[detail]]
+    nav={'action':'navigateBack','target':'姓名牌' if invalid_field=='target' else '上一页面',
+         'value':'secret-value' if invalid_field=='value' else '','frame_refs':['frame-002'],
+         'observation':'页面返回','uncertainties':['用户输入secret-value需要核对']}
+    typed={'action':'aiInput','target':'名称','value':'secret-value','frame_refs':['frame-003'],
+           'observation':'输入','uncertainties':[]}
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(copy.deepcopy((payload,kw['image_assets'])))
+        if len(calls)==1:return {'events':[nav,typed],'uncertainties':['根问题secret-value'],'multiple_scenarios':True}
+        assert '姓名牌' not in repr(payload) and 'secret-value' not in repr(payload)
+        assert 'navigateBack' in payload['validation_feedback'] and '上一页面' in payload['validation_feedback']
+        corrected={**nav,'target':'上一页面','value':'','uncertainties':[]}
+        return {'events':[corrected],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    assert len(calls)==2 and calls[0][1]==calls[1][1] and calls[0][0]['frames']==calls[1][0]['frames']
+    assert 'secret-value' not in repr(hints)
+    unresolved=[h for h in hints if h.get('kind')=='unresolved_observation']
+    assert unresolved and unresolved[0]['multiple_scenarios'] is True
+    assert any('根问题' in q for q in unresolved[0]['questions'])
+    assert any('用户输入' in q for q in unresolved[0]['questions'])
+    assert any(h.get('action')=='navigateBack' for h in hints)
+
+
+@pytest.mark.parametrize('mutation',['other_action','dismiss_target','bad_refs'])
+def test_probe_does_not_retry_unrelated_errors(monkeypatch,mutation):
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]];calls=[]
+    event={'action':'navigateBack','target':'上一页面','value':'','frame_refs':['frame-002'],
+           'observation':'返回页面','uncertainties':[]}
+    if mutation=='other_action':event['action']='fakeAction'
+    if mutation=='dismiss_target':event.update(action='dismissKeyboard',target='名称')
+    if mutation=='bad_refs':event['frame_refs']=['unknown']
+    def model(*a,**kw):calls.append(1);return {'events':[event],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    with pytest.raises(ValueError):targets.probe(frames,[detail],assets,1000,lambda:False)
+    assert len(calls)==1
+
+
+def test_probe_navigation_contract_retry_fails_closed_after_second_invalid(monkeypatch):
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]];calls=[]
+    event={'action':'navigateBack','target':'错误目标','value':'','frame_refs':['frame-002'],'observation':'返回','uncertainties':[]}
+    def model(*a,**kw):calls.append(1);return {'events':[event],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_action_invalid'):targets.probe(frames,[detail],assets,1000,lambda:False)
+    assert len(calls)==2
+
+
+def test_probe_navigation_retry_uses_shared_schema_budget(monkeypatch):
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    details=[{'frame_id':'frame-001-detail','source_frame_id':'frame-001'},
+             {'frame_id':'frame-002-detail','source_frame_id':'frame-002'}]
+    assets=[{'name':f['frame_id']} for f in frames+details];calls=[]
+    event={'action':'navigateBack','target':'错误目标','value':'','frame_refs':['frame-002'],'observation':'返回','uncertainties':[]}
+    def model(*a,**kw):
+        calls.append(1)
+        if len(calls)==1:raise targets.ai.SkillSchemaError('$.events','required')
+        if len(calls)==2:return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+        return {'events':[event],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_action_invalid'):targets.probe(frames,details,assets,1000,lambda:False)
+    assert len(calls)==3
+
+
+def test_probe_invalid_navigation_value_redacts_prior_question(monkeypatch):
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]];calls=[]
+    def model(*a,**kw):
+        calls.append(1)
+        event={'action':'navigateBack','target':'上一页面','value':'secret-value' if len(calls)==1 else '',
+               'frame_refs':['frame-002'],'observation':'返回','uncertainties':[]}
+        return {'events':[event],'uncertainties':['确认secret-value'] if len(calls)==1 else [],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    assert len(calls)==2 and 'secret-value' not in repr(hints)
+    assert '[输入内容未保存]' in repr(hints)
+
+
+def test_probe_cancelled_after_invalid_response_does_not_retry(monkeypatch):
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]];state={'cancelled':False,'calls':0}
+    def model(*a,**kw):
+        state.update(cancelled=True,calls=state['calls']+1)
+        return {'events':[{'action':'navigateBack','target':'错误目标','value':'','frame_refs':['frame-002'],
+                           'observation':'返回','uncertainties':[]}], 'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    with pytest.raises(ValueError,match='video_cancelled'):
+        targets.probe(frames,[detail],assets,1000,lambda:state['cancelled'])
+    assert state['calls']==1
+
+
+@pytest.mark.parametrize('prior_click',[False,True])
+def test_probe_invalid_navigation_retry_cannot_silently_drop_initial_candidates(monkeypatch,prior_click):
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]];calls=[]
+    click={'action':'aiTap','target':'private target','value':'','frame_refs':['frame-001'],
+           'observation':'private observation','uncertainties':[]}
+    bad={'action':'navigateBack','target':'private name','value':'','frame_refs':['frame-002'],
+         'observation':'private return','uncertainties':[]}
+    def model(*a,**kw):
+        calls.append(1)
+        return {'events':([click] if prior_click else [])+[bad] if len(calls)==1 else [],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    assert len(calls)==2 and len(hints)==1 and hints[0]['kind']=='unresolved_observation'
+    assert 'private' not in repr(hints)
+    questions=targets.bind_uncertain_hints([],hints)
+    assert any('首轮' in q and '遗漏' in q and '核对' in q for q in questions)
