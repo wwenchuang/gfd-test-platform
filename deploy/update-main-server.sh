@@ -533,6 +533,19 @@ fi
 git pull --ff-only "${REMOTE}" "${BRANCH}"
 DEPLOY_REVISION="$(git rev-parse HEAD)"
 
+check_static_sources() {
+  local static_sources=("${SOURCE_DIR}/task-manager.html" "${SOURCE_DIR}/trace-viewer.html")
+  local source
+  for source in "${SOURCE_DIR}/assets" "${SOURCE_DIR}/css" "${SOURCE_DIR}/js" "${SOURCE_DIR}/api-test"; do
+    if [ -e "${source}" ] || [ -L "${source}" ]; then static_sources+=("${source}"); fi
+  done
+  python3 "${SOURCE_DIR}/deploy/static_evidence_guard.py" "${static_sources[@]}"
+}
+
+# Catch unsafe source before a build or service/container side effects. Checkout
+# and fetch have already occurred; generated assets are checked again below.
+check_static_sources
+
 if [ "${BUILD_API_TEST}" = "1" ]; then
   if ! command -v npm >/dev/null 2>&1; then
     echo "BUILD_API_TEST=1 但服务器缺少 npm" >&2
@@ -540,6 +553,7 @@ if [ "${BUILD_API_TEST}" = "1" ]; then
   fi
   npm --prefix api-testing-ui install
   npm --prefix api-testing-ui run build
+  check_static_sources
 fi
 
 capture_sonic_container_state
@@ -547,8 +561,15 @@ configure_sonic_restart_policy
 migrate_legacy_task_launchers
 
 TASK_SERVICE_NEEDS_RESTORE=1
-APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEPLOY_REVISION}" run_as_root bash deploy/install-server.sh
-TASK_SERVICE_NEEDS_RESTORE=0
+if APP_DIR="${APP_DIR}" WEB_DIR="${WEB_DIR}" PORT="${PORT}" RELEASE_REVISION="${DEPLOY_REVISION}" run_as_root bash deploy/install-server.sh; then
+  TASK_SERVICE_NEEDS_RESTORE=0
+else
+  install_status=$?
+  # 79 means the installer rejected before its first side effect; starting the
+  # service from the EXIT trap would change state for an untouched service.
+  if [ "${install_status}" -eq 79 ]; then TASK_SERVICE_NEEDS_RESTORE=0; fi
+  exit "${install_status}"
+fi
 
 restart_task_service_cleanly
 restart_service_if_present midscene-api-worker

@@ -18,6 +18,7 @@ import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
 import { captureApiExecutionScope, confirmApiExecution, matchesApiExecutionScope, type ApiExecutionScope } from '../utils/executionConfirmation'
 import { endpointGroupName } from '../utils/endpointGroups'
 import { inferTestApplicationBusiness } from '../utils/testApplications'
+import { useRawEditorGuard } from '../utils/rawEditorGuard'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -28,10 +29,18 @@ const route = useRoute()
 
 const selectedIds = ref<string[]>([])
 const activeEndpoint = ref<ApiEndpoint | null>(null)
+const caseEditor = ref<{ hasUnappliedRaw(): boolean; discardUnappliedRaw(): void } | null>(null)
+const rawEditorGuard = useRawEditorGuard(caseEditor)
+function requireAppliedRaw(): boolean {
+  if (!rawEditorGuard.hasRaw()) return true
+  localError.value = '原始 JSON 有未应用的内容，请先修正或放弃后再操作。'
+  return false
+}
 const debugOpen = ref(false)
 const executionStarting = ref(false)
 const localError = ref('')
 const sourceLoadError = ref('')
+const sourceReadPending = ref(false)
 let sourceLoadGeneration = 0
 let manualDetailGeneration = 0
 let taskSelectionGeneration = 0
@@ -45,7 +54,10 @@ const taskReadNote = ref('')
 
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
-const allCaseVersions = computed(() => Object.values(cases.versions))
+const currentSourceReady = computed(() => Boolean(
+  context.sourceRevisionId && cases.draftScopeReady && cases.draftSourceRevisionId === context.sourceRevisionId,
+))
+const allCaseVersions = computed(() => currentSourceReady.value ? Object.values(cases.versions) : [])
 const caseCountByEndpoint = computed(() => {
   const counts: Record<string, number> = {}
   for (const version of allCaseVersions.value) {
@@ -78,7 +90,7 @@ const aiJobStateLabel = computed(() => {
     completed: '生成完成',
     partial: '部分生成完成',
     failed: '生成失败',
-    failed_gateway: 'AI 服务调用失败',
+    failed_gateway: 'AI 生成失败',
     failed_validation: '生成结果校验失败',
   }[cases.aiJob.state]
 })
@@ -143,6 +155,7 @@ function routeValue(value: unknown): string {
 
 async function loadSource(sourceRevisionId: string, preserveDrafts = false): Promise<void> {
   const generation = ++sourceLoadGeneration
+  sourceReadPending.value = true
   try {
     const caseLoad = preserveDrafts
       ? cases.loadSavedCases(sourceRevisionId, undefined, { preserveDrafts: true })
@@ -150,6 +163,8 @@ async function loadSource(sourceRevisionId: string, preserveDrafts = false): Pro
     const results = await Promise.all([assets.load(sourceRevisionId), caseLoad])
     if (generation !== sourceLoadGeneration || sourceRevisionId !== context.sourceRevisionId) return
     if (results.includes(false)) {
+      activeEndpoint.value = null
+      endpointPickerOpen.value = false
       sourceLoadError.value = '读取期间数据发生变化，请重新读取用例。'
       return
     }
@@ -160,16 +175,22 @@ async function loadSource(sourceRevisionId: string, preserveDrafts = false): Pro
     selectedIds.value = selectedIds.value.filter(item => available.has(item))
   } catch (error) {
     if (generation !== sourceLoadGeneration || sourceRevisionId !== context.sourceRevisionId) return
+    activeEndpoint.value = null
+    endpointPickerOpen.value = false
     sourceLoadError.value = error instanceof Error ? error.message : '无法读取接口和用例'
+  } finally {
+    if (generation === sourceLoadGeneration) sourceReadPending.value = false
   }
 }
 
 function changeProject(projectId: string | null): void {
-  if (projectId === context.projectId) return
+  if (projectId === context.projectId || !rawEditorGuard.confirmDiscardRaw()) return
   manualDetailGeneration += 1
   sourceLoadGeneration += 1
+  sourceReadPending.value = false
   assets.invalidateLoad()
   cases.invalidateLoad()
+  cases.hideDraftScope()
   sourceLoadError.value = ''
   localError.value = ''
   context.selectProject(projectId)
@@ -185,12 +206,14 @@ function changeProject(projectId: string | null): void {
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
-  if (sourceRevisionId === context.sourceRevisionId) return
+  if (sourceRevisionId === context.sourceRevisionId || !rawEditorGuard.confirmDiscardRaw()) return
   manualDetailGeneration += 1
   sourceLoadGeneration += 1
+  sourceReadPending.value = false
   assets.invalidateLoad()
   assets.endpoints = []
   cases.invalidateLoad()
+  cases.hideDraftScope()
   sourceLoadError.value = ''
   localError.value = ''
   context.selectSourceRevision(sourceRevisionId)
@@ -229,21 +252,34 @@ async function saveScope(): Promise<void> {
   }
 }
 
-function editCaseVersion(version: CaseVersion): void {
+function confirmDraftReplacement(endpointId: string, replacing: boolean, confirmed = false): boolean {
+  const rawWillBeLost = Boolean(caseEditor.value?.hasUnappliedRaw?.()
+    && (activeEndpoint.value?.id !== endpointId || replacing))
+  const dirtyWillBeLost = replacing && Boolean(cases.dirtyDrafts[endpointId])
+  if ((rawWillBeLost || dirtyWillBeLost) && !confirmed
+      && !window.confirm('存在未保存的修改或未应用的原始 JSON。继续将丢失这些内容，确定继续吗？')) return false
+  if (rawWillBeLost) caseEditor.value?.discardUnappliedRaw?.()
+  return true
+}
+
+function editCaseVersion(version: CaseVersion, replaceConfirmed = false): boolean {
   manualDetailGeneration += 1
   const endpointId = version.current_endpoint_id || version.endpoint_id
   const endpoint = assets.endpoints.find(item => item.id === endpointId)
   if (!endpoint) {
     localError.value = '该用例对应的接口不在当前接口版本中'
-    return
+    return false
   }
+  const replacing = cases.activeVersionByEndpoint[endpoint.id] !== version.id
+  if (!confirmDraftReplacement(endpoint.id, replacing, replaceConfirmed)) return false
   activeEndpoint.value = endpoint
   mobileDetailOpen.value = true
-  if (version.id !== activeVersionId.value) {
+  if (replacing) {
     cases.clearDebug()
     debugOpen.value = false
     cases.setActiveVersion(endpoint.id, version.id)
   }
+  return true
 }
 
 function editGeneratedPreview(preview: GeneratedCasePreview): void {
@@ -253,6 +289,13 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
     localError.value = '该候选用例对应的接口不在当前接口版本中'
     return
   }
+  if (cases.activeGeneratedPreviewId === preview.id) {
+    if (!confirmDraftReplacement(endpoint.id, false)) return
+    activeEndpoint.value = endpoint
+    mobileDetailOpen.value = true
+    return
+  }
+  if (!confirmDraftReplacement(endpoint.id, true)) return
   activeEndpoint.value = endpoint
   mobileDetailOpen.value = true
   cases.setDraftFromGeneratedPreview(preview.id)
@@ -260,20 +303,26 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
 }
 
 async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
+  if (!currentSourceReady.value) {
+    localError.value = '当前来源尚未读取成功，请重新读取后再创建用例'
+    return
+  }
   const generation = ++manualDetailGeneration
   const sourceGeneration = sourceLoadGeneration
   const assetsGeneration = assets.loadGeneration
+  const draftScopeGeneration = cases.draftScopeGeneration
   const projectId = context.projectId
   const sourceRevisionId = context.sourceRevisionId
   localError.value = ''
   const detailed = await assets.ensureEndpointDetail(endpoint.id)
   if (generation !== manualDetailGeneration || sourceGeneration !== sourceLoadGeneration
-      || assetsGeneration !== assets.loadGeneration
-      || projectId !== context.projectId || sourceRevisionId !== context.sourceRevisionId) return
+      || assetsGeneration !== assets.loadGeneration || draftScopeGeneration !== cases.draftScopeGeneration
+      || projectId !== context.projectId || sourceRevisionId !== context.sourceRevisionId || !currentSourceReady.value) return
   if (!detailed) {
     localError.value = assets.detailError || '接口详情读取失败，请重试'
     return
   }
+  if (!confirmDraftReplacement(detailed.id, true)) return
   activeEndpoint.value = detailed
   const draft = cases.startManualDraft(detailed)
   const ownership = inferTestApplicationBusiness([endpointGroupName(detailed), ...detailed.tags])
@@ -287,6 +336,7 @@ async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
 }
 
 async function generateBasicForEndpoint(endpoint: ApiEndpoint): Promise<void> {
+  if (!currentSourceReady.value) return
   if (!context.environmentRevisionId) {
     localError.value = '请先选择执行环境'
     return
@@ -297,7 +347,8 @@ async function generateBasicForEndpoint(endpoint: ApiEndpoint): Promise<void> {
   localError.value = ''
   try {
     const previews = await cases.previewBasicPositive([endpoint.id], context.environmentRevisionId, task.id)
-    if (previews[0]) editGeneratedPreview(previews[0])
+    if (previews[0] && !rawEditorGuard.hasRaw() && !cases.dirtyDrafts[previews[0].endpoint_id]
+        && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) editGeneratedPreview(previews[0])
     endpointPickerOpen.value = false
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '基础正向候选生成失败'
@@ -305,6 +356,7 @@ async function generateBasicForEndpoint(endpoint: ApiEndpoint): Promise<void> {
 }
 
 async function generateAiForEndpoint(endpoint: ApiEndpoint): Promise<void> {
+  if (!currentSourceReady.value) return
   if (!context.environmentRevisionId) {
     localError.value = '请先选择执行环境'
     return
@@ -321,8 +373,13 @@ async function generateAiForEndpoint(endpoint: ApiEndpoint): Promise<void> {
   if (cases.aiError) return
   const generatedId = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
   const version = generatedId ? cases.versions[generatedId] : null
-  if (version) editCaseVersion(version)
+  if (version && !rawEditorGuard.hasRaw() && !cases.dirtyDrafts[version.current_endpoint_id || version.endpoint_id]
+      && !(activeEndpoint.value && cases.dirtyDrafts[activeEndpoint.value.id])) editCaseVersion(version)
   endpointPickerOpen.value = false
+}
+
+function openEndpointPicker(): void {
+  if (currentSourceReady.value) endpointPickerOpen.value = true
 }
 
 function updateDraft(draft: CaseDraft): void {
@@ -333,6 +390,7 @@ function updateDraft(draft: CaseDraft): void {
 }
 
 async function saveDraft() {
+  if (!requireAppliedRaw()) return
   if (!activeEndpoint.value) return null
   localError.value = ''
   try {
@@ -347,11 +405,15 @@ async function saveDraft() {
 }
 
 async function saveGeneratedPreview(preview: GeneratedCasePreview): Promise<void> {
+  if (!requireAppliedRaw()) return
+  const selectionGeneration = context.selectionGeneration
+  const detailGeneration = manualDetailGeneration
   localError.value = ''
   try {
     const draft = cases.activeGeneratedPreviewId === preview.id ? activeDraft.value || preview.case : preview.case
     const version = await cases.saveGeneratedPreview(preview.id, draft)
-    editCaseVersion(version)
+    if (selectionGeneration !== context.selectionGeneration || detailGeneration !== manualDetailGeneration) return
+    if (mayOpenSavedVersion(version)) editCaseVersion(version)
     if (context.projectId) await tasks.restore(context.projectId)
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '候选用例保存失败'
@@ -359,26 +421,40 @@ async function saveGeneratedPreview(preview: GeneratedCasePreview): Promise<void
 }
 
 async function saveAllGeneratedPreviews(): Promise<void> {
+  if (!requireAppliedRaw()) return
+  const selectionGeneration = context.selectionGeneration
+  const detailGeneration = manualDetailGeneration
   localError.value = ''
   try {
     const overrides = cases.activeGeneratedPreviewId && activeDraft.value
       ? { [cases.activeGeneratedPreviewId]: activeDraft.value }
       : {}
     const versions = await cases.saveAllGeneratedPreviews(overrides)
-    if (versions[0]) editCaseVersion(versions[0])
+    if (selectionGeneration !== context.selectionGeneration || detailGeneration !== manualDetailGeneration) return
+    if (versions[0] && mayOpenSavedVersion(versions[0])) editCaseVersion(versions[0])
     if (context.projectId) await tasks.restore(context.projectId)
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '候选用例批量保存失败'
   }
 }
 
+function mayOpenSavedVersion(version: CaseVersion): boolean {
+  if (rawEditorGuard.hasRaw()) return false
+  const endpointId = activeEndpoint.value?.id
+  if (!endpointId || !cases.dirtyDrafts[endpointId]) return true
+  return endpointId === (version.current_endpoint_id || version.endpoint_id)
+    && cases.activeVersionByEndpoint[endpointId] === version.id
+}
+
 function discardGeneratedPreview(previewId: string): void {
   const wasActive = cases.activeGeneratedPreviewId === previewId
+  if (wasActive && !rawEditorGuard.confirmDiscardRaw()) return
   cases.discardGeneratedPreview(previewId)
   if (wasActive && activeEndpoint.value && !cases.drafts[activeEndpoint.value.id]) activeEndpoint.value = null
 }
 
 async function deleteCaseVersion(version: CaseVersion): Promise<void> {
+  if (activeEndpoint.value?.id === (version.current_endpoint_id || version.endpoint_id) && !requireAppliedRaw()) return
   const confirmed = window.confirm(`删除用例“${version.name}”？历史执行记录和已采纳基线证据会保留。`)
   if (!confirmed) return
   localError.value = ''
@@ -459,6 +535,10 @@ async function runCaseVersion(version: CaseVersion): Promise<void> {
 }
 
 async function runCaseVersionOnce(version: CaseVersion): Promise<void> {
+  if (rawEditorGuard.hasRaw()) {
+    localError.value = '原始 JSON 有未应用的内容，请先修正或放弃后再调试。'
+    return
+  }
   const scope = captureApiExecutionScope(context)
   if (!scope) {
     localError.value = '请先选择接口项目、接口版本和执行环境'
@@ -486,7 +566,7 @@ async function runCaseVersionOnce(version: CaseVersion): Promise<void> {
     localError.value = '范围已变化，调试未开始，请重新确认。'
     return
   }
-  editCaseVersion(version)
+  if (!editCaseVersion(version, true)) return
   if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
   let prepared
   try {
@@ -501,6 +581,17 @@ async function runCaseVersionOnce(version: CaseVersion): Promise<void> {
     localError.value = '草稿已保存，但调试未开始：范围已变化，请重新确认。'
     return
   }
+  const savedDraftIdentity = cases.draftIdentities[endpointId] || 0
+  const savedPreviewId = cases.activeGeneratedPreviewId
+  const savedDraftIsCurrent = () => activeEndpoint.value?.id === endpointId
+    && !cases.dirtyDrafts[endpointId] && !cases.missingDraftVersionByEndpoint[endpointId]
+    && cases.activeVersionByEndpoint[endpointId] === prepared.id
+    && (cases.draftIdentities[endpointId] || 0) === savedDraftIdentity
+    && cases.activeGeneratedPreviewId === savedPreviewId
+  if (!savedDraftIsCurrent()) {
+    localError.value = '草稿已保存，但调试未开始：当前编辑内容或选择已变化，请重新确认。'
+    return
+  }
   const task = await saveCurrentTask(scope, confirmedTaskGeneration)
   if (!task) {
     localError.value = `草稿已保存，但调试未开始：${localError.value || tasks.error || '测试任务保存失败'}`
@@ -508,6 +599,10 @@ async function runCaseVersionOnce(version: CaseVersion): Promise<void> {
   }
   if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== task.executionSelectionGeneration) {
     localError.value = '草稿已保存，但调试未开始：范围已变化，请重新确认。'
+    return
+  }
+  if (!savedDraftIsCurrent()) {
+    localError.value = '草稿已保存，但调试未开始：当前编辑内容或选择已变化，请重新确认。'
     return
   }
   cases.debugExecution = null
@@ -542,6 +637,7 @@ async function submitDebug(): Promise<void> {
 }
 
 async function submitDebugOnce(): Promise<void> {
+  if (!requireAppliedRaw()) return
   const scope = captureApiExecutionScope(context)
   if (!scope || !activeEndpoint.value) return
   const confirmedTaskGeneration = taskSelectionGeneration
@@ -573,6 +669,17 @@ async function submitDebugOnce(): Promise<void> {
     localError.value = '草稿已保存，但调试未开始：范围已变化，请重新确认。'
     return
   }
+  const savedDraftIdentity = cases.draftIdentities[endpointId] || 0
+  const savedPreviewId = cases.activeGeneratedPreviewId
+  const savedDraftIsCurrent = () => activeEndpoint.value?.id === endpointId
+    && !cases.dirtyDrafts[endpointId] && !cases.missingDraftVersionByEndpoint[endpointId]
+    && cases.activeVersionByEndpoint[endpointId] === version.id
+    && (cases.draftIdentities[endpointId] || 0) === savedDraftIdentity
+    && cases.activeGeneratedPreviewId === savedPreviewId
+  if (!savedDraftIsCurrent()) {
+    localError.value = '草稿已保存，但调试未开始：当前编辑内容或选择已变化，请重新确认。'
+    return
+  }
   if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
   const task = await saveCurrentTask(scope, confirmedTaskGeneration)
   if (!task) {
@@ -581,6 +688,10 @@ async function submitDebugOnce(): Promise<void> {
   }
   if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== task.executionSelectionGeneration) {
     localError.value = '草稿已保存，但调试未开始：范围已变化，请重新确认。'
+    return
+  }
+  if (!savedDraftIsCurrent()) {
+    localError.value = '草稿已保存，但调试未开始：当前编辑内容或选择已变化，请重新确认。'
     return
   }
   cases.debugExecution = null
@@ -639,6 +750,7 @@ function openAiGenerationResults(): void {
 }
 
 async function refreshCases(): Promise<void> {
+  if (!rawEditorGuard.confirmDiscardRaw()) return
   if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, true)
 }
 
@@ -694,7 +806,7 @@ function defaultTaskName(): string {
         <p class="page-subtitle">这里保存测试用例及其版本。调试通过后需采纳为基线，才能加入任务回归；“已调试”不代表通过，“已基线”不代表本轮已执行。</p>
       </div>
       <div class="page-toolbar-actions">
-        <button data-testid="open-case-endpoint-picker" class="primary-command" type="button" :disabled="!context.sourceRevisionId" @click="endpointPickerOpen = true"><Plus :size="16" />从接口创建用例</button>
+        <button data-testid="open-case-endpoint-picker" class="primary-command" type="button" :disabled="!currentSourceReady" @click="openEndpointPicker"><Plus :size="16" />从接口创建用例</button>
         <button class="icon-command" type="button" title="重新读取用例" :disabled="!context.sourceRevisionId || assets.state === 'loading'" @click="refreshCases"><RefreshCw :size="18" /></button>
       </div>
     </header>
@@ -715,7 +827,7 @@ function defaultTaskName(): string {
       @save="saveScope"
     />
     <CaseEndpointPicker
-      v-if="endpointPickerOpen"
+      v-if="endpointPickerOpen && currentSourceReady"
       :endpoints="assets.endpoints"
       :case-count-by-endpoint="caseCountByEndpoint"
       :busy="cases.saving || cases.basicGenerating || cases.aiPolling"
@@ -725,7 +837,7 @@ function defaultTaskName(): string {
       @generate-ai="generateAiForEndpoint"
     />
     <section
-      v-if="cases.aiJob"
+      v-if="currentSourceReady && cases.aiJob"
       :class="['case-generation-status', { failed: aiJobFailed }]"
       data-testid="case-generation-status"
       aria-live="polite"
@@ -761,7 +873,7 @@ function defaultTaskName(): string {
           :disabled="cases.aiPolling"
           @click="cases.resumeAiJob()"
         >继续查看进度</button>
-        <button v-else-if="aiJobFailed" class="secondary-command" type="button" @click="endpointPickerOpen = true">重新选择接口</button>
+        <button v-else-if="aiJobFailed" class="secondary-command" type="button" @click="openEndpointPicker">重新选择接口</button>
       </div>
     </section>
     <p v-if="context.readErrors.workspace" class="inline-error" role="alert">工作区：{{ context.readErrors.workspace }}。 <button data-testid="retry-workspace" type="button" :disabled="context.loading" @click="retryWorkspaceRead">重试工作区</button></p>
@@ -779,7 +891,7 @@ function defaultTaskName(): string {
       <CaseListPanel
         :endpoints="assets.endpoints"
         :versions="allCaseVersions"
-        :generated-previews="cases.generatedPreviews"
+        :generated-previews="currentSourceReady ? cases.generatedPreviews : []"
         :active-version-id="activeVersionId"
         :active-preview-id="cases.activeGeneratedPreviewId"
         :selected-endpoint-ids="selectedIds"
@@ -795,7 +907,7 @@ function defaultTaskName(): string {
         @save-all-previews="saveAllGeneratedPreviews"
         @update-version-group="updateCaseGroup"
         @update-version-groups="updateCaseGroups"
-        @open-endpoints="endpointPickerOpen = true"
+        @open-endpoints="openEndpointPicker"
         @open-debug-history="openCaseDebugHistory"
         @open-baseline="openCaseBaseline"
       />
@@ -815,8 +927,10 @@ function defaultTaskName(): string {
         </header>
         <div class="management-detail-body">
           <EndpointDetail :endpoint="activeEndpoint" @open-history="openEndpointHistory" />
+          <fieldset v-if="activeDraft" data-testid="case-edit-guard" class="case-edit-guard" :disabled="sourceReadPending">
+            <p v-if="sourceReadPending" role="status">正在重新读取，请稍候再编辑。</p>
           <CaseEditor
-            v-if="activeDraft"
+            ref="caseEditor"
             :model-value="activeDraft"
             :draft-identity="`${activeEndpoint?.id || ''}:${activeVersionId}:${cases.activeGeneratedPreviewId || ''}`"
             :editing-version="cases.versions[activeVersionId] || null"
@@ -835,6 +949,7 @@ function defaultTaskName(): string {
             @save="saveDraft"
             @debug="submitDebug"
           />
+          </fieldset>
           <div v-else class="state-message center-empty">从左侧选择一个用例后，可查看接口信息并编辑测试数据。</div>
         </div>
       </main>
@@ -859,3 +974,7 @@ function defaultTaskName(): string {
     />
   </section>
 </template>
+
+<style scoped>
+.case-edit-guard { border: 0; padding: 0; margin: 0; min-width: 0; }
+</style>
