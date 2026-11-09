@@ -1184,6 +1184,24 @@ function delay(milliseconds: number): Promise<void> {
 
 function aiJobFailureMessage(job: AiJob): string {
   if (!['failed', 'failed_gateway', 'failed_validation'].includes(job.state)) return ''
+  if (job.state === 'failed_gateway') {
+    const failedBatches = job.batches.filter(batch => batch.state === 'failed_gateway')
+    const validationFailed = job.batches.some(batch => batch.state === 'failed_validation' || batch.validation_errors?.length)
+    if (failedBatches.length && validationFailed) {
+      const allTimeout = failedBatches.every(batch => batch.error_code === 'gateway_timeout')
+      const allEnqueue = failedBatches.every(batch => batch.error_code === 'enqueue_failed')
+      const gatewayMessage = allTimeout ? '部分批次模型服务或连接等待超时'
+        : allEnqueue ? '部分批次未能进入执行队列' : '部分批次模型调用或提交失败'
+      return `${gatewayMessage}，并有生成结果未通过校验；请检查模型服务及测试意图后重试`
+    }
+    const allBatchesFailed = failedBatches.length > 0 && failedBatches.length === job.batches.length
+    if (allBatchesFailed && failedBatches.every(batch => batch.error_code === 'enqueue_failed')) {
+      return '任务未能进入执行队列，未发起模型调用；请稍后重试或联系管理员检查任务队列'
+    }
+    if (allBatchesFailed && failedBatches.every(batch => batch.error_code === 'gateway_timeout')) {
+      return '模型服务或连接等待超时，本次未生成新草稿；请稍后重试或联系管理员检查模型服务'
+    }
+  }
   const issues = job.batches.flatMap(batch => batch.validation_errors || [])
   const issue = issues.find(item => typeof item.message === 'string')
   if (issue?.code === 'missing_endpoint_coverage') {
