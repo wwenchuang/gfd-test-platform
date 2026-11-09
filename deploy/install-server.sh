@@ -79,6 +79,15 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+# Scan before package installation, service changes, or copying public files.
+static_sources=("${SRC_DIR}/task-manager.html" "${SRC_DIR}/trace-viewer.html")
+for source in "${SRC_DIR}/assets" "${SRC_DIR}/css" "${SRC_DIR}/js" "${SRC_DIR}/api-test"; do
+  if [ -e "${source}" ] || [ -L "${source}" ]; then static_sources+=("${source}"); fi
+done
+# Reserve 79 exclusively for rejection before any installer side effect.
+python3 "${SCRIPT_DIR}/static_evidence_guard.py" "${static_sources[@]}" || exit 79
+trap 'status=$?; if [ "${status}" -eq 79 ]; then exit 80; fi' EXIT
+
 if ! python3 - <<'PY' >/dev/null 2>&1
 import pypdf
 PY
@@ -155,6 +164,7 @@ install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/package-serv
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/update-main-server.sh" "${APP_DIR}/deploy/update-main-server.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/configure-sonic-restart.sh" "${APP_DIR}/deploy/configure-sonic-restart.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/sync-docker-web.sh" "${APP_DIR}/deploy/sync-docker-web.sh"
+install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/static_evidence_guard.py" "${APP_DIR}/deploy/static_evidence_guard.py"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/cleanup-server-packages.sh" "${APP_DIR}/deploy/cleanup-server-packages.sh"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/README.md" "${APP_DIR}/deploy/README.md"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene.env.example" "${APP_DIR}/deploy/midscene.env.example"

@@ -8,6 +8,14 @@ VERSION="${VERSION:-$(date +%Y%m%d-%H%M%S)}"
 KEEP_PACKAGES="${KEEP_PACKAGES:-5}"
 PACKAGE_NAME="midscene-task-platform-${VERSION}.tar.gz"
 
+# Do not create or prune output packages if static sources cannot be checked.
+static_sources=("${SRC_DIR}/task-manager.html" "${SRC_DIR}/trace-viewer.html")
+for source in "${SRC_DIR}/assets" "${SRC_DIR}/css" "${SRC_DIR}/js" "${SRC_DIR}/api-test"; do
+  if [ -e "${source}" ] || [ -L "${source}" ]; then static_sources+=("${source}"); fi
+done
+# stdout is reserved for the package path (release-server captures it).
+python3 "${SCRIPT_DIR}/static_evidence_guard.py" "${static_sources[@]}" >&2
+
 mkdir -p "${OUT_DIR}"
 find "${OUT_DIR}" -name "._*" -delete 2>/dev/null || true
 find "${OUT_DIR}" -name ".DS_Store" -delete 2>/dev/null || true
