@@ -348,7 +348,9 @@ class HttpExecutor:
             variables = copy.deepcopy(dict(overrides or {}))
             variables.update(row_values)
             variables.update(copy.deepcopy(dict(dependency_overrides or {})))
-            self._apply_processing(case.processing.get("pre", []), variables)
+            pre_actions = case.processing.get("pre", [])
+            self._apply_processing(pre_actions, variables)
+            pre_aliases = self._processing_aliases(pre_actions)
             setup_steps = tuple(case.processing.get("setup_steps", []))
             cleanup_steps = tuple(case.processing.get("cleanup_steps", []))
             has_workflow = bool(setup_steps or cleanup_steps)
@@ -470,9 +472,13 @@ class HttpExecutor:
                     lambda _phase: False,
                     callback,
                     trace,
+                    require_outputs=protects_downstream,
                 )
                 all_secrets.extend(step_secrets)
-                if protects_downstream and not self._cleanup_outputs_available(step, outcome):
+                if protects_downstream and (
+                    not self._cleanup_outputs_available(step, outcome)
+                    or self._cleanup_output_has_pre_alias(step, pre_aliases)
+                ):
                     blocked = self._stop_cleanup_after_unavailable_outputs(
                         callback, trace, cleanup_steps, index
                     )
@@ -625,6 +631,8 @@ class HttpExecutor:
         cancel,
         callback,
         trace,
+        *,
+        require_outputs=False,
     ):
         polling = step.get("polling") or {}
         max_attempts = int(polling.get("max_attempts", 1))
@@ -642,6 +650,7 @@ class HttpExecutor:
                 callback,
                 trace,
                 record_main_phases=False,
+                require_outputs=require_outputs,
             )
             all_secrets.extend(outcome.secrets)
             self._emit_workflow_step(
@@ -689,6 +698,7 @@ class HttpExecutor:
         trace,
         *,
         record_main_phases,
+        require_outputs=False,
     ):
         request_view = {}
         response_view = {}
@@ -712,6 +722,18 @@ class HttpExecutor:
                 self._render_extraction_path(extraction, runtime)
                 for extraction in extraction_views
             )
+            if require_outputs:
+                extraction_views = tuple(
+                    SimpleNamespace(
+                        type=item.type,
+                        target=item.target,
+                        path=item.path,
+                        name=item.name,
+                        required=True,
+                        default=None,
+                    )
+                    for item in extraction_views
+                )
             secrets = tuple(runtime.secrets.values())
             rendered = {key: runtime.render(value) for key, value in request.items()}
             path = self._render_path(
@@ -1049,11 +1071,33 @@ class HttpExecutor:
                 return False
         return True
 
+    @staticmethod
+    def _processing_aliases(actions):
+        """Conservatively track aliases copied or encoded before execution."""
+        aliases = {}
+        for item in actions:
+            action = item.get("action")
+            if action in {"copy_variable", "json_encode", "json_decode"}:
+                source, target = item.get("source"), item.get("target")
+                if isinstance(source, str) and isinstance(target, str):
+                    aliases[target] = aliases.get(source, {source}) | {source}
+            elif action in {"set_variable", "remove_variable"}:
+                aliases.pop(item.get("name"), None)
+        return aliases
+
+    @classmethod
+    def _cleanup_output_has_pre_alias(cls, step, aliases):
+        for item in step.get("extractions", []):
+            name = item.get("target") if isinstance(item, dict) else getattr(item, "target", None)
+            if any(alias != name and name in sources for alias, sources in aliases.items()):
+                return True
+        return False
+
     @classmethod
     def _stop_cleanup_after_unavailable_outputs(cls, callback, trace, cleanup_steps, index):
         # Later steps may refer to a stale variable through aliases or environment
         # defaults, so do not try to infer which individual requests are safe.
-        message = "清理步骤未产生可用输出，后续清理已停止；请核对资源归属和实际状态"
+        message = "清理步骤输出不可安全用于后续操作，后续清理已停止；请核对资源归属和实际状态"
         outcome = _HttpStepOutcome("SKIPPED", "cleanup_dependency", {}, {}, (), {}, message, ())
         for next_index in range(index + 1, len(cleanup_steps)):
             step = cleanup_steps[next_index]

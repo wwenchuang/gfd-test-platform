@@ -1971,3 +1971,71 @@ def test_cleanup_output_zero_and_false_are_not_treated_as_missing(valid_value):
     step = {'extractions': [{'target': 'out'}]}
     outcome = SimpleNamespace(status='PASSED', extracted={'out': valid_value})
     assert HttpExecutor._cleanup_outputs_available(step, outcome)
+
+
+def test_cleanup_verification_rejects_default_as_proof_of_response(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verification = _workflow_step(
+        '核查归属', 'GET', '/workflow/ownership-mismatch', assertions=[_code_assertion()],
+        extractions=[{**_json_extraction('verifiedTaskSn', '$.data.absent'), 'required': False, 'default': 'another-run'}],
+    )
+    cancel = _workflow_step('取消任务', 'POST', '/workflow/cancel', body={'taskSn': '{{verifiedTaskSn}}'})
+    result = _executor(target_server, _case(processing=_workflow_processing(cleanup_steps=[verification, cancel]))).execute_case('v', 'env', {})
+    assert result.status == 'FAILED'
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
+    assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/ownership-mismatch']
+
+
+@pytest.mark.parametrize(('action', 'initial'), [('copy_variable', 'another-run'), ('json_encode', 'another-run'), ('json_decode', '"another-run"')])
+def test_successful_cleanup_verification_rejects_old_preprocessing_alias(target_server, action, initial):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verification = _workflow_step('核查归属', 'GET', '/workflow/setup', assertions=[_code_assertion()], extractions=[_json_extraction('verifiedTaskSn', '$.data.resourceSn')])
+    cancel = _workflow_step('取消任务', 'POST', '/workflow/cancel', body={'taskSn': '{{oldAlias}}'})
+    processing = _workflow_processing(cleanup_steps=[verification, cancel])
+    processing['pre'] = [{'action': action, 'source': 'verifiedTaskSn', 'target': 'oldAlias'}]
+    result = _executor(target_server, _case(processing=processing)).execute_case('v', 'env', {'verifiedTaskSn': initial})
+    assert result.status == 'FAILED'
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
+    assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/setup']
+
+
+def test_cleanup_verification_accepts_actual_response_even_with_optional_default(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verification = _workflow_step('核查归属', 'GET', '/workflow/setup', assertions=[_code_assertion()], extractions=[{**_json_extraction('verifiedTaskSn', '$.data.resourceSn'), 'required': False, 'default': 'another-run'}])
+    cancel = _workflow_step('取消任务', 'POST', '/workflow/cancel', body={'taskSn': '{{verifiedTaskSn}}'})
+    result = _executor(target_server, _case(processing=_workflow_processing(cleanup_steps=[verification, cancel]))).execute_case('v', 'env', {})
+    assert result.status == 'PASSED'
+    assert ('POST', '/workflow/cancel', {'taskSn': 'resource-1'}) in handler.workflow_calls
+
+
+def test_cleanup_verification_rejects_explicit_json_null_without_using_default(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verification = _workflow_step('核查归属', 'GET', '/nullable', assertions=[_code_assertion()], extractions=[{**_json_extraction('verifiedTaskSn', '$.data'), 'required': False, 'default': 'another-run'}])
+    cancel = _workflow_step('取消任务', 'POST', '/workflow/cancel', body={'taskSn': '{{verifiedTaskSn}}'})
+    result = _executor(target_server, _case(processing=_workflow_processing(cleanup_steps=[verification, cancel]))).execute_case('v', 'env', {})
+    assert result.status == 'FAILED'
+    assert [call[1] for call in handler.workflow_calls] == ['/ok', '/nullable']
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
+
+
+def test_cleanup_verification_rejects_multiple_hops_of_stale_aliases(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    verification = _workflow_step('核查归属', 'GET', '/workflow/setup', assertions=[_code_assertion()], extractions=[_json_extraction('verifiedTaskSn', '$.data.resourceSn')])
+    cancel = _workflow_step('取消任务', 'POST', '/workflow/cancel', body={'taskSn': '{{lastAlias}}'})
+    processing = _workflow_processing(cleanup_steps=[verification, cancel])
+    processing['pre'] = [
+        {'action': 'copy_variable', 'source': 'verifiedTaskSn', 'target': 'firstAlias'},
+        {'action': 'json_encode', 'source': 'firstAlias', 'target': 'encodedAlias'},
+        {'action': 'json_decode', 'source': 'encodedAlias', 'target': 'lastAlias'},
+        {'action': 'remove_variable', 'name': 'firstAlias'},
+        {'action': 'remove_variable', 'name': 'encodedAlias'},
+    ]
+    result = _executor(target_server, _case(processing=processing)).execute_case('v', 'env', {'verifiedTaskSn': 'another-run'})
+    assert result.status == 'FAILED'
+    assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/setup']
+    assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
