@@ -28,7 +28,7 @@ RUNNER_ID = os.getenv("RUNNER_ID", "mac-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", str(Path.home() / "midscene-runner"))).expanduser()
 CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.08.31-qwen3.7-result-retry-v1-tls")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.08.31-qwen3.7-result-retry-v1-tls" + "-recording-evidence-v1")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
 ADB_BIN = os.getenv("ADB_BIN", "adb")
@@ -1250,6 +1250,217 @@ def capture_screen_png(adb_bin, device_id, run=None, max_bytes=12 * 1024 * 1024)
     if len(content) > max_bytes:
         raise RuntimeError("手机截图超过 12MB 限制")
     return content
+
+
+def _run_recording_adb(command, stopped, timeout):
+    """Bounded binary ADB call; cancel the child when the runner stops."""
+    if stopped.is_set(): raise RuntimeError('录制已取消')
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            if stopped.is_set(): raise RuntimeError('录制已取消')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                stdout, stderr = process.communicate(timeout=min(.25, remaining))
+                return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                continue
+    except BaseException:
+        try:
+            process.terminate()
+            process.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+        except ProcessLookupError:
+            pass
+        raise
+
+
+def _recording_remaining(deadline, maximum):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0: raise TimeoutError('录制证据采集超时')
+    return min(maximum, remaining)
+
+
+def recording_device_ready(adb_bin, device_id, stopped=None, deadline=None):
+    """Do not trust a configured device ID as evidence of an ADB connection."""
+    if not isinstance(device_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}', device_id):
+        return False
+    try:
+        command = [adb_bin, '-s', device_id, 'get-state']
+        timeout = _recording_remaining(deadline, 8) if deadline is not None else 8
+        result = (_run_recording_adb(command, stopped, timeout) if stopped is not None else
+                  subprocess.run(command, capture_output=True, timeout=8))
+        return result.returncode == 0 and result.stdout.strip() == b'device'
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def capture_recording_ui_xml(adb_bin, device_id, run=None, max_bytes=2 * 1024 * 1024, remote=None):
+    run = run or subprocess.run
+    remote = remote or '/sdcard/midscene-recording-window.xml'
+    try:
+        dumped = run([adb_bin, '-s', device_id, 'shell', 'uiautomator', 'dump', remote], capture_output=True, timeout=15)
+        if dumped.returncode != 0: raise RuntimeError('页面结构采集失败')
+        pulled = run([adb_bin, '-s', device_id, 'exec-out', 'cat', remote], capture_output=True, timeout=10)
+        content = pulled.stdout or b''
+        if pulled.returncode != 0 or b'<hierarchy' not in content or len(content) > max_bytes:
+            raise RuntimeError('页面结构采集失败')
+        return content.decode('utf-8', errors='replace')
+    finally:
+        try: run([adb_bin, '-s', device_id, 'shell', 'rm', '-f', remote], capture_output=True, timeout=5)
+        except Exception: pass
+
+
+def _recording_post(payload, stopped, deadline):
+    """Retry the same request: the server may have committed a lost response."""
+    while time.monotonic() < deadline:
+        if stopped.is_set(): return False
+        result = {}
+        finished = threading.Event()
+        timeout = max(.1, min(12, deadline-time.monotonic()))
+        def send():
+            try:
+                result['reply'] = http_json('POST', '/api/runner/recording-evidence', payload, timeout=timeout)
+            except urllib.error.HTTPError as error:
+                result['permanent'] = 400 <= error.code < 500 and error.code != 429
+            except Exception:
+                pass
+            finally:
+                finished.set()
+        threading.Thread(target=send, daemon=True, name='recording-evidence-upload').start()
+        while not finished.is_set():
+            if stopped.is_set(): return False
+            remaining = deadline-time.monotonic()
+            if remaining <= 0:
+                # The HTTP request may still be in flight. Disable this worker
+                # rather than issuing a competing request or claiming success.
+                stopped.set()
+                print('录制证据回传超时，请检查网络并重启 Runner', flush=True)
+                return False
+            finished.wait(min(.1, remaining))
+        if stopped.is_set(): return False
+        if time.monotonic() >= deadline:
+            stopped.set()
+            print('录制证据回传超时，请检查网络并重启 Runner', flush=True)
+            return False
+        reply = result.get('reply')
+        if isinstance(reply, dict) and reply.get('ok') is True: return True
+        if result.get('permanent'): return False
+        if stopped.wait(min(.5, max(0, deadline-time.monotonic()))): return False
+    return False
+
+
+def recording_adb_path():
+    """Select the existing ADB executable without an extra unbounded probe."""
+    if _ADB_BIN_CACHE and Path(_ADB_BIN_CACHE).exists(): return _ADB_BIN_CACHE
+    candidates = adb_candidates()
+    if candidates: return candidates[0]
+    return resolve_command(ADB_BIN, 'ADB')
+
+
+def capture_recording_evidence(request, devices, stopped):
+    """Capture only this runner's explicitly requested Android device."""
+    if stopped.is_set() or not isinstance(request, dict): return False
+    request_id, session_id = request.get('request_id'), request.get('session_id')
+    device_id, step_id = request.get('device_id'), request.get('step_id') or ''
+    if (not all(isinstance(x, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}', x)
+                for x in (request_id, session_id, device_id)) or
+            not isinstance(step_id, str) or (step_id and step_id != request_id)):
+        return False
+    payload = {'runner_id': RUNNER_ID, 'device_id': device_id, 'request_id': request_id,
+               'session_id': session_id, 'step_id': step_id}
+    deadline = request.get('_capture_deadline_monotonic')
+    if not isinstance(deadline, (int, float)) or isinstance(deadline, bool): deadline = time.monotonic() + 90
+    available = {str(d.get('device_id')): d for d in devices if isinstance(d, dict) and
+                 d.get('status', 'online') == 'online' and d.get('platform', 'android') == 'android'}
+    try:
+        if device_id not in available: raise RuntimeError('设备未连接')
+        adb_bin = recording_adb_path()
+        if not recording_device_ready(adb_bin, device_id, stopped, deadline): raise RuntimeError('设备未连接')
+        if stopped.is_set(): return False
+        if not step_id and not _recording_post({**payload, 'phase': 'capturing'}, stopped, deadline): return False
+        if stopped.is_set(): return False
+        width, height = recording_coordinate_size(available[device_id].get('resolution'))
+        if width and height:
+            payload.update(coordinate_width=width, coordinate_height=height)
+        adb_run = lambda command, **kwargs: _run_recording_adb(command, stopped, _recording_remaining(deadline, kwargs['timeout']))
+        payload['content_base64'] = base64.b64encode(capture_screen_png(adb_bin, device_id, run=adb_run)).decode('ascii')
+        if stopped.is_set(): return False
+        _recording_remaining(deadline, 15)
+        try:
+            suffix = hashlib.sha256((session_id + ':' + request_id).encode()).hexdigest()[:24]
+            payload['ui_xml'] = capture_recording_ui_xml(adb_bin, device_id, run=adb_run,
+                                                       remote=f'/sdcard/midscene-recording-{suffix}.xml')
+        except Exception:
+            payload['ui_xml_error'] = 'Android 页面结构采集失败，请核对截图'
+    except Exception:
+        payload['error'] = 'Android 录制证据采集失败，请检查设备连接及 ADB 授权'
+    return _recording_post(payload, stopped, deadline)
+
+
+def recording_coordinate_size(resolution):
+    match = re.search(r'(\d+)x(\d+)', str(resolution or ''))
+    return (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+
+
+class RecordingEvidenceDispatcher:
+    """One bounded worker keeps ADB and evidence uploads off the heartbeat."""
+    def __init__(self):
+        self.stopped = threading.Event()
+        self.lock = threading.Lock()
+        self.queue = queue.Queue(maxsize=10)
+        self.pending, self.completed = set(), set()
+        self.thread = None
+
+    def has_pending(self, request_id):
+        with self.lock: return request_id in self.pending
+
+    def submit(self, response, devices):
+        if RUNNER_PLATFORM != 'android' or self.stopped.is_set() or not isinstance(response, dict): return
+        requests = response.get('recording_evidence_requests')
+        if not isinstance(requests, list): return
+        with self.lock:
+            if self.stopped.is_set(): return
+            for request in requests[:10]:
+                if not isinstance(request, dict) or not isinstance(request.get('request_id'), str) or not request['request_id']: continue
+                key = request['request_id']
+                if key in self.pending or key in self.completed: continue
+                item = {**request, '_capture_deadline_monotonic': time.monotonic() + 90}
+                try: self.queue.put_nowait((item, [dict(d) for d in devices if isinstance(d, dict)]))
+                except queue.Full: break
+                self.pending.add(key)
+            if self.pending and self.thread is None:
+                self.thread = threading.Thread(target=self._run, daemon=True, name='recording-evidence')
+                self.thread.start()
+
+    def _run(self):
+        while not self.stopped.is_set():
+            try: request, devices = self.queue.get(timeout=.2)
+            except queue.Empty: continue
+            ok = False
+            try:
+                if not self.stopped.is_set(): ok = capture_recording_evidence(request, devices, self.stopped)
+            except Exception:
+                print('录制证据采集失败，等待平台重试', flush=True)
+            finally:
+                with self.lock:
+                    self.pending.discard(request['request_id'])
+                    if ok:
+                        if len(self.completed) >= 1000: self.completed.clear()
+                        self.completed.add(request['request_id'])
+                self.queue.task_done()
+
+    def close(self, wait=2):
+        self.stopped.set()
+        thread = self.thread
+        if thread and thread is not threading.current_thread(): thread.join(timeout=wait)
+
+
+_RECORDING_EVIDENCE = RecordingEvidenceDispatcher()
 
 
 def capture_device_snapshot(adb_bin, device_id):
@@ -2858,6 +3069,7 @@ def _run_main():
                 continue
             try:
                 acknowledgement = heartbeat(devices)
+                _RECORDING_EVIDENCE.submit(acknowledgement, devices)
                 upload_snapshot_requests(acknowledgement, devices)
                 if RUNNER_PLATFORM == "ios" and acknowledgement.get("dispatch_policy") != "explicit-target-v1":
                     raise RuntimeError("平台需部署明确设备调度支持后才能执行 iOS")
@@ -2886,7 +3098,8 @@ def _run_main():
             def keep_alive():
                 while not stopped.wait(10):
                     try:
-                        heartbeat(devices)
+                        acknowledgement = heartbeat(devices)
+                        _RECORDING_EVIDENCE.submit(acknowledgement, devices)
                     except Exception:
                         pass
             if RUNNER_PLATFORM == "ios" or job.get("ui_batch_id"):
@@ -2931,6 +3144,7 @@ def main():
     except KeyboardInterrupt:
         print("\nRunner stopped")
     finally:
+        _RECORDING_EVIDENCE.close()
         if RUNNER_PLATFORM == "ios":
             _IOS_WDA_RECOVERY.shutdown()
         if previous_term is not None:
