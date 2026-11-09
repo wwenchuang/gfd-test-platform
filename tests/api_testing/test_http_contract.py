@@ -2129,3 +2129,23 @@ def test_sse_disconnect_stops_stream(monkeypatch):
 
     with pytest.raises(BrokenPipeError):
         http._stream_events(Handler(), "00000000-0000-0000-0000-000000000001", "request", "owner-a")
+
+
+def test_ai_job_scoped_thinking_mode_is_persisted_and_rejects_invalid(http_client, owned_records, monkeypatch):
+    queued = []
+    monkeypatch.setattr(http, '_enqueue_ai_job', queued.append)
+    payload = {
+        'endpoint_ids': [owned_records['endpoint'].id],
+        'environment_revision_id': owned_records['environment_revision'].id,
+        'thinking_mode': 'off',
+    }
+    accepted = http_client.post('/api/api-testing/v1/ai-jobs', payload, _auth())
+    assert accepted.status == 200
+    assert accepted.body['data']['job']['summary']['thinking_mode'] == 'off'
+    assert len(queued) == 1
+    rejected = http_client.post('/api/api-testing/v1/ai-jobs', {**payload, 'thinking_mode': True}, _auth())
+    assert rejected.status == 422
+    assert len(queued) == 1
+    denied = http_client.post('/api/api-testing/v1/ai-jobs', payload, _auth('owner-b'))
+    assert denied.status in (403, 404)
+    assert len(queued) == 1

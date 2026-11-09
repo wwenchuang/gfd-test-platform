@@ -127,7 +127,7 @@ class FakeGateway:
         self.responses = list(responses)
         self.calls = []
 
-    def chat(self, *, messages, provider_id, model, timeout_seconds):
+    def chat(self, *, messages, provider_id, model, timeout_seconds, thinking_mode='default', correlation_id=None):
         self.calls.append(
             {
                 "messages": copy.deepcopy(messages),
@@ -2014,3 +2014,51 @@ def test_enqueue_failure_is_persisted_and_cannot_start_model_call(session_factor
     with session_factory() as session:
         stored = session.scalar(select(ApiAiJobBatch).where(ApiAiJobBatch.job_id == job.id))
         assert stored.error == {'code': 'enqueue_failed'}
+
+
+def test_generation_persists_attempt_before_gateway_and_uses_scoped_mode(session_factory, ai_context):
+    from uuid import UUID
+    endpoint = ai_context['endpoints']['favoriteList']
+    class InspectingGateway:
+        def chat(self, **kwargs):
+            with session_factory() as session:
+                batch = session.scalar(select(ApiAiJobBatch).where(ApiAiJobBatch.id == batch_id))
+                assert batch.state == 'running'
+                assert batch.result['generation_attempt_ids'][-1] == kwargs['correlation_id']
+            assert UUID(kwargs['correlation_id']).version == 4
+            assert kwargs['thinking_mode'] == 'off'
+            raise TimeoutError('synthetic')
+    service = _service(session_factory, InspectingGateway())
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off')
+    batch_id = job.batches[0].id
+    result = service.process(job.id)
+    assert result.state == 'failed_gateway'
+    assert result.summary['thinking_mode'] == 'off'
+    assert UUID(result.batches[0].correlation_id).version == 4
+
+
+def test_generation_retry_has_new_attempt_id_and_retains_previous(session_factory, ai_context):
+    from uuid import UUID
+    endpoint = ai_context['endpoints']['favoriteList']
+    class TimingOutGateway:
+        def __init__(self):
+            self.ids = []
+        def chat(self, **kwargs):
+            self.ids.append(kwargs['correlation_id'])
+            raise TimeoutError('synthetic')
+    gateway = TimingOutGateway()
+    service = _service(session_factory, gateway)
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin')
+    batch_id = job.batches[0].id
+    service.process(job.id)
+    with session_factory.begin() as session:
+        batch = session.get(ApiAiJobBatch, batch_id)
+        batch.state = 'queued'
+        session.get(ApiAiJob, job.id).state = 'queued'
+    retried = service.process(job.id)
+    with session_factory() as session:
+        batch = session.get(ApiAiJobBatch, batch_id)
+        assert batch.result['generation_attempt_ids'] == gateway.ids
+    assert len(set(gateway.ids)) == 2
+    assert all(UUID(item).version == 4 for item in gateway.ids)
+    assert retried.batches[0].correlation_id == gateway.ids[-1]
