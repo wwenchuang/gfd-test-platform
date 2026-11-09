@@ -218,6 +218,8 @@ class Release:
         for side, getter in (('host', lambda p: host_read(self.host,p)), ('container', self.docker.read)):
             for rel in self.old:
                 if host_read(self.backup/side, rel) != self.old[rel]: raise RuntimeError('backup hash mismatch: '+side+'/'+rel)
+            for rel in self.old.keys() - self.entries.keys():
+                if getter(rel) != self.old[rel]: raise RuntimeError('rollback refused; old dependency changed: '+side+'/'+rel)
             for rel, new in self.entries.items():
                 if getter(rel) not in (self.old[rel], new): raise RuntimeError('rollback refused; unknown changes: '+side+'/'+rel)
         for rel, new in reversed(tuple(self.entries.items())):

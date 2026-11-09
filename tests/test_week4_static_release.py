@@ -81,6 +81,12 @@ class ReleaseTest(unittest.TestCase):
         with self.assertRaises(RuntimeError): self.r.rollback()
         self.assertEqual(self.docker.read('task-manager.html'), b'changed-by-others')
         self.assertEqual((self.host/'task-manager.html').read_bytes(), b'new-html')
+    def test_rollback_refuses_if_old_html_dependency_changed(self):
+        self.r.apply()
+        (self.host/'js/ui-simple-entry.js').write_bytes(b'changed-by-others')
+        with self.assertRaises(RuntimeError): self.r.rollback()
+        self.assertEqual((self.host/'task-manager.html').read_bytes(), b'new-html')
+
     def test_partial_apply_can_be_rolled_back(self):
         original = self.docker.write
         def write(path, data):
