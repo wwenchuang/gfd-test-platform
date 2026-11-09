@@ -35,6 +35,55 @@ describe('CasesView', () => {
     }])
   })
 
+  it.each(['version', 'preview', 'manual'].flatMap(mode => [[mode, false], [mode, true]]))('guards a modified case before a %s replacement (confirm: %s)', async (mode, allow) => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'p', sourceRevisionId: 's' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue(); vi.spyOn(assets, 'ensureEndpointDetail').mockResolvedValue(ENDPOINT)
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const original = savedCase('version-a', 'original')
+    const other = { ...savedCase('version-b', 'other'), case_id: 'case-b' }
+    cases.registerVersion(original); cases.registerVersion(other, false)
+    const preview = { id: 'preview-b', endpoint_id: ENDPOINT.id, case: other } as unknown as import('../api/contracts').GeneratedCasePreview
+    cases.generatedPreviews = [preview]
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(allow as boolean)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/cases', name: 'cases', component: CasesView }] })
+    await router.push('/cases'); await router.isReady()
+    const wrapper = mount(CasesView, { global: { plugins: [router], stubs: {
+      ContextBar: true, EndpointDetail: true, DebugDrawer: true,
+      CaseEndpointPicker: { name: 'CaseEndpointPicker', emits: ['create-manual'], template: '<div />' },
+    } } })
+    await flushPromises()
+    const panel = wrapper.findComponent(CaseListPanel)
+    panel.vm.$emit('edit-version', original); await flushPromises()
+    cases.updateDraft(ENDPOINT.id, { ...JSON.parse(JSON.stringify(cases.drafts[ENDPOINT.id])), name: 'unsaved changes' })
+    panel.vm.$emit('edit-version', original); await flushPromises()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(cases.drafts[ENDPOINT.id].name).toBe('unsaved changes')
+    if (mode === 'version') panel.vm.$emit('edit-version', other)
+    else if (mode === 'preview') panel.vm.$emit('edit-preview', preview)
+    else {
+      await wrapper.get('[data-testid="open-case-endpoint-picker"]').trigger('click')
+      wrapper.findComponent({ name: 'CaseEndpointPicker' }).vm.$emit('create-manual', ENDPOINT)
+    }
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    if (!allow) {
+      expect(cases.drafts[ENDPOINT.id].name).toBe('unsaved changes')
+      expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(original.id)
+      expect(cases.dirtyDrafts[ENDPOINT.id]).toBe(true)
+    } else {
+      expect(cases.drafts[ENDPOINT.id].name).not.toBe('unsaved changes')
+      if (mode === 'version') expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(other.id)
+      if (mode === 'preview') expect(cases.activeGeneratedPreviewId).toBe(preview.id)
+      if (mode === 'manual') expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBeUndefined()
+    }
+    wrapper.unmount()
+  })
+
   it('does not open an old manual draft after switching projects during detail loading', async () => {
     const context = useContextStore()
     Object.assign(context, { projectId: 'old-project', sourceRevisionId: 'old-source' })
@@ -562,6 +611,7 @@ describe('CasesView', () => {
     expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('创建并保存新用例'))
     expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('更新当前任务范围'))
 
+    confirm.mockReturnValueOnce(true)
     await wrapper.get('[data-testid="case-version-edit-version-1"]').trigger('click')
     await flushPromises()
 

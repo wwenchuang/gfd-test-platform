@@ -1247,6 +1247,39 @@ describe('WorkbenchView debug workflow', () => {
     expect(cases.aiError).toBe('')
   })
 
+  it('keeps edits when cancelling a generated version opened after delayed detail loading', async () => {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'p', sourceRevisionId: 's', environmentRevisionId: 'e' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue(); vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    let finish!: (value: ApiEndpoint) => void
+    vi.spyOn(assets, 'ensureEndpointDetail').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const cases = useCasesStore(); cases.draftSourceRevisionId = 's'; cases.draftScopeReady = true
+    const original = savedCase('version-a', 'case-a', 'original', {})
+    const generated = savedCase('version-b', 'case-b', 'generated', {})
+    cases.registerVersion(original); cases.registerVersion(generated, false)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, DebugDrawer: true,
+      EndpointTree: { name: 'EndpointTree', emits: ['selection-change'], template: '<div />' },
+      AiAssistant: { name: 'AiAssistant', emits: ['open-generated'], template: '<div />' },
+    } } })
+    await flushPromises()
+    wrapper.findComponent({ name: 'EndpointTree' }).vm.$emit('selection-change', [ENDPOINT.id]); await flushPromises()
+    wrapper.findComponent({ name: 'AiAssistant' }).vm.$emit('open-generated', generated)
+    cases.updateDraft(ENDPOINT.id, { ...JSON.parse(JSON.stringify(cases.drafts[ENDPOINT.id])), name: 'edited while loading' })
+    finish(ENDPOINT); await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(cases.drafts[ENDPOINT.id].name).toBe('edited while loading')
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe(original.id)
+    wrapper.unmount()
+  })
+
   it('hides a restored AI job outside the saved task scope and blocks opening its draft', async () => {
     const context = useContextStore()
     Object.assign(context, {

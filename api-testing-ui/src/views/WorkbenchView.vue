@@ -359,6 +359,7 @@ async function selectTask(taskId: string): Promise<void> {
 async function activate(
   endpoint: ApiEndpoint,
   client: Pick<ApiClient, 'get'> = apiClient,
+  beforeActivate?: () => boolean,
 ): Promise<boolean> {
   const generation = ++endpointActivationGeneration
   const sourceGeneration = sourceLoadGeneration
@@ -374,6 +375,7 @@ async function activate(
     localError.value = assets.detailError || '接口详情读取失败，请重试'
     return false
   }
+  if (beforeActivate && !beforeActivate()) return false
   activeEndpoint.value = detailed
   cases.draftFor(detailed)
   mobilePane.value = 'editor'
@@ -390,8 +392,14 @@ async function openAiGenerated(version: CaseVersion): Promise<void> {
     localError.value = '生成用例对应的接口不在当前接口版本中'
     return
   }
-  if (!await activate(endpoint)) return
-  cases.setActiveVersion(version.endpoint_id, version.id)
+  const mayReplaceDraft = () => {
+    if (!selectedIds.value.includes(version.endpoint_id)) return false
+    if (cases.activeVersionByEndpoint[endpoint.id] === version.id) return true
+    return !cases.dirtyDrafts[endpoint.id]
+      || window.confirm('该接口有未保存的修改。打开生成用例将丢失这些修改，确定继续吗？')
+  }
+  if (!await activate(endpoint, apiClient, mayReplaceDraft)) return
+  if (cases.activeVersionByEndpoint[endpoint.id] !== version.id) cases.setActiveVersion(endpoint.id, version.id)
 }
 
 function manageAiGenerated(): void {

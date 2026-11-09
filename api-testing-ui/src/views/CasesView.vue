@@ -238,21 +238,25 @@ async function saveScope(): Promise<void> {
   }
 }
 
-function editCaseVersion(version: CaseVersion): void {
+function editCaseVersion(version: CaseVersion, replaceConfirmed = false): boolean {
   manualDetailGeneration += 1
   const endpointId = version.current_endpoint_id || version.endpoint_id
   const endpoint = assets.endpoints.find(item => item.id === endpointId)
   if (!endpoint) {
     localError.value = '该用例对应的接口不在当前接口版本中'
-    return
+    return false
   }
+  const replacing = cases.activeVersionByEndpoint[endpoint.id] !== version.id
+  if (replacing && cases.dirtyDrafts[endpoint.id] && !replaceConfirmed
+      && !window.confirm('该接口有未保存的修改。切换用例将丢失这些修改，确定继续吗？')) return false
   activeEndpoint.value = endpoint
   mobileDetailOpen.value = true
-  if (version.id !== activeVersionId.value) {
+  if (replacing) {
     cases.clearDebug()
     debugOpen.value = false
     cases.setActiveVersion(endpoint.id, version.id)
   }
+  return true
 }
 
 function editGeneratedPreview(preview: GeneratedCasePreview): void {
@@ -262,6 +266,13 @@ function editGeneratedPreview(preview: GeneratedCasePreview): void {
     localError.value = '该候选用例对应的接口不在当前接口版本中'
     return
   }
+  if (cases.activeGeneratedPreviewId === preview.id) {
+    activeEndpoint.value = endpoint
+    mobileDetailOpen.value = true
+    return
+  }
+  if (cases.dirtyDrafts[endpoint.id]
+      && !window.confirm('该接口有未保存的修改。打开候选用例将丢失这些修改，确定继续吗？')) return
   activeEndpoint.value = endpoint
   mobileDetailOpen.value = true
   cases.setDraftFromGeneratedPreview(preview.id)
@@ -288,6 +299,8 @@ async function createManualCase(endpoint: ApiEndpoint): Promise<void> {
     localError.value = assets.detailError || '接口详情读取失败，请重试'
     return
   }
+  if (cases.dirtyDrafts[detailed.id]
+      && !window.confirm('该接口有未保存的修改。新建用例将丢失这些修改，确定继续吗？')) return
   activeEndpoint.value = detailed
   const draft = cases.startManualDraft(detailed)
   const ownership = inferTestApplicationBusiness([endpointGroupName(detailed), ...detailed.tags])
@@ -521,7 +534,7 @@ async function runCaseVersionOnce(version: CaseVersion): Promise<void> {
     localError.value = '范围已变化，调试未开始，请重新确认。'
     return
   }
-  editCaseVersion(version)
+  if (!editCaseVersion(version, true)) return
   if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
   let prepared
   try {
