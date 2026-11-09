@@ -22,6 +22,72 @@ describe('cases store', () => {
     vi.restoreAllMocks()
   })
 
+  it('prevents a second debug request while the first submission is pending', async () => {
+    const store = useCasesStore(); let finish!: (value: unknown) => void
+    const post = vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const input = { projectId: 'p', sourceRevisionId: 's', environmentRevisionId: 'e', caseVersionId: 'v' }
+    const first = store.debug(input)
+    expect(store.debugPolling).toBe(true)
+    await expect(store.debug(input)).rejects.toThrow('调试')
+    expect(post).toHaveBeenCalledTimes(1)
+    store.clearDebug(); finish({ data: { execution: { id: 'old', state: 'RUNNING', case_results: [] } } }); await first
+  })
+
+  it('does not attach or poll a debug execution after the scope is cleared while POST is pending', async () => {
+    const store = useCasesStore()
+    let finish!: (value: unknown) => void
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const get = vi.spyOn(apiClient, 'get')
+    const pending = store.debug({ projectId: 'p', sourceRevisionId: 's', environmentRevisionId: 'e', caseVersionId: 'v' })
+    store.clearDebug()
+    finish({ data: { execution: { id: 'old', state: 'RUNNING', case_results: [] } } })
+    await pending
+    expect(store.debugExecution).toBeNull()
+    expect(store.debugResult).toBeNull()
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('does not attach or poll a submitted debug after its scope guard expires', async () => {
+    const store = useCasesStore()
+    let finish!: (value: unknown) => void
+    let current = true
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    const get = vi.spyOn(apiClient, 'get')
+    const pending = store.debug({ projectId: 'p', sourceRevisionId: 's', environmentRevisionId: 'e', caseVersionId: 'v', isCurrent: () => current })
+    current = false
+    finish({ data: { execution: { id: 'old', state: 'RUNNING', case_results: [] } } })
+    await pending
+    expect(store.debugExecution).toBeNull()
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('does not attach late result evidence after the debug scope is cleared', async () => {
+    const store = useCasesStore()
+    let finishEvidence!: (value: unknown) => void
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({ data: { execution: {
+      id: 'old', state: 'DONE', case_results: [{ execution_role: 'requested', execution_case_id: 'case-old' }],
+    } } }).mockImplementationOnce(() => new Promise(resolve => { finishEvidence = resolve }) as never)
+    const pending = store.pollExecution('old', { maxAttempts: 1, delayMs: 0 })
+    await Promise.resolve(); await Promise.resolve()
+    store.clearDebug()
+    finishEvidence({ data: { case_result: { execution_case_id: 'case-old' } } })
+    await pending
+    expect(store.debugExecution).toBeNull()
+    expect(store.debugResult).toBeNull()
+    expect(store.debugError).toBe('')
+    expect(store.debugCanResume).toBe(false)
+  })
+
+  it('does not show a stale polling failure after clearing the debug scope', async () => {
+    const store = useCasesStore()
+    let fail!: (error: Error) => void
+    vi.spyOn(apiClient, 'get').mockImplementationOnce(() => new Promise((_, reject) => { fail = reject }) as never)
+    const pending = store.pollExecution('old', { maxAttempts: 1, delayMs: 0 })
+    store.clearDebug(); fail(new Error('old error')); await pending
+    expect(store.debugError).toBe('')
+    expect(store.debugCanResume).toBe(false)
+  })
+
   it('clears stale server validation feedback when the draft changes', () => {
     const store = useCasesStore()
     store.validationErrors = { 'request.query.pageNum': '查询参数 pageNum 的类型与接口定义不一致' }

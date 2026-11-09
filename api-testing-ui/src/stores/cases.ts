@@ -527,36 +527,45 @@ export const useCasesStore = defineStore('api-cases', {
       this.validationErrors = issueMap(validation.errors || [])
       this.validationWarnings = issueMap(validation.warnings || [])
     },
-    async debug(input: { projectId: string; sourceRevisionId: string; environmentRevisionId: string; caseVersionId: string; taskId?: string }): Promise<void> {
-      this.debugGeneration += 1
+    async debug(input: { projectId: string; sourceRevisionId: string; environmentRevisionId: string; caseVersionId: string; taskId?: string; isCurrent?: () => boolean }): Promise<void> {
+      if (this.debugPolling) throw new Error('调试请求正在提交或执行，请稍候。')
+      const generation = ++this.debugGeneration
       this.debugResult = null
       this.debugError = ''
       this.debugCanResume = false
       this.clearBaselineFeedback()
-      const response = await apiClient.post<{ execution: ExecutionView }>('/api/api-testing/v1/executions', {
-        project_id: input.projectId,
-        source_revision_id: input.sourceRevisionId,
-        environment_revision_id: input.environmentRevisionId,
-        case_version_ids: [input.caseVersionId],
-        execution_type: 'debug',
-        overrides: {},
-        idempotency_key: createIdempotencyKey(),
-        ...(input.taskId ? { task_id: input.taskId } : {}),
-      })
-      this.debugExecution = response.data.execution
-      await this.pollExecution(response.data.execution.id)
+      this.debugPolling = true
+      try {
+        const response = await apiClient.post<{ execution: ExecutionView }>('/api/api-testing/v1/executions', {
+          project_id: input.projectId,
+          source_revision_id: input.sourceRevisionId,
+          environment_revision_id: input.environmentRevisionId,
+          case_version_ids: [input.caseVersionId],
+          execution_type: 'debug',
+          overrides: {},
+          idempotency_key: createIdempotencyKey(),
+          ...(input.taskId ? { task_id: input.taskId } : {}),
+        })
+        if (generation !== this.debugGeneration || input.isCurrent?.() === false) return
+        this.debugExecution = response.data.execution
+        await this.pollExecution(response.data.execution.id, { isCurrent: input.isCurrent })
+      } finally {
+        if (generation === this.debugGeneration) this.debugPolling = false
+      }
     },
-    async pollExecution(executionId: string, options: { maxAttempts?: number; delayMs?: number } = {}): Promise<void> {
+    async pollExecution(executionId: string, options: { maxAttempts?: number; delayMs?: number; isCurrent?: () => boolean } = {}): Promise<void> {
       const maxAttempts = options.maxAttempts ?? 240
       const delayMs = options.delayMs ?? 1000
       const generation = this.debugGeneration
+      const isCurrent = () => generation === this.debugGeneration && options.isCurrent?.() !== false
       this.debugPolling = true
       this.debugCanResume = false
       this.debugError = ''
       try {
         for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (!isCurrent()) return
           const response = await apiClient.get<{ execution: ExecutionView }>(`/api/api-testing/v1/executions/${executionId}`)
-          if (generation !== this.debugGeneration) return
+          if (!isCurrent()) return
           this.debugExecution = response.data.execution
           if (TERMINAL_EXECUTION.has(this.debugExecution.state)) {
             let result = this.debugExecution.case_results.find(
@@ -566,6 +575,7 @@ export const useCasesStore = defineStore('api-cases', {
               const evidence = await apiClient.get<{ case_result: ExecutionCaseResult }>(
                 `/api/api-testing/v1/executions/${executionId}/cases/${result.execution_case_id}`,
               )
+              if (!isCurrent()) return
               result = evidence.data.case_result
               this.debugExecution = {
                 ...this.debugExecution,
@@ -580,9 +590,11 @@ export const useCasesStore = defineStore('api-cases', {
           }
           if (delayMs > 0) await delay(delayMs)
         }
+        if (!isCurrent()) return
         this.debugCanResume = true
         this.debugError = '调试仍在后台执行，可关闭抽屉后从执行记录继续查看'
       } catch (error) {
+        if (!isCurrent()) return
         this.debugCanResume = true
         this.debugError = error instanceof Error ? `${error.message}，可继续查看进度` : '调试进度读取失败，可继续查看进度'
       } finally {

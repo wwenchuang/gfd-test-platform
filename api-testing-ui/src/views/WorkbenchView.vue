@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AlertTriangle, ListTree, PencilLine, RefreshCw, Sparkles } from 'lucide-vue-next'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
@@ -18,7 +18,7 @@ import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
 import { useTasksStore } from '../stores/tasks'
 import { buildCaseDependencyOptions } from '../utils/caseDependencyOptions'
-import { confirmApiExecution } from '../utils/executionConfirmation'
+import { captureApiExecutionScope, confirmApiExecution, matchesApiExecutionScope, type ApiExecutionScope } from '../utils/executionConfirmation'
 
 const context = useContextStore()
 const assets = useAssetsStore()
@@ -30,9 +30,15 @@ const selectedIds = ref<string[]>([])
 const endpointTreeTab = ref<'all' | 'selected'>('all')
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
+const executionStarting = ref(false)
 const localError = ref('')
 let sourceLoadGeneration = 0
 let endpointActivationGeneration = 0
+let taskSelectionGeneration = 0
+watch(() => tasks.task?.id, () => { taskSelectionGeneration += 1 }, { flush: 'sync' })
+let pageActive = true
+onUnmounted(() => { pageActive = false; taskSelectionGeneration += 1 })
+const isExecutionScopeCurrent = (scope: ApiExecutionScope) => pageActive && matchesApiExecutionScope(context, scope)
 const workspaceRestoring = ref(true)
 const workspaceRestoreFailed = ref(false)
 const taskNameDraft = ref('')
@@ -498,7 +504,15 @@ async function diagnoseValidation(batchId: string, errorIndex: number): Promise<
 }
 
 async function submitDebug(): Promise<void> {
-  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeEndpoint.value) return
+  if (executionStarting.value) return
+  executionStarting.value = true
+  try { await submitDebugOnce() } finally { executionStarting.value = false }
+}
+
+async function submitDebugOnce(): Promise<void> {
+  const scope = captureApiExecutionScope(context)
+  if (!scope || !activeEndpoint.value) return
+  const confirmedTaskGeneration = taskSelectionGeneration
   if (!confirmApiExecution({
     action: '调试用例',
     environmentName: environmentName.value,
@@ -506,35 +520,57 @@ async function submitDebug(): Promise<void> {
     caseCount: 1,
     effect: `${activeVersionId.value ? '将保存用例新版本' : '将创建并保存新用例'}；${editingSavedCaseFromLink.value ? '不会更改当前任务范围' : '将更新当前任务范围'}，不会自动替换或采纳基线。`,
   })) return
+  if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) {
+    localError.value = '范围已变化，调试未开始，请重新确认。'
+    return
+  }
   const endpointId = activeEndpoint.value.id
   localError.value = ''
   let version
   try {
-    version = await cases.saveForDebug(endpointId, context.environmentRevisionId)
+    version = await cases.saveForDebug(endpointId, scope.environmentRevisionId)
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '当前草稿保存或校验失败'
+    localError.value = !isExecutionScopeCurrent(scope)
+      ? '范围已变化，保存状态请核对；调试未开始。'
+      : error instanceof Error ? error.message : '当前草稿保存或校验失败'
+    return
+  }
+  if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) {
+    localError.value = '草稿已保存，但调试未开始：范围已变化，请重新确认。'
     return
   }
   let taskId: string | undefined
+  let debugTaskGeneration = confirmedTaskGeneration
   if (editingSavedCaseFromLink.value) {
     taskId = tasks.task?.selected_endpoint_ids.includes(endpointId) ? tasks.task.id : undefined
   } else {
     if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
-    const task = await saveCurrentTask()
+    const task = await saveCurrentTask(scope, confirmedTaskGeneration)
     if (!task) {
       localError.value = `草稿已保存，但调试未开始：${localError.value || tasks.error || '测试任务保存失败'}`
       return
     }
     taskId = task.id
+    debugTaskGeneration = task.executionSelectionGeneration
+  }
+  if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== debugTaskGeneration) {
+    localError.value = '草稿已保存，但调试未开始：范围已变化，请重新确认。'
+    return
   }
   cases.debugExecution = null
   debugOpen.value = true
   localError.value = ''
+  const debugIsCurrent = () => isExecutionScopeCurrent(scope) && taskSelectionGeneration === debugTaskGeneration
   try {
-    await cases.debug({ projectId: context.projectId, sourceRevisionId: context.sourceRevisionId, environmentRevisionId: context.environmentRevisionId, caseVersionId: version.id, taskId })
-    if (taskId) await tasks.restore(context.projectId)
+    await cases.debug({ projectId: scope.projectId, sourceRevisionId: scope.sourceRevisionId, environmentRevisionId: scope.environmentRevisionId, caseVersionId: version.id, taskId, isCurrent: debugIsCurrent })
+    if (!debugIsCurrent()) {
+      localError.value = '调试请求已提交，范围已变化，请前往执行记录核对结果。'
+      return
+    }
+    if (taskId) await tasks.restore(scope.projectId)
   } catch (error) {
-    cases.debugError = error instanceof Error ? error.message : '调试任务创建失败'
+    if (!debugIsCurrent()) localError.value = '范围已变化，调试请求状态请在执行记录中核对。'
+    else cases.debugError = error instanceof Error ? error.message : '调试任务创建失败'
   }
 }
 
@@ -544,8 +580,9 @@ async function editDebugStep(target: { stage: 'setup' | 'main' | 'cleanup'; inde
   await caseEditor.value?.editStep(target)
 }
 
-async function saveCurrentTask() {
-  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) {
+async function saveCurrentTask(confirmedScope?: ApiExecutionScope, confirmedTaskGeneration = taskSelectionGeneration) {
+  const scope = confirmedScope || captureApiExecutionScope(context)
+  if (!scope) {
     localError.value = '请先选择接口项目、接口版本和执行环境'
     return null
   }
@@ -555,14 +592,23 @@ async function saveCurrentTask() {
   }
   localError.value = ''
   try {
+    if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) throw new Error('范围已变化或当前任务已变化，任务未保存，请重新确认。')
+    const endpointIds = [...selectedIds.value]
     await context.saveContext()
     if (context.error) throw new Error(context.error)
+    if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) throw new Error('范围已变化或当前任务已变化，任务未保存，请重新确认。')
     const name = taskNameDraft.value.trim() || defaultTaskName()
-    return await tasks.saveSelection({
-      projectId: context.projectId,
-      sourceRevisionId: context.sourceRevisionId,
-      environmentRevisionId: context.environmentRevisionId,
-    }, selectedIds.value, name)
+    const task = await tasks.saveSelection({
+      projectId: scope.projectId,
+      sourceRevisionId: scope.sourceRevisionId,
+      environmentRevisionId: scope.environmentRevisionId,
+    }, endpointIds, name, { isCurrent: () => isExecutionScopeCurrent(scope) && taskSelectionGeneration === confirmedTaskGeneration })
+    if (!isExecutionScopeCurrent(scope)
+        || (taskSelectionGeneration !== confirmedTaskGeneration
+          && !(taskSelectionGeneration === confirmedTaskGeneration + 1 && tasks.task?.id === task.id))) {
+      throw new Error('任务已保存，但范围或当前任务已变化，请重新确认。')
+    }
+    return { ...task, executionSelectionGeneration: taskSelectionGeneration }
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '测试任务保存失败'
     return null
@@ -583,22 +629,53 @@ async function renameCurrentTask(): Promise<void> {
 }
 
 async function runCurrentTask(): Promise<void> {
-  if (!context.environmentRevisionId) {
+  if (executionStarting.value) return
+  executionStarting.value = true
+  try { await runCurrentTaskOnce() } finally { executionStarting.value = false }
+}
+
+async function runCurrentTaskOnce(): Promise<void> {
+  const scope = captureApiExecutionScope(context)
+  if (!scope) {
     localError.value = '请选择本次执行环境'
     return
   }
+  const confirmedTaskGeneration = taskSelectionGeneration
   if (!confirmApiExecution({
     action: '执行任务',
     environmentName: environmentName.value,
     targetName: tasks.task?.name || taskNameDraft.value.trim() || defaultTaskName(),
     caseCount: taskMatchesSelection.value ? tasks.task?.runnable_baseline_count : undefined,
   })) return
-  if (!taskMatchesSelection.value && !await saveCurrentTask()) return
+  if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) {
+    localError.value = '范围已变化，任务未执行，请重新确认。'
+    return
+  }
+  let expectedTaskId = tasks.task?.id
+  let expectedTaskGeneration = confirmedTaskGeneration
+  if (!taskMatchesSelection.value) {
+    const task = await saveCurrentTask(scope, confirmedTaskGeneration)
+    if (!task) return
+    expectedTaskId = task.id
+    expectedTaskGeneration = task.executionSelectionGeneration
+  }
+  if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== expectedTaskGeneration || !expectedTaskId || tasks.task?.id !== expectedTaskId) {
+    localError.value = '范围已变化，任务未执行，请重新确认。'
+    return
+  }
+  const runTaskGeneration = taskSelectionGeneration
+  const runIsCurrent = () => isExecutionScopeCurrent(scope) && taskSelectionGeneration === runTaskGeneration
   try {
-    const execution = await tasks.runCurrent(context.environmentRevisionId)
+    const execution = await tasks.runCurrent(scope.environmentRevisionId, { isCurrent: runIsCurrent, expectedTaskId })
+    if (!runIsCurrent()) {
+      localError.value = '任务执行请求已提交，范围已变化，请前往执行记录核对结果。'
+      return
+    }
     await router.push({ name: 'runs', query: { executionId: execution.id } })
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '测试任务执行失败'
+    localError.value = !runIsCurrent()
+      ? '范围已变化，任务执行状态请在执行记录中核对。'
+      : error instanceof Error ? error.message : '测试任务执行失败'
   }
 }
 
@@ -727,7 +804,7 @@ function sourceRevisionLabel(revisionId: string | null): string {
       :scope-matches-task="taskMatchesSelection"
       :environment-name="environmentName"
       :saving="tasks.saving"
-      :running="tasks.running"
+      :running="tasks.running || executionStarting"
       @rename-task="renameCurrentTask"
       @new="startNewTask"
       @save="saveCurrentTask"
@@ -751,13 +828,13 @@ function sourceRevisionLabel(revisionId: string | null): string {
         <EndpointTree id="mobile-workbench-panel-scope" role="tabpanel" aria-labelledby="mobile-workbench-tab-scope" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'scope' }]" :endpoints="assets.endpoints" :selected-ids="selectedIds" :initial-tab="endpointTreeTab" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main id="mobile-workbench-panel-editor" role="tabpanel" aria-labelledby="mobile-workbench-tab-editor" :class="['design-center', 'mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'editor' }]">
           <EndpointDetail :endpoint="activeEndpoint" @open-history="openEndpointHistory" />
-          <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :draft-identity="`${activeEndpoint?.id || ''}:${activeVersionId}:${cases.activeGeneratedPreviewId || ''}`" :editing-version="cases.versions[activeVersionId] || null" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :environment-revision-id="context.environmentRevisionId || ''" :environment-name="environmentName" :saving="cases.saving" :debugging="debugRunning" :saved-message="cases.savedMessage" :operation-error="localError" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
+          <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :draft-identity="`${activeEndpoint?.id || ''}:${activeVersionId}:${cases.activeGeneratedPreviewId || ''}`" :editing-version="cases.versions[activeVersionId] || null" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :environment-revision-id="context.environmentRevisionId || ''" :environment-name="environmentName" :saving="cases.saving || executionStarting" :debugging="debugRunning" :saved-message="cases.savedMessage" :operation-error="localError" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         </main>
         <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="visibleAiJob" :generated-cases="aiGeneratedCases" :historical-scope-message="historicalAiScopeMessage" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" :diagnosing-batch-id="cases.aiDiagnosisBatchId" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @diagnose-validation="diagnoseValidation" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />
       </div>
     </div>
     </template>
-    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" :baseline-adopting="cases.baselineAdopting" :baseline-message="cases.baselineMessage" :baseline-error="cases.baselineError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @edit-step="editDebugStep" @close="debugOpen = false" />
+    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning || executionStarting" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" :baseline-adopting="cases.baselineAdopting" :baseline-message="cases.baselineMessage" :baseline-error="cases.baselineError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @edit-step="editDebugStep" @close="debugOpen = false" />
   </section>
 </template>
