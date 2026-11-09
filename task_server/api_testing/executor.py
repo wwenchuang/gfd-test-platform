@@ -647,6 +647,10 @@ class HttpExecutor:
         variables = copy.deepcopy(dict(initial_variables or {}))
         self._apply_processing(processing_pre or [], variables)
         overrides = copy.deepcopy(dict(extraction_overrides or {}))
+        preview_targets = set()
+        for step in steps:
+            if step.get("enabled", True):
+                preview_targets.update(self._extraction_targets(step.get("extractions", [])))
         trace = []
         target_outcome = None
         missing_variables = []
@@ -687,6 +691,7 @@ class HttpExecutor:
                 lambda _phase: False,
                 None,
                 trace,
+                configured_source_unavailable=preview_targets | set(variables),
             )
             executed_index = index
             target_outcome = outcome

@@ -2626,3 +2626,55 @@ def test_default_header_provenance_follows_effective_case_insensitive_override(t
     else:
         assert result.status == 'BROKEN'
         assert not handler.workflow_calls
+
+
+@pytest.mark.parametrize('source', ['initial', 'pre_action', 'earlier_extraction', 'extraction_override'])
+def test_setup_preview_blocks_configured_base_url_that_ignores_preview_values(target_server, source):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    base_url, handler = target_server
+    class Env:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            current = _PlaceholderResolver({'resourceSn': 'another-run', **overrides})
+            configured = _PlaceholderResolver({'resourceSn': 'another-run'})
+            danger = base_url + '/workflow/{{resourceSn}}'
+            return ResolvedEnvironment(revision_id='env', environment_id='env', name='test',
+                base_urls={'default': base_url, 'danger': configured.render(danger)}, public_variables=current.resolve_all(),
+                secrets={}, headers={}, service_metadata={}, unresolved_services=(), _renderer=current.render,
+                _reference_finder=current.referenced_variables, service_base_url_references={
+                    'default': frozenset(), 'danger': frozenset(configured.referenced_variables(danger))})
+    danger = _workflow_step('配置旧资源的前置步骤', 'POST', 'cancel', body={'operation': 'delete'})
+    danger['request']['service'] = 'danger'
+    earlier = _workflow_step('产生本轮值', 'GET', '/workflow/setup', extractions=[_json_extraction('resourceSn', '$.data.resourceSn')])
+    steps = [earlier, danger] if source in ('earlier_extraction', 'extraction_override') else [danger]
+    initial = {'resourceSn': 'this-run'} if source == 'initial' else {}
+    pre = [{'action': 'set_variable', 'name': 'resourceSn', 'value': 'this-run'}] if source == 'pre_action' else []
+    extraction_overrides = {'resourceSn': 'this-run'} if source == 'extraction_override' else {}
+    executor = _executor(target_server, _case('/ok'))
+    executor.environment_service = Env()
+    handler.workflow_calls = []
+    result = executor.preview_setup_steps('env', steps, len(steps) - 1, initial_variables=initial,
+        processing_pre=pre, extraction_overrides=extraction_overrides)
+    assert result['status'] != 'PASSED'
+    assert not any('/another-run/' in call[1] for call in handler.workflow_calls)
+
+
+def test_setup_preview_allows_configured_url_without_preview_variable_collision(target_server):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    base_url, handler = target_server
+    class Env:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            resolver = _PlaceholderResolver({'host': base_url, **overrides})
+            return ResolvedEnvironment(revision_id='env', environment_id='env', name='test',
+                base_urls={'default': base_url}, public_variables=resolver.resolve_all(), secrets={}, headers={},
+                service_metadata={}, unresolved_services=(), _renderer=resolver.render,
+                _reference_finder=resolver.referenced_variables,
+                service_base_url_references={'default': frozenset({'host'})})
+    executor = _executor(target_server, _case('/ok'))
+    executor.environment_service = Env()
+    handler.workflow_calls = []
+    result = executor.preview_setup_steps('env', [_workflow_step('查询', 'GET', '/workflow/setup')], 0,
+        initial_variables={'resourceSn': 'this-run'})
+    assert result['status'] == 'PASSED'
+    assert ('GET', '/workflow/setup', None) in handler.workflow_calls
