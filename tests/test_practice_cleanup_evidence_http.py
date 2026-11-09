@@ -18,12 +18,14 @@ CASE = '22222222-2222-4222-8222-222222222222'
 @pytest.fixture(autouse=True)
 def inline_authorization_worker(monkeypatch):
     from contextlib import contextmanager
+    from task_server.services import practice_cleanup_evidence as service
     @contextmanager
     def slot(_):
         yield 1
     monkeypatch.setattr(week2_real, '_history_slot', slot)
-    monkeypatch.setattr(week2_real, '_invoke_authorization',
-                        lambda owner, username, sources, *_args, **_kwargs: week2_real._verify_sources(owner, username, sources))
+    monkeypatch.setattr(service, '_invoke_authorization',
+                        lambda owner, username, sources, *_args, **_kwargs: service._verify_sources(owner, username, sources))
+    monkeypatch.setattr(service, '_same_environment', lambda *_: True)
 
 
 def report():
@@ -33,6 +35,22 @@ def report():
                        'latest_scheduled_history': {'execution_id': EXECUTION, 'execution_case_id': CASE,
                            'created_at': '2026-11-09T00:00:00+00:00', 'case_status': 'PASSED',
                            'cleanup_trace': [{'index': 0, 'attempts': [{'status': 'PASSED', 'output_state': 'nonempty_recorded'}]}]}}]}
+
+
+def test_disabled_extraction_without_trace_is_not_claimed_as_verified():
+    from task_server.services import practice_cleanup_evidence as service
+    snapshot = report()
+    snapshot['items'][0]['cleanup_structure']['steps'].append(
+        {'index': 1, 'enabled': False, 'extraction_count': 1})
+    _, _, _, summary = service._project(snapshot)
+    assert '每个已启用且含提取的步骤均记录至少一个非空值' in summary
+
+
+def test_dedicated_authorization_worker_starts_without_source_records(monkeypatch):
+    from task_server.services import practice_cleanup_evidence as service
+    # Call the real subprocess entry point without contacting a database.
+    monkeypatch.undo()
+    assert service._invoke_authorization('owner', 'reader', [], 5, None) == []
 
 
 def test_http_evidence_requires_identity_permissions_and_live_scope(identity_db, tmp_path, monkeypatch):
@@ -126,7 +144,7 @@ def test_authorization_worker_busy_or_timeout_hides_evidence(tmp_path, monkeypat
         if reason == 'busy': raise week2_real.HistoryBusy()
         yield 1
     monkeypatch.setattr(week2_real, '_history_slot', slot)
-    monkeypatch.setattr(week2_real, '_invoke_authorization', lambda *_args, **_kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired('scope', 15)))
+    monkeypatch.setattr(service, '_invoke_authorization', lambda *_args, **_kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired('scope', 15)))
     source = tmp_path / 'diagnostic.json'
     source.write_text(json.dumps(report())); source.chmod(0o600)
     monkeypatch.setenv('TASK_PRACTICE_CLEANUP_EVIDENCE', str(source))

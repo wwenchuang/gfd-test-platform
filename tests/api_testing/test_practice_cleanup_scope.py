@@ -14,8 +14,8 @@ def test_evidence_uses_project_environment_and_execution_case_scope(api_context,
     def slot(_):
         yield 1
     monkeypatch.setattr(week2_real, '_history_slot', slot)
-    monkeypatch.setattr(week2_real, '_invoke_authorization',
-                        lambda owner, username, sources, *_args, **_kwargs: week2_real._verify_sources(owner, username, sources))
+    monkeypatch.setattr(service, '_invoke_authorization',
+                        lambda owner, username, sources, *_args, **_kwargs: service._verify_sources(owner, username, sources))
     records = owned_records
     with api_context['factory'].begin() as session:
         other_env = ApiEnvironment(project_id=records['project'].id, source_id=records['source'].id,
@@ -35,6 +35,10 @@ def test_evidence_uses_project_environment_and_execution_case_scope(api_context,
                                     endpoint_id=records['endpoint'].id, environment_revision_id=environment.id,
                                     ordinal=0, status='PASSED', sanitized_result={}, **_audit('owner-a'))
             session.add(case); session.flush(); cases.append(case.id)
+        mismatched = ApiExecutionCase(execution_id=records['execution'].id, case_version_id=records['version'].id,
+                                      endpoint_id=records['endpoint'].id, environment_revision_id=revision.id,
+                                      ordinal=1, status='PASSED', sanitized_result={}, **_audit('owner-a'))
+        session.add(mismatched); session.flush(); mismatch_id = mismatched.id
         second_id, other_environment_id = second.id, other_env.id
 
     profile = identities['reader']
@@ -66,6 +70,9 @@ def test_evidence_uses_project_environment_and_execution_case_scope(api_context,
     profile['scope']['api_environments'] = [records['environment'].id]
     assert service.get_evidence('reader-id', 'reader') is None
     profile['scope']['api_environments'].append(other_environment_id)
+    # Both environments are authorized, but this case's environment differs from its parent.
+    path.write_text(json.dumps(diagnostics(records['execution'].id, [mismatch_id])))
+    assert service.get_evidence('reader-id', 'reader') is None
     # Both cases exist and are authorized, but the second belongs to another run.
     path.write_text(json.dumps(diagnostics(records['execution'].id, cases)))
     assert service.get_evidence('reader-id', 'reader') is None

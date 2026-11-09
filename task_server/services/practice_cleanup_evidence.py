@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import stat
+import sys
 from datetime import datetime
 from uuid import UUID
 
@@ -12,6 +13,38 @@ from task_server.services import week2_real
 
 
 _MAX_BYTES = 1024 * 1024
+
+
+def _same_environment(username, execution_id, case_id):
+    from sqlalchemy import select
+    from task_server.api_testing import access, http
+    from task_server.api_testing.models.execution import ApiExecution, ApiExecutionCase
+    factory = http._factory()
+    with factory() as session:
+        return session.scalar(select(ApiExecutionCase.id).join(
+            ApiExecution, ApiExecution.id == ApiExecutionCase.execution_id
+        ).where(
+            ApiExecution.id == execution_id, ApiExecutionCase.id == case_id,
+            ApiExecutionCase.environment_revision_id == ApiExecution.environment_revision_id,
+            access.resource_predicate(username, ApiExecution),
+            access.resource_predicate(username, ApiExecutionCase),
+        )) is not None
+
+
+def _verify_sources(owner, username, sources):
+    verified = week2_real._verify_sources(owner, username, sources)
+    return [allowed and _same_environment(username, execution_id, case_id)
+            for allowed, (execution_id, case_id) in zip(verified, sources)]
+
+
+def _invoke_authorization(owner, username, sources, timeout, slot_fd):
+    body = json.dumps({'owner': owner, 'username': username, 'sources': sources})
+    raw = week2_real._run_isolated([sys.executable, '-m', 'task_server.services.practice_cleanup_evidence'],
+                                   body, timeout, slot_fd=slot_fd)
+    result = json.loads(raw)
+    if not isinstance(result, list) or len(result) != len(sources) or any(type(item) is not bool for item in result):
+        raise ValueError('invalid authorization result')
+    return result
 
 
 def _private_report():
@@ -80,7 +113,7 @@ def _project(report):
     if not extraction_steps:
         raise ValueError('no extraction evidence')
     summary = (f'该次定时执行中，已核查的 {len(cases)} 项用例及这些用例中所有已记录的清理步骤均通过；'
-               '每个含提取的步骤均记录至少一个非空值。该正常路径不证明数据归属、资源物理清理、'
+               '每个已启用且含提取的步骤均记录至少一个非空值。该正常路径不证明数据归属、资源物理清理、'
                '异常恢复或清理链候选已上线；非空值也不证明所有变量有效。')
     return execution_id, observed_at, cases, summary
 
@@ -94,7 +127,7 @@ def get_evidence(owner, username):
         execution_id, observed_at, cases, summary = _project(_private_report())
         sources = [(execution_id, case_id) for case_id in cases]
         with week2_real._history_slot(None) as slot:
-            verified = week2_real._invoke_authorization(
+            verified = _invoke_authorization(
                 owner, username, sources, week2_real._HISTORY_TIMEOUT_SECONDS, slot_fd=slot)
         if len(verified) != len(sources) or any(value is not True for value in verified):
             return None
@@ -105,3 +138,12 @@ def get_evidence(owner, username):
         # A missing source, stale/deleted execution, scope failure, DB outage,
         # or malformed file all fail closed without leaking private details.
         return None
+
+
+if __name__ == '__main__':
+    try:
+        body = json.load(sys.stdin)
+        result = _verify_sources(body['owner'], body['username'], body['sources'])
+        print(json.dumps(result))
+    except Exception:
+        print('[]')
