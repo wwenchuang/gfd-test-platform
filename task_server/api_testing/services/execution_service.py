@@ -82,6 +82,7 @@ class ExecutionView:
 class DependencyOutcome:
     status: str
     extracted_variables: dict
+    response_outputs: object = None
 
 
 def _canonical(value):
@@ -984,7 +985,7 @@ class ExecutionService:
         if not isinstance(dependencies, (list, tuple)):
             return unavailable
         for dependency in dependencies:
-            if not isinstance(dependency, dict) or dependency.get("required", True) is not False:
+            if not isinstance(dependency, dict):
                 continue
             result = outcomes.get(dependency.get("case_version_id"))
             exports = dependency.get("exports", ())
@@ -999,7 +1000,8 @@ class ExecutionService:
                 if (
                     isinstance(name, str)
                     and name
-                    and (name not in values or values[name] in (None, "", [], {}))
+                    and (name not in values or values[name] in (None, "", [], {})
+                         or name not in (getattr(result, "response_outputs", None) or ()))
                 ):
                     unavailable.add(name)
         return unavailable
@@ -1030,6 +1032,7 @@ class ExecutionService:
         extracted = result.extracted_variables or {}
         return DependencyOutcome(
             status=result.status,
+            response_outputs=getattr(result, "response_outputs", None),
             extracted_variables={
                 name: copy.deepcopy(extracted[name])
                 for name in required_exports

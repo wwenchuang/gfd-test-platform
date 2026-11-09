@@ -114,6 +114,8 @@ class ResolvedEnvironment:
     service_metadata: Mapping[str, Mapping[str, Any]]
     unresolved_services: Tuple[str, ...]
     _renderer: Callable[[Any], Any] = field(repr=False, compare=False)
+    _reference_finder: Optional[Callable[[Any], Any]] = field(default=None, repr=False, compare=False)
+    default_header_references: frozenset = field(default_factory=frozenset, repr=False, compare=False)
 
     def __post_init__(self):
         object.__setattr__(self, "base_urls", _frozen_mapping(self.base_urls))
@@ -144,6 +146,11 @@ class ResolvedEnvironment:
 
     def render(self, value):
         return self._renderer(copy.deepcopy(value))
+
+    def referenced_variables(self, value):
+        if self._reference_finder is None:
+            return set(self.public_variables)
+        return self._reference_finder(value)
 
     def base_url_for(self, service_name):
         if service_name not in self.base_urls:

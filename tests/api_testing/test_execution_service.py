@@ -788,6 +788,9 @@ def test_dependency_exports_are_allowlisted_and_override_static_values(
         {"resourceSn": "real-resource-sn"},
     ]
     assert "undeclaredSecret" not in executor.dependency_overrides[1]
+    # Old executor results have no provenance metadata: preserve values for
+    # compatibility, but identify them as unavailable to guarded requests.
+    assert executor.unavailable_dependency_exports[1] == ["resourceSn"]
 
 
 def test_dependency_outcome_only_keeps_exports_needed_downstream():

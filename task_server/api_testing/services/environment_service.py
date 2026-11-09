@@ -240,6 +240,24 @@ class _PlaceholderResolver:
         self._values = copy.deepcopy(dict(values))
         self._cache = {}
 
+    def referenced_variables(self, value):
+        def direct(item):
+            if isinstance(item, str):
+                return set(PLACEHOLDER.findall(item))
+            if isinstance(item, dict):
+                return set().union(*(direct(k) | direct(v) for k, v in item.items())) if item else set()
+            if isinstance(item, (list, tuple)):
+                return set().union(*(direct(v) for v in item)) if item else set()
+            return set()
+
+        found, pending = set(), list(direct(value))
+        while pending:
+            name = pending.pop()
+            if name not in found:
+                found.add(name)
+                pending.extend(direct(self._values.get(name)))
+        return found
+
     def resolve_all(self):
         return {name: self._resolve_name(name, ()) for name in self._values}
 
@@ -857,6 +875,8 @@ class EnvironmentService:
             },
             unresolved_services=tuple(sorted(unresolved_services)),
             _renderer=resolver.render,
+            _reference_finder=resolver.referenced_variables,
+            default_header_references=frozenset(resolver.referenced_variables(revision.default_headers)),
         )
         if service_name is not None:
             runtime.base_url_for(_text(service_name, "service name"))

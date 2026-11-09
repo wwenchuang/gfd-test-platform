@@ -197,6 +197,7 @@ class _HttpStepOutcome:
     error: str
     secrets: tuple
     raw_response: Optional[dict] = None
+    response_outputs: frozenset = frozenset()
 
 
 @dataclass(frozen=True, repr=False)
@@ -211,6 +212,7 @@ class CaseExecutionResult:
     error_message: str
     trace: tuple
     response_time_warning: Optional[dict] = None
+    response_outputs: Optional[frozenset] = None
 
     def __repr__(self):
         return "CaseExecutionResult(status=%r, failure_category=%r, duration_ms=%r)" % (
@@ -361,7 +363,10 @@ class HttpExecutor:
                     targets = self._extraction_targets(step.get("extractions", []))
                     late_targets.update(targets)
                     unavailable_outputs.update(targets)
-            stale_pre_alias = any(sources & late_targets for sources in pre_aliases.values())
+            unavailable_outputs.update(
+                alias for alias, sources in pre_aliases.items()
+                if sources & (late_targets | unavailable_outputs)
+            )
             has_workflow = bool(setup_steps or cleanup_steps)
             setup_failure = None
             all_secrets = []
@@ -369,6 +374,13 @@ class HttpExecutor:
             for index, step in enumerate(setup_steps):
                 if not step.get("enabled", True):
                     continue
+                blocked_controls = set(step.get("required_variables", ())) | {step.get("only_if_variable")}
+                blocked_controls &= unavailable_outputs
+                if blocked_controls:
+                    setup_failure = _HttpStepOutcome("BROKEN", "environment", {}, {}, (), {},
+                        "流程条件引用来源不可确认的变量：" + ", ".join(sorted(blocked_controls)), ())
+                    self._emit_workflow_step(callback, trace, "setup", index, step, setup_failure)
+                    break
                 if self._skip_conditional_step(callback, trace, "setup", index, step, variables):
                     unavailable_outputs.update(self._extraction_targets(step.get("extractions", [])))
                     continue
@@ -399,6 +411,7 @@ class HttpExecutor:
                     cancel,
                     callback,
                     trace,
+                    unavailable_outputs=unavailable_outputs,
                 )
                 all_secrets.extend(step_secrets)
                 if outcome.status != "PASSED":
@@ -422,6 +435,7 @@ class HttpExecutor:
                     callback,
                     trace,
                     record_main_phases=True,
+                    unavailable_outputs=unavailable_outputs,
                 )
                 all_secrets.extend(main_outcome.secrets)
                 variables.update(copy.deepcopy(main_outcome.extracted))
@@ -447,16 +461,27 @@ class HttpExecutor:
             if main_outcome is None:
                 unavailable_outputs.update(self._extraction_targets(case.extractions))
             cleanup_problem = None
-            if cleanup_steps and (unavailable_outputs or stale_pre_alias):
-                cleanup_problem = self._stop_cleanup_after_unavailable_outputs(
-                    callback, trace, cleanup_steps, -1, variables=variables
-                )
             for index, step in enumerate(() if cleanup_problem else cleanup_steps):
                 if not step.get("enabled", True):
                     continue
                 protects_downstream = bool(step.get("extractions")) and any(
                     later.get("enabled", True) for later in cleanup_steps[index + 1:]
                 )
+                blocked_controls = set(step.get("required_variables", ())) | {step.get("only_if_variable")}
+                blocked_controls &= unavailable_outputs
+                if blocked_controls:
+                    message = "流程条件引用来源不可确认的变量：" + ", ".join(sorted(blocked_controls))
+                    missing = self._missing_step_variables(step, variables)
+                    if missing:
+                        self._emit_skipped_step(callback, trace, "cleanup", index, step, missing)
+                    else:
+                        skipped = _HttpStepOutcome("SKIPPED", "cleanup_dependency", {}, {}, (), {}, message, ())
+                        self._emit_workflow_step(callback, trace, "cleanup", index, step, skipped)
+                    cleanup_problem = cleanup_problem or _HttpStepOutcome("FAILED", "cleanup", {}, {}, (), {}, message, ())
+                    if protects_downstream:
+                        self._stop_cleanup_after_unavailable_outputs(callback, trace, cleanup_steps, index)
+                        break
+                    continue
                 if self._skip_conditional_step(callback, trace, "cleanup", index, step, variables):
                     if protects_downstream:
                         blocked = self._stop_cleanup_after_unavailable_outputs(
@@ -498,6 +523,7 @@ class HttpExecutor:
                     callback,
                     trace,
                     require_outputs=protects_downstream,
+                    unavailable_outputs=unavailable_outputs,
                 )
                 all_secrets.extend(step_secrets)
                 if protects_downstream and (
@@ -546,7 +572,19 @@ class HttpExecutor:
                 trace,
                 secrets,
             )
-            return replace(result, response_time_warning=evaluate_response_time_warning(
+            response_outputs = set(main_outcome.response_outputs) if main_outcome is not None else set()
+            for action in case.processing.get("post", []):
+                kind = action.get("action")
+                if kind == "copy_variable":
+                    target = action.get("target")
+                    response_outputs.discard(target)
+                    if action.get("source") in response_outputs:
+                        response_outputs.add(target)
+                elif kind in {"set_variable", "remove_variable"}:
+                    response_outputs.discard(action.get("name"))
+                elif kind in {"json_encode", "json_decode"}:
+                    response_outputs.discard(action.get("target"))
+            return replace(result, response_outputs=frozenset(response_outputs), response_time_warning=evaluate_response_time_warning(
                 case.processing.get("response_time_warning_ms"),
                 main_outcome.response if main_outcome is not None else {},
             ))
@@ -658,6 +696,7 @@ class HttpExecutor:
         trace,
         *,
         require_outputs=False,
+        unavailable_outputs=(),
     ):
         polling = step.get("polling") or {}
         max_attempts = int(polling.get("max_attempts", 1))
@@ -676,6 +715,7 @@ class HttpExecutor:
                 trace,
                 record_main_phases=False,
                 require_outputs=require_outputs,
+                unavailable_outputs=unavailable_outputs,
             )
             all_secrets.extend(outcome.secrets)
             self._emit_workflow_step(
@@ -724,6 +764,7 @@ class HttpExecutor:
         *,
         record_main_phases,
         require_outputs=False,
+        unavailable_outputs=(),
     ):
         request_view = {}
         response_view = {}
@@ -739,6 +780,17 @@ class HttpExecutor:
                 variables,
                 service_name=request.get("service", "default"),
             )
+            references = self._request_references(runtime, {
+                "request": request,
+                "assertions": [
+                    {"expected": item.expected, "path": getattr(item, "path", None)}
+                    for item in assertion_views if getattr(item, "enabled", True)
+                ],
+                "extractions": [getattr(item, "path", None) for item in extraction_views],
+            }, variables)
+            blocked = sorted(set(unavailable_outputs) & references)
+            if blocked:
+                raise ValueError("请求引用来源不可确认的变量：" + ", ".join(blocked))
             assertion_views = tuple(
                 self._render_assertion_expected(assertion, runtime)
                 for assertion in assertion_views
@@ -949,6 +1001,7 @@ class HttpExecutor:
                     ),
                     response_secrets,
                     raw_response,
+                    self._response_output_targets(extraction_views, response),
                 )
             if extraction_views:
                 extracted = extract_values(extraction_views, response)
@@ -969,6 +1022,7 @@ class HttpExecutor:
                 "",
                 response_secrets,
                 raw_response,
+                self._response_output_targets(extraction_views, response),
             )
         except Exception as exc:
             status, category, error = self._exception_details(exc)
@@ -1105,17 +1159,51 @@ class HttpExecutor:
                 names.add(name)
         return names
 
-    @classmethod
-    def _actual_output_targets(cls, extractions, outcome):
-        # Optional fallbacks cannot establish that a response supplied an ID.
+    @staticmethod
+    def _actual_output_targets(extractions, outcome):
+        return set(outcome.response_outputs)
+
+    @staticmethod
+    def _response_output_targets(extractions, response):
         names = set()
         for item in extractions:
-            name = item.get("target") if isinstance(item, dict) else getattr(item, "target", None)
-            required = item.get("required", True) if isinstance(item, dict) else getattr(item, "required", True)
-            value = outcome.extracted.get(name)
-            if required and name and value not in (None, "", [], {}):
-                names.add(name)
-        return names
+            names.discard(item.target)
+            strict = SimpleNamespace(type=item.type, target=item.target, path=item.path,
+                name=item.name, required=True, default=None)
+            try:
+                value = extract_values((strict,), response).get(item.target)
+            except (JsonPathError, KeyError, AssertionDefinitionError):
+                continue
+            if value not in (None, "", [], {}):
+                names.add(item.target)
+        return frozenset(names)
+
+    @staticmethod
+    def _request_references(runtime, request, variables):
+        finder = getattr(runtime, "referenced_variables", None)
+        if finder is not None:
+            return set(finder(request)) | set(getattr(runtime, "default_header_references", ()))
+        # In-process custom runtimes must expose raw variables to resolve aliases;
+        # otherwise treat every supplied variable as referenced when provenance matters.
+        raw_values = getattr(runtime, "values", None)
+        if raw_values is None:
+            return set(variables)
+        pattern = re.compile(r"{{([A-Za-z_][A-Za-z0-9_.-]*)}}")
+        def direct(value):
+            if isinstance(value, str):
+                return set(pattern.findall(value))
+            if isinstance(value, dict):
+                return set().union(*(direct(k) | direct(v) for k, v in value.items())) if value else set()
+            if isinstance(value, (list, tuple)):
+                return set().union(*(direct(v) for v in value)) if value else set()
+            return set()
+        refs, pending = set(), list(direct(request))
+        while pending:
+            name = pending.pop()
+            if name not in refs:
+                refs.add(name)
+                pending.extend(direct(raw_values.get(name)))
+        return refs
 
     @staticmethod
     def _processing_aliases(actions):

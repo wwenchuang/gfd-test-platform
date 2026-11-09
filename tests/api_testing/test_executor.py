@@ -2109,3 +2109,192 @@ def test_cleanup_verification_rejects_multiple_hops_of_stale_aliases(target_serv
     assert result.status == 'FAILED'
     assert [call[1] for call in handler.workflow_calls] == ['/ok', '/workflow/setup']
     assert any(event.get('failure_category') == 'cleanup_dependency' for event in result.trace)
+
+@pytest.mark.parametrize('required_dependency', [True, False])
+@pytest.mark.parametrize('source', ['default', 'post_override'])
+@pytest.mark.parametrize('stage', ['setup', 'main', 'cleanup'])
+def test_dependency_untrusted_output_never_reaches_requests(target_server, required_dependency, source, stage):
+    _, handler = target_server
+    extraction = _extraction('resourceSn', 'json_path', '$.data.resourceSn', required=source != 'default')
+    extraction.default = 'another-run'
+    processing = _workflow_processing()
+    if source == 'post_override':
+        processing['post'] = [{'action': 'set_variable', 'name': 'resourceSn', 'value': 'another-run'}]
+    upstream = _case('/ok' if source == 'default' else '/workflow/setup', extractions=[extraction], processing=processing)
+    result = _executor(target_server, upstream).execute_case('upstream', 'env', {})
+    assert result.status == 'PASSED'
+    assert result.extracted_variables['resourceSn'] == 'another-run'
+    outcome = ExecutionService._dependency_outcome(result, {'resourceSn'})
+    snapshot = {'dependencies': [{'case_version_id': 'upstream', 'required': required_dependency, 'exports': ['resourceSn']}]}
+    overrides, blocked = ExecutionService._dependency_overrides(snapshot, {'upstream': outcome})
+    assert not blocked
+    unavailable = ExecutionService._unavailable_dependency_exports(snapshot, {'upstream': outcome})
+    operation = _workflow_step('危险请求', 'POST', '/workflow/cancel', body={'target': '{{resourceSn}}'})
+    processing = _workflow_processing(
+        setup_steps=[operation] if stage == 'setup' else [],
+        cleanup_steps=[operation] if stage == 'cleanup' else [],
+    )
+    downstream = _case('/workflow/cancel' if stage == 'main' else '/ok',
+        method='POST' if stage == 'main' else 'GET',
+        body={'target': '{{resourceSn}}'} if stage == 'main' else None,
+        processing=processing)
+    handler.workflow_calls = []
+    _executor(target_server, downstream).execute_case('downstream', 'env', {},
+        dependency_overrides=overrides, unavailable_dependency_exports=unavailable)
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_dependency_untrusted_output_does_not_block_unrelated_cleanup(target_server):
+    _, handler = target_server
+    extraction = _extraction('resourceSn', 'json_path', '$.data.resourceSn', required=False)
+    extraction.default = 'another-run'
+    upstream = _executor(target_server, _case('/ok', extractions=[extraction])).execute_case('upstream', 'env', {})
+    outcome = ExecutionService._dependency_outcome(upstream, {'resourceSn'})
+    snapshot = {'dependencies': [{'case_version_id': 'upstream', 'required': False, 'exports': ['resourceSn']}]}
+    overrides, _ = ExecutionService._dependency_overrides(snapshot, {'upstream': outcome})
+    unavailable = ExecutionService._unavailable_dependency_exports(snapshot, {'upstream': outcome})
+    unrelated = _workflow_step('独立清理', 'POST', '/workflow/cancel', body={'target': 'fixed-independent-target'})
+    handler.workflow_calls = []
+    downstream = _case('/ok', processing=_workflow_processing(cleanup_steps=[unrelated]))
+    result = _executor(target_server, downstream).execute_case('downstream', 'env', {},
+        dependency_overrides=overrides, unavailable_dependency_exports=unavailable)
+    assert result.status == 'PASSED'
+    assert ('POST', '/workflow/cancel', {'target': 'fixed-independent-target'}) in handler.workflow_calls
+
+@pytest.mark.parametrize('action', ['copy_variable', 'json_encode', 'json_decode'])
+def test_untrusted_dependency_cannot_escape_through_pre_alias(target_server, action):
+    _, handler = target_server
+    default = '"another-run"' if action == 'json_decode' else 'another-run'
+    extraction = _extraction('resourceSn', 'json_path', '$.data.resourceSn', required=False)
+    extraction.default = default
+    upstream = _executor(target_server, _case('/ok', extractions=[extraction])).execute_case('upstream', 'env', {})
+    outcome = ExecutionService._dependency_outcome(upstream, {'resourceSn'})
+    snapshot = {'dependencies': [{'case_version_id': 'upstream', 'required': False, 'exports': ['resourceSn']}]}
+    overrides, _ = ExecutionService._dependency_overrides(snapshot, {'upstream': outcome})
+    unavailable = ExecutionService._unavailable_dependency_exports(snapshot, {'upstream': outcome})
+    processing = _workflow_processing(cleanup_steps=[_workflow_step('清理', 'POST', '/workflow/cancel', body={'target': '{{alias}}'})])
+    processing['pre'] = [{'action': action, 'source': 'resourceSn', 'target': 'alias'}]
+    handler.workflow_calls = []
+    _executor(target_server, _case('/ok', processing=processing)).execute_case('downstream', 'env', {}, dependency_overrides=overrides, unavailable_dependency_exports=unavailable)
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_old_dependency_outcome_with_unknown_provenance_cannot_authorize_cleanup(target_server):
+    _, handler = target_server
+    old = SimpleNamespace(status='PASSED', extracted_variables={'resourceSn': 'another-run'})
+    snapshot = {'dependencies': [{'case_version_id': 'upstream', 'required': True, 'exports': ['resourceSn']}]}
+    overrides, _ = ExecutionService._dependency_overrides(snapshot, {'upstream': old})
+    unavailable = ExecutionService._unavailable_dependency_exports(snapshot, {'upstream': old})
+    cleanup = _workflow_step('清理', 'POST', '/workflow/cancel', body={'target': '{{resourceSn}}'})
+    handler.workflow_calls = []
+    _executor(target_server, _case('/ok', processing=_workflow_processing(cleanup_steps=[cleanup]))).execute_case('downstream', 'env', {}, dependency_overrides=overrides, unavailable_dependency_exports=unavailable)
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_environment_placeholder_alias_preserves_request_dependency():
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    resolver = _PlaceholderResolver({'alias': {'inner': '{{resourceSn}}'}, 'resourceSn': 'another-run'})
+    assert resolver.referenced_variables({'body': '{{alias}}'}) == {'alias', 'resourceSn'}
+
+
+def test_later_default_overwrites_actual_extraction_provenance(target_server):
+    _, handler = target_server
+    first = _extraction('resourceSn', 'json_path', '$.data.resourceSn')
+    second = _extraction('resourceSn', 'json_path', '$.data.missing', required=False)
+    second.default = 'another-run'
+    upstream = _executor(target_server, _case('/workflow/setup', extractions=[first, second])).execute_case('upstream', 'env', {})
+    assert upstream.extracted_variables['resourceSn'] == 'another-run'
+    outcome = ExecutionService._dependency_outcome(upstream, {'resourceSn'})
+    snapshot = {'dependencies': [{'case_version_id': 'upstream', 'required': True, 'exports': ['resourceSn']}]}
+    overrides, _ = ExecutionService._dependency_overrides(snapshot, {'upstream': outcome})
+    unavailable = ExecutionService._unavailable_dependency_exports(snapshot, {'upstream': outcome})
+    cleanup = _workflow_step('清理', 'POST', '/workflow/cancel', body={'target': '{{resourceSn}}'})
+    handler.workflow_calls = []
+    _executor(target_server, _case('/ok', processing=_workflow_processing(cleanup_steps=[cleanup]))).execute_case('downstream', 'env', {}, dependency_overrides=overrides, unavailable_dependency_exports=unavailable)
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_untrusted_dependency_cannot_control_conditional_cleanup(target_server):
+    _, handler = target_server
+    operation = _workflow_step('有条件清理', 'POST', '/workflow/cancel', body={'target': 'fixed-target'})
+    operation['only_if_variable'] = 'resourceSn'
+    handler.workflow_calls = []
+    _executor(target_server, _case('/ok', processing=_workflow_processing(cleanup_steps=[operation]))).execute_case(
+        'downstream', 'env', {}, dependency_overrides={'resourceSn': 'another-run'}, unavailable_dependency_exports={'resourceSn'})
+    assert not any(call[1] == '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def test_actual_optional_response_output_can_flow_across_two_dependencies(target_server):
+    _, handler = target_server
+    def dependency(version, result, name):
+        outcome = ExecutionService._dependency_outcome(result, {name})
+        snapshot = {'dependencies': [{'case_version_id': version, 'required': False, 'exports': [name]}]}
+        overrides, blocked = ExecutionService._dependency_overrides(snapshot, {version: outcome})
+        assert not blocked
+        return overrides, ExecutionService._unavailable_dependency_exports(snapshot, {version: outcome})
+    first = _extraction('resourceSn', 'json_path', '$.data.resourceSn', required=False)
+    a = _executor(target_server, _case('/workflow/setup', extractions=[first])).execute_case('a', 'env', {})
+    overrides, unavailable = dependency('a', a, 'resourceSn')
+    assert not unavailable
+    second = _extraction('otherSn', 'json_path', '$.data.resourceSn')
+    b = _executor(target_server, _case('/workflow/setup', extractions=[second])).execute_case('b', 'env', {}, dependency_overrides=overrides, unavailable_dependency_exports=unavailable)
+    overrides, unavailable = dependency('b', b, 'otherSn')
+    assert not unavailable
+    cleanup = _workflow_step('清理', 'POST', '/workflow/cancel', body={'target': '{{otherSn}}'})
+    handler.workflow_calls = []
+    result = _executor(target_server, _case('/ok', processing=_workflow_processing(cleanup_steps=[cleanup]))).execute_case('c', 'env', {}, dependency_overrides=overrides, unavailable_dependency_exports=unavailable)
+    assert result.status == 'PASSED'
+    assert ('POST', '/workflow/cancel', {'target': 'resource-1'}) in handler.workflow_calls
+
+
+def test_untrusted_dependency_cannot_drive_extraction_selector(target_server):
+    _, handler = target_server
+    extraction = _extraction('selectedId', 'json_path', '$.records[{{itemIndex}}].id')
+    handler.workflow_calls = []
+    result = _executor(target_server, _case('/workflow/owned-list', extractions=[extraction])).execute_case(
+        'middle', 'env', {}, dependency_overrides={'itemIndex': '0'}, unavailable_dependency_exports={'itemIndex'})
+    assert result.status != 'PASSED'
+    assert not any(call[1] == '/workflow/owned-list' for call in handler.workflow_calls)
+
+
+def test_untrusted_dependency_is_blocked_through_default_header_alias(target_server):
+    from task_server.api_testing.contracts.environment import ResolvedEnvironment
+    from task_server.api_testing.services.environment_service import _PlaceholderResolver
+    base_url, handler = target_server
+    class EnvironmentWithHeaderAlias:
+        def resolve_runtime(self, _revision, overrides, service_name=None):
+            resolver = _PlaceholderResolver({'resourceSn': overrides['resourceSn'], 'nested': '{{resourceSn}}'})
+            headers = {'X-Resource': '{{nested}}'}
+            return ResolvedEnvironment(
+                revision_id='env', environment_id='env', name='test', base_urls={'default': base_url},
+                public_variables=resolver.resolve_all(), secrets={}, headers=resolver.render(headers),
+                service_metadata={}, unresolved_services=(), _renderer=resolver.render,
+                _reference_finder=resolver.referenced_variables,
+                default_header_references=frozenset(resolver.referenced_variables(headers)),
+            )
+    executor = _executor(target_server, _case('/ok'))
+    executor.environment_service = EnvironmentWithHeaderAlias()
+    handler.workflow_calls = []
+    result = executor.execute_case('case', 'env', {}, dependency_overrides={'resourceSn': 'another-run'}, unavailable_dependency_exports={'resourceSn'})
+    assert result.status == 'BROKEN'
+    assert not handler.workflow_calls
+
+
+def test_untrusted_middle_dependency_stays_blocked_across_three_cases(target_server):
+    _, handler = target_server
+    fallback = _extraction('resourceSn', 'json_path', '$.data.resourceSn', required=False)
+    fallback.default = 'another-run'
+    first = _executor(target_server, _case('/ok', extractions=[fallback])).execute_case('a', 'env', {})
+    outcomes = {'a': ExecutionService._dependency_outcome(first, {'resourceSn'})}
+    middle_snapshot = {'dependencies': [{'case_version_id': 'a', 'required': True, 'exports': ['resourceSn']}]}
+    overrides, _ = ExecutionService._dependency_overrides(middle_snapshot, outcomes)
+    unavailable = ExecutionService._unavailable_dependency_exports(middle_snapshot, outcomes)
+    middle = _case('/workflow/cancel', method='POST', body={'target': '{{resourceSn}}'})
+    handler.workflow_calls = []
+    result = _executor(target_server, middle).execute_case('b', 'env', {}, dependency_overrides=overrides, unavailable_dependency_exports=unavailable)
+    assert result.status == 'BROKEN'
+    assert not handler.workflow_calls
+    outcomes['b'] = ExecutionService._dependency_outcome(result, {'resourceSn'})
+    last_snapshot = {'dependencies': [{'case_version_id': 'b', 'required': True, 'exports': ['resourceSn']}]}
+    _, blocked = ExecutionService._dependency_overrides(last_snapshot, outcomes)
+    assert blocked

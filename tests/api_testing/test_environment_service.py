@@ -871,3 +871,13 @@ def test_database_rows_keep_public_and_secret_values_separate(
     assert secret.secret_value_id
     assert secret.is_secret is True
     assert {service.service_name for service in services} == {"default", "share"}
+
+
+def test_runtime_preserves_nested_default_header_references(environment_service, production_environment):
+    production_environment['variables'].update({'resourceSn': 'old', 'alias': '{{resourceSn}}'})
+    production_environment['default_headers'] = {'X-Resource': '{{alias}}'}
+    view = environment_service.import_from_source(production_environment, 'admin')
+    runtime = environment_service.resolve_runtime(view.revision_id, {'resourceSn': 'new'})
+    assert runtime.headers['X-Resource'] == 'new'
+    assert {'alias', 'resourceSn'} <= runtime.default_header_references
+    assert runtime.referenced_variables({'body': '{{alias}}'}) == {'alias', 'resourceSn'}
