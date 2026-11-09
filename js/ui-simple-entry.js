@@ -221,8 +221,8 @@ function attachTaskWorkbench(page){
   panel.append(acceptance);
 }
 function attachPracticeAiResults(page,current){
-  const panel=document.createElement('details');panel.dataset.practiceAiResults='';panel.className='ui-practice-details';
-  panel.innerHTML='<summary>查看任务的 AI 生成状态</summary><p>选择项目和测试任务，查看读取时的生成状态；草稿详情请到 API 测试查看。任务列表最多显示最近 100 条。这里不会发起生成或执行业务。</p><label>项目 <select data-ai-project><option value="">请选择项目</option></select></label> <label>测试任务 <select data-ai-task disabled><option value="">请选择任务</option></select></label> <button type="button" data-ai-refresh>刷新状态</button><p data-ai-result role="status" aria-live="polite"></p>';
+  const panel=document.createElement('details');panel.dataset.practiceAiResults='';panel.className='ui-case-source-picker ui-practice-panel ui-practice-ai';
+  panel.innerHTML='<summary>查看任务的 AI 生成状态</summary><p>选择项目和测试任务，查看读取时的生成状态。草稿详情请到 API 测试查看，任务列表最多显示最近 100 条。这里不会发起生成或执行业务。</p><div class="ui-practice-ai-controls"><label>项目<select data-ai-project><option value="">请选择项目</option></select></label><label>测试任务<select data-ai-task disabled><option value="">请选择任务</option></select></label><button type="button" data-ai-refresh>刷新状态</button></div><p data-ai-result role="status" aria-live="polite"></p>';
   page.append(panel);
   const project=panel.querySelector('[data-ai-project]'),taskSelect=panel.querySelector('[data-ai-task]'),result=panel.querySelector('[data-ai-result]');
   const profile=()=>JSON.stringify([sessionToken(),currentAccessProfile?.user_id,currentAccessProfile?.is_superuser,currentAccessProfile?.scope,currentAccessProfile?.permissions]);
