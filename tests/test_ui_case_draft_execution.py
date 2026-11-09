@@ -588,3 +588,54 @@ def test_probe_invalid_navigation_empty_retry_blocks_actual_trial(draft_env,monk
     edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':questions})
     with pytest.raises(ValueError,match='draft_gate_required'):
         trial(edited,'probe-invalid-first-candidate')
+
+
+def test_exhausted_probe_navigation_blocks_actual_trial(draft_env,monkeypatch):
+    from task_server.services import ui_video_touch_targets as targets
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    assets=[{'name':f['frame_id']} for f in frames+[detail]];calls=[]
+    def model(*a,**kw):
+        calls.append(1)
+        return {'events':[{'action':'navigateBack','target':'页面名','value':'',
+                 'frame_refs':['frame-002'],'observation':'返回','uncertainties':[]}],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(targets.ai,'run_ai_skill',model)
+    hints=targets.probe(frames,[detail],assets,1000,lambda:False)
+    questions=targets.bind_uncertain_hints([],hints)
+    assert len(calls)==2 and questions
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':questions})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'probe-exhausted-navigation')
+
+
+def test_exhausted_probe_survives_whole_window_and_blocks_trial(draft_env,monkeypatch,tmp_path):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail,ai_skill_service as ai
+    frames=[{'frame_id':f'frame-00{i}','timestamp_ms':i*100} for i in (1,2,3)]
+    local_detail={'frame_id':'frame-002-detail','source_frame_id':'frame-002','timestamp_ms':200}
+    monkeypatch.setattr(windows,'load_assets',lambda fs,*a:[{'name':f['frame_id']} for f in fs])
+    def append_detail(_frames,_root,assets,*a):
+        assets.append({'name':local_detail['frame_id']})
+        return [local_detail]
+    monkeypatch.setattr(detail,'append_details',append_detail)
+    calls=[]
+    def model(_skill,payload,**kw):
+        if kw.get('version')=='touch-target':
+            calls.append('probe')
+            return {'events':[{'action':'navigateBack','target':'不合规','value':'',
+                'frame_refs':['frame-002'],'observation':'返回','uncertainties':[]}],
+                'uncertainties':[],'multiple_scenarios':False}
+        calls.append('observe')
+        return {'events':[{'action':'aiTap','target':'打开页面','value':'',
+                 'frame_refs':['frame-001'],'observation':'页面显示','uncertainties':[]}],
+                'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    observed,_=windows.observe_windows(frames,1000,tmp_path,lambda:False)
+    assert calls==['probe','probe','observe']
+    assert observed['events'][0]['target']=='打开页面'
+    assert any('核对' in q for q in observed['uncertainties'])
+    draft,_=draft_env
+    edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':observed['uncertainties']})
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(edited,'whole-window-exhausted-probe')

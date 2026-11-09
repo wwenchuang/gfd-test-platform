@@ -1,4 +1,5 @@
 """Read pointer targets in a small context before observing the full window."""
+import copy
 import re
 from . import ai_skill_service as ai
 
@@ -57,7 +58,16 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
                 payload['validation_feedback'] = error.model_feedback + ' 重新核对同一组原帧，按规定JSON结构输出；不补造操作，不省略events字段。'
             except ValueError as error:
                 if cancelled():raise ValueError('video_cancelled') from None
-                if getattr(error,'action_reason',None)!='navigate_back_contract' or schema_correction_used:raise
+                if getattr(error,'action_reason',None)!='navigate_back_contract':raise
+                # Check every other event and field before any retry or
+                # downgrade. This copy exists only for validation and is never
+                # used as an observation, hint, or executable action.
+                validation_copy=copy.deepcopy(result)
+                for event in validation_copy['events']:
+                    if event.get('action')=='navigateBack':
+                        _text(event['target']); _text(event['value'],4000)
+                        event.update(target='上一页面',value='')
+                validate_analysis(_bind_whole_evidence(validation_copy,selected),selected,duration,probe_secrets)
                 # Root and event questions are unverified, but must not vanish
                 # when a malformed action receives its single format retry.
                 roots=result.get('uncertainties')
@@ -77,6 +87,11 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
                 pending_questions=list(dict.fromkeys(_redact_question(q,probe_secrets) for q in pending_questions))
                 _check_question_count(pending_questions,30)
                 pending_multiple|=result['multiple_scenarios']
+                if schema_correction_used:
+                    # No candidate from an invalid auxiliary response is a
+                    # verified action. Continue only with a mandatory review.
+                    checked={'events':[],'uncertainties':[],'multiple_scenarios':False}
+                    break
                 schema_correction_used = True
                 payload['validation_feedback']='上次返回动作格式不符合合同。仅在原帧支持主动返回时使用navigateBack，target必须为上一页面、value必须为空字符串；不能确认时保留疑问，不编造动作。重新核对同一组原帧。'
         if cancelled():
