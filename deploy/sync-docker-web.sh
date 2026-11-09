@@ -10,6 +10,13 @@ SOURCE_JS="${SOURCE_JS:-/opt/midscene-task-platform/js}"
 SOURCE_CACHE_CONF="${SOURCE_CACHE_CONF:-/opt/midscene-task-platform/deploy/nginx-static-cache.conf}"
 TARGET_HTML="${TARGET_HTML:-}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+static_sources=("${SOURCE_HTML}")
+for source in "${SOURCE_TRACE_VIEWER}" "${SOURCE_ASSETS}" "${SOURCE_CSS}" "${SOURCE_JS}"; do
+  if [ -e "${source}" ] || [ -L "${source}" ]; then static_sources+=("${source}"); fi
+done
+python3 "${SCRIPT_DIR}/static_evidence_guard.py" "${static_sources[@]}"
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "缺少 docker 命令"
   exit 1
