@@ -329,11 +329,127 @@ def test_local_result_outside_initial_planning_images_is_bound(monkeypatch,tmp_p
 
 def test_whole_frame_limit_rejects_before_model(monkeypatch,tmp_path):
     from task_server.services import ui_video_analysis as va,ai_skill_service as ai
-    from task_server.services.ui_video_source_service import MAX_FRAMES
+    from task_server.services.ui_video_source_service import MAX_ORDINARY_FRAMES
     monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected AI'))
-    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(MAX_FRAMES+1)]
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(MAX_ORDINARY_FRAMES+1)]
     with pytest.raises(ValueError,match='video_vision_limit'):
         va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+
+
+@pytest.mark.parametrize('count',[361,384])
+def test_extended_whole_frames_reach_model_with_actual_jpegs(monkeypatch,tmp_path,count):
+    from PIL import Image
+    from task_server.services import ui_video_analysis as va, ai_skill_service as ai
+    folder=tmp_path/'frames';folder.mkdir()
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(count)]
+    for frame in fs:
+        Image.new('RGB',(32,32),'white').save(folder/(frame['frame_id']+'.jpg'))
+    calls=[]
+    def model(*args,**kwargs):
+        calls.append(True)
+        raise RuntimeError('model_reached')
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    with pytest.raises(RuntimeError,match='model_reached'):
+        va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+    assert calls==[True]
+
+
+def test_extended_whole_frames_missing_tail_fails_before_model(monkeypatch,tmp_path):
+    from PIL import Image
+    from task_server.services import ui_video_analysis as va, ai_skill_service as ai
+    folder=tmp_path/'frames';folder.mkdir()
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(361)]
+    for frame in fs[:-1]:
+        Image.new('RGB',(32,32),'white').save(folder/(frame['frame_id']+'.jpg'))
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected AI'))
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+
+
+def test_extended_whole_frames_corrupt_tail_fails_before_model(monkeypatch,tmp_path):
+    from PIL import Image
+    from task_server.services import ui_video_analysis as va, ai_skill_service as ai
+    folder=tmp_path/'frames';folder.mkdir()
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(361)]
+    for frame in fs[:-1]:
+        Image.new('RGB',(32,32),'white').save(folder/(frame['frame_id']+'.jpg'))
+    (folder/(fs[-1]['frame_id']+'.jpg')).write_bytes(b'not a jpeg')
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected AI'))
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+
+
+def test_extended_whole_frames_oversized_late_window_fails_before_model(monkeypatch,tmp_path):
+    from PIL import Image
+    from task_server.services import ui_video_analysis as va, ai_skill_service as ai
+    folder=tmp_path/'frames';folder.mkdir()
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(361)]
+    for frame in fs:
+        Image.new('RGB',(32,32),'white').save(folder/(frame['frame_id']+'.jpg'))
+    for frame in fs[300:302]:
+        path=folder/(frame['frame_id']+'.jpg')
+        with path.open('ab') as stream:stream.write(b'\0'*(4_000_000-path.stat().st_size))
+    assert sum(path.stat().st_size for path in folder.iterdir())<32*1024*1024
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected AI'))
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+
+
+def test_extended_whole_frames_include_temporal_context_in_byte_preflight(monkeypatch,tmp_path):
+    from PIL import Image
+    from task_server.services import ui_video_analysis as va, ai_skill_service as ai
+    from task_server.services.ui_video_windows import observation_windows,temporal_context_frames
+    folder=tmp_path/'frames';folder.mkdir()
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(361)]
+    for frame in fs:
+        Image.new('RGB',(32,32),'white').save(folder/(frame['frame_id']+'.jpg'))
+    selected={fs[21]['frame_id'],fs[55]['frame_id']}
+    windows=observation_windows(fs)
+    assert not any(selected<={f['frame_id'] for f in window} for window in windows)
+    assert any(selected<={f['frame_id'] for f in window+temporal_context_frames(window,fs)} for window in windows)
+    for frame in (fs[21],fs[55]):
+        path=folder/(frame['frame_id']+'.jpg')
+        with path.open('ab') as stream:stream.write(b'\0'*(4_000_000-path.stat().st_size))
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected AI'))
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+
+
+def test_extended_whole_frames_truncated_jpeg_fails_before_model(monkeypatch,tmp_path):
+    from PIL import Image
+    from task_server.services import ui_video_analysis as va, ai_skill_service as ai
+    folder=tmp_path/'frames';folder.mkdir()
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(360)]
+    fs.append({'frame_id':'frame-end','timestamp_ms':36000})
+    for frame in fs:
+        Image.new('RGB',(32,32),'white').save(folder/(frame['frame_id']+'.jpg'))
+    tail=folder/'frame-end.jpg';tail.write_bytes(tail.read_bytes()[:-2])
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:pytest.fail('unexpected AI'))
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+
+
+def test_extended_whole_frames_real_end_jpeg_reaches_model(monkeypatch,tmp_path):
+    from PIL import Image
+    from task_server.services import ui_video_analysis as va, ai_skill_service as ai
+    folder=tmp_path/'frames';folder.mkdir()
+    fs=[{'frame_id':f'frame-{i:03d}','timestamp_ms':i*100} for i in range(360)]
+    fs.append({'frame_id':'frame-end','timestamp_ms':36000})
+    for frame in fs:
+        Image.new('RGB',(32,32),'white').save(folder/(frame['frame_id']+'.jpg'))
+    monkeypatch.setattr(ai,'run_ai_skill',lambda *a,**kw:(_ for _ in ()).throw(RuntimeError('model_reached')))
+    with pytest.raises(RuntimeError,match='model_reached'):
+        va.analyze_whole_frames({'media':{'frames':fs,'duration_ms':60000}},tmp_path,lambda:False)
+
+
+def test_extended_whole_frames_decompression_bomb_is_a_bounded_failure(monkeypatch,tmp_path):
+    from PIL import Image
+    from task_server.services import ui_video_analysis as va
+    folder=tmp_path/'frames';folder.mkdir()
+    Image.new('RGB',(32,32),'white').save(folder/'frame-001.jpg')
+    monkeypatch.setattr(Image,'MAX_IMAGE_PIXELS',500)
+    with pytest.raises(ValueError,match='video_vision_limit'):
+        va._check_extended_whole_assets([{'frame_id':'frame-001','timestamp_ms':0}],tmp_path,lambda:False)
 
 @pytest.mark.parametrize('second_start,second_target,expected',[(28,'姓名牌',1),(29,'姓名牌',2),(28,'取消打印',2)])
 def test_cross_window_same_start_nested_click_evidence_is_one_action(monkeypatch,tmp_path,second_start,second_target,expected):

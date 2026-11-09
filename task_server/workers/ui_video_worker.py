@@ -13,7 +13,7 @@ from task_server.services.ui_video_source_service import decode_video
 
 _LOG=logging.getLogger(__name__)
 _FAILURE_CODES=frozenset({
-    'video_decoder_missing','video_split_required','video_limits','video_decode_invalid',
+    'video_decoder_missing','video_split_required','video_weak_evidence_limit','video_frame_bytes_limit','video_limits','video_decode_invalid',
     'video_metadata_invalid','video_frames_invalid','video_decode_timeout','video_memory_limit',
     'video_cancelled','video_vision_limit','video_action_invalid','video_model_invalid',
     'video_model_timeline','video_required_action_missing','video_observation_missing','video_reference_invalid',
@@ -197,7 +197,7 @@ def analyze_video_source(store,identifier):
         with actor_context(document['actor']):
             require_ui_actor(document['actor'],permission='ui.edit',app_id=app);_application(app)
             stage='decode'
-            media=decode_video(store.root/identifier/'source.mp4',store.root/identifier/'frames',cancelled)
+            media=decode_video(store.root/identifier/'source.mp4',store.root/identifier/'frames',cancelled,True)
             if media['black'] or media['static']:
                 store.transition(identifier,{'decoding'},'review_needed',expected_version=version,expected_owner=owner,expected_app=app,media=media,error='黑屏或静止视频没有可靠操作证据，请选择包含完整操作和结束结果的片段')
                 return
@@ -240,6 +240,8 @@ def analyze_video_source(store,identifier):
                   'video_expected_missing':'未能确认点击或滚动后的稳定结果，请保留操作后画面再重试；原视频保留',
                   'video_decoder_missing':'服务器缺少 ffmpeg/ffprobe，请管理员安装并配置 UI_VIDEO_FFMPEG/UI_VIDEO_FFPROBE 后重试',
                   'video_split_required':'视频操作变化过于密集，超出完整证据容量，请缩短连续场景后重试',
+                  'video_weak_evidence_limit':'细微画面变化过多，超出证据容量，建议缩短片段后重试；原视频保留',
+                  'video_frame_bytes_limit':'抽取画面超过大小上限，请压缩画质或缩短片段后重试；原视频保留',
                   'video_retry_invalid':'失败重试与后续业务无法可靠区分，请核对录屏；原视频保留',
                   'video_limits':'视频超过10分钟或画面尺寸限制，请压缩或分段上传',
                   'video_decode_invalid':'视频无法完整解码，请检查格式伪装、损坏或截断后重新导出',
