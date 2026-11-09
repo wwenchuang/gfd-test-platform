@@ -84,7 +84,9 @@ static_sources=("${SRC_DIR}/task-manager.html" "${SRC_DIR}/trace-viewer.html")
 for source in "${SRC_DIR}/assets" "${SRC_DIR}/css" "${SRC_DIR}/js" "${SRC_DIR}/api-test"; do
   if [ -e "${source}" ] || [ -L "${source}" ]; then static_sources+=("${source}"); fi
 done
-python3 "${SCRIPT_DIR}/static_evidence_guard.py" "${static_sources[@]}"
+# Reserve 79 exclusively for rejection before any installer side effect.
+python3 "${SCRIPT_DIR}/static_evidence_guard.py" "${static_sources[@]}" || exit 79
+trap 'status=$?; if [ "${status}" -eq 79 ]; then exit 80; fi' EXIT
 
 if ! python3 - <<'PY' >/dev/null 2>&1
 import pypdf

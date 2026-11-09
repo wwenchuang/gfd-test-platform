@@ -32,6 +32,8 @@ class NativeVideoDeploymentTests(unittest.TestCase):
         (self.source / 'deploy').mkdir()
         shutil.copyfile(ROOT / 'deploy/package-server.sh',
                         self.source / 'deploy/package-server.sh')
+        shutil.copyfile(ROOT / 'deploy/static_evidence_guard.py',
+                        self.source / 'deploy/static_evidence_guard.py')
         for name in ('midscene-upload.py', 'midscene_upload_compat.py',
                      'requirements-api-testing.txt', 'requirements-api-testing-dev.txt',
                      'task-manager.html', 'trace-viewer.html',

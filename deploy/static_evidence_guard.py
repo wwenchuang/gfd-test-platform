@@ -6,11 +6,13 @@ coordinate writers: scanning and subsequent publication are separate operations.
 """
 import gzip
 import hashlib
+import io
 import os
 import re
 import stat
 import sys
 import zlib
+import zipfile
 
 # SHA-256 of the lowercased known historical identifiers and path, not the
 # underlying values. Do not reintroduce those identifiers into public assets.
@@ -51,11 +53,15 @@ def check_file(path):
         if path.lower().endswith('.br'):
             raise ValueError('unsupported compression')
         if path.lower().endswith('.gz') or data.startswith(b'\x1f\x8b'):
-            import io
             with gzip.GzipFile(fileobj=io.BytesIO(data)) as source:
                 data = source.read(MAX_DECODED + 1)
             if len(data) > MAX_DECODED or data.startswith(b'\x1f\x8b'):
                 raise ValueError('decoded limit or nested compression')
+        # Do not publish formats we cannot inspect recursively, even if renamed.
+        archive_magic = (b'7z\xbc\xaf\x27\x1c', b'\xfd7zXZ\x00', b'BZh', b'\x28\xb5\x2f\xfd')
+        if (data.startswith(archive_magic) or data[257:262] == b'ustar'
+                or zipfile.is_zipfile(io.BytesIO(data))):
+            raise ValueError('unsupported archive')
         if contains_signature(data):
             raise ValueError('known evidence')
     finally:

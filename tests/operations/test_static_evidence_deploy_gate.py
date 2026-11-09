@@ -113,3 +113,144 @@ def test_scanner_detects_known_uuid_overlapping_another_uuid(tmp_path, monkeypat
     source = tmp_path / 'overlap.js'
     source.write_bytes(prefix + token)
     assert module.main([str(source)]) != 0
+
+
+def test_updater_rejects_before_sonic_service_or_build_side_effects(tmp_path):
+    fakebin = tmp_path / 'bin'
+    fakebin.mkdir()
+    source = tmp_path / 'source'
+    (source / '.git').mkdir(parents=True)
+    marker = tmp_path / 'mutations.log'
+    git = fakebin / 'git'
+    git.write_text('#!/bin/sh\nif [ "$1" = rev-parse ]; then echo revision; fi\nexit 0\n')
+    git.chmod(0o755)
+    curl = fakebin / 'curl'
+    curl.write_text('#!/bin/sh\nexit 0\n')
+    curl.chmod(0o755)
+    python = fakebin / 'python3'
+    python.write_text('#!/bin/sh\nexit 19\n')
+    python.chmod(0o755)
+    for name in ('npm', 'docker', 'systemctl', 'sudo'):
+        target = fakebin / name
+        target.write_text('#!/bin/sh\nprintf called >> "$TEST_MUTATIONS"\n')
+        target.chmod(0o755)
+    env = {**os.environ, 'PATH': f'{fakebin}:{os.environ["PATH"]}', 'SOURCE_DIR': str(source),
+           'TEST_MUTATIONS': str(marker), 'BUILD_API_TEST': '1'}
+    result = subprocess.run(['bash', str(ROOT / 'deploy/update-main-server.sh')], env=env, capture_output=True)
+    assert result.returncode != 0
+    assert not marker.exists()
+
+
+def test_scanner_rejects_compressed_archive_even_with_unexpected_extension(tmp_path, monkeypatch):
+    import hashlib
+    import importlib.util
+    import zipfile
+    spec = importlib.util.spec_from_file_location('evidence_guard', ROOT / 'deploy/static_evidence_guard.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    token = b'11111111-1111-1111-1111-111111111111'
+    monkeypatch.setattr(module, 'SIGNATURE_DIGESTS', {hashlib.sha256(token).digest()})
+    archive = tmp_path / 'old.js'
+    with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as stream:
+        stream.writestr('bundled.js', token)
+    assert module.main([str(archive)]) != 0
+
+
+def test_updater_checks_again_after_build_before_service_changes(tmp_path):
+    fakebin = tmp_path / 'bin'
+    fakebin.mkdir()
+    source = tmp_path / 'source'
+    (source / '.git').mkdir(parents=True)
+    marker = tmp_path / 'mutations.log'
+    count = tmp_path / 'scan-count'
+    for name, body in {
+        'git': 'if [ "$1" = rev-parse ]; then echo revision; fi; exit 0',
+        'curl': 'exit 0',
+        'python3': 'if [ -f "$TEST_COUNT" ]; then exit 19; else touch "$TEST_COUNT"; exit 0; fi',
+        'npm': 'exit 0',
+        'docker': 'printf docker >> "$TEST_MUTATIONS"',
+        'systemctl': 'printf systemctl >> "$TEST_MUTATIONS"',
+        'sudo': 'printf sudo >> "$TEST_MUTATIONS"',
+    }.items():
+        path = fakebin / name
+        path.write_text('#!/bin/sh\n' + body + '\n')
+        path.chmod(0o755)
+    env = {**os.environ, 'PATH': f'{fakebin}:{os.environ["PATH"]}', 'SOURCE_DIR': str(source),
+           'TEST_MUTATIONS': str(marker), 'TEST_COUNT': str(count), 'BUILD_API_TEST': '1'}
+    result = subprocess.run(['bash', str(ROOT / 'deploy/update-main-server.sh')], env=env, capture_output=True)
+    assert result.returncode != 0
+    assert count.exists()
+    assert not marker.exists()
+
+
+def test_installer_guard_rejection_does_not_trigger_service_restore(tmp_path):
+    fakebin = tmp_path / 'bin'
+    fakebin.mkdir()
+    source = tmp_path / 'source'
+    (source / '.git').mkdir(parents=True)
+    (source / 'deploy').mkdir()
+    (source / 'deploy' / 'install-server.sh').write_text('#!/bin/sh\nexit 79\n')
+    log = tmp_path / 'commands.log'
+    for name, body in {
+        'git': 'if [ "$1" = rev-parse ]; then echo revision; fi; exit 0',
+        'id': 'echo 0', 'curl': 'exit 0', 'python3': 'exit 0',
+        'docker': 'exit 0', 'systemctl': 'printf "%s\\n" "$*" >> "$TEST_LOG"; exit 0',
+        'pm2': 'exit 0',
+    }.items():
+        path = fakebin / name
+        path.write_text('#!/bin/sh\n' + body + '\n')
+        path.chmod(0o755)
+    env = {**os.environ, 'PATH': f'{fakebin}:{os.environ["PATH"]}', 'SOURCE_DIR': str(source),
+           'TEST_LOG': str(log), 'CONFIGURE_SONIC_RESTART': '0', 'SYNC_SONIC_RECORDER_HOOK': '0'}
+    result = subprocess.run(['bash', str(ROOT / 'deploy/update-main-server.sh')], env=env, capture_output=True)
+    assert result.returncode == 79
+    assert not log.exists() or 'start midscene-task.service' not in log.read_text()
+
+
+def test_packager_stops_before_output_mutation_on_rejection(tmp_path):
+    fakebin = tmp_path / 'bin'
+    fakebin.mkdir()
+    python = fakebin / 'python3'
+    python.write_text('#!/bin/sh\nexit 19\n')
+    python.chmod(0o755)
+    output = tmp_path / 'output'
+    env = {**os.environ, 'PATH': f'{fakebin}:{os.environ["PATH"]}', 'OUT_DIR': str(output)}
+    result = subprocess.run(['bash', str(ROOT / 'deploy/package-server.sh')], env=env, capture_output=True)
+    assert result.returncode != 0
+    assert not output.exists()
+
+
+def test_installer_reserves_guard_exit_code_for_preflight_only(tmp_path):
+    fakebin = tmp_path / 'bin'
+    fakebin.mkdir()
+    for name, body in {'id': 'echo 0', 'getent': 'exit 0', 'python3': 'exit 0', 'install': 'exit 79'}.items():
+        path = fakebin / name
+        path.write_text('#!/bin/sh\n' + body + '\n')
+        path.chmod(0o755)
+    env = {**os.environ, 'PATH': f'{fakebin}:{os.environ["PATH"]}'}
+    result = subprocess.run(['bash', str(ROOT / 'deploy/install-server.sh')], env=env, capture_output=True)
+    assert result.returncode == 80
+
+
+def test_updater_keeps_restore_for_real_install_failure(tmp_path):
+    fakebin = tmp_path / 'bin'
+    fakebin.mkdir()
+    source = tmp_path / 'source'
+    (source / '.git').mkdir(parents=True)
+    (source / 'deploy').mkdir()
+    (source / 'deploy' / 'install-server.sh').write_text('#!/bin/sh\nexit 80\n')
+    log = tmp_path / 'commands.log'
+    for name, body in {
+        'git': 'if [ "$1" = rev-parse ]; then echo revision; fi; exit 0',
+        'id': 'echo 0', 'curl': 'exit 0', 'python3': 'exit 0',
+        'docker': 'exit 0', 'systemctl': 'printf "%s\\n" "$*" >> "$TEST_LOG"; exit 0',
+        'pm2': 'exit 0',
+    }.items():
+        path = fakebin / name
+        path.write_text('#!/bin/sh\n' + body + '\n')
+        path.chmod(0o755)
+    env = {**os.environ, 'PATH': f'{fakebin}:{os.environ["PATH"]}', 'SOURCE_DIR': str(source),
+           'TEST_LOG': str(log), 'CONFIGURE_SONIC_RESTART': '0', 'SYNC_SONIC_RECORDER_HOOK': '0'}
+    result = subprocess.run(['bash', str(ROOT / 'deploy/update-main-server.sh')], env=env, capture_output=True)
+    assert result.returncode == 80
+    assert 'start midscene-task.service' in log.read_text()
