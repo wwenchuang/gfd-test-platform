@@ -1,4 +1,5 @@
 """One bounded video consumer per server process; restart requires explicit retry."""
+import copy
 import json
 import logging
 import re
@@ -26,6 +27,45 @@ def _failure_code(error):
     # Never stringify arbitrary model/provider exceptions, even for public state.
     argument=error.args[0] if error.args else None
     return argument if isinstance(error,ValueError) and type(argument) is str and argument in _FAILURE_CODES else 'video_analysis_failed'
+
+
+def _state_overlap_failure(error,document):
+    evidence=getattr(error,'state_overlap_evidence',None)
+    keys={'kind','group_index','group_count','group_frame_ids','repaired','preserved'}
+    event_keys={'event_index','action','frame_refs','start_ms','end_ms'}
+    try:
+        if type(evidence) is not dict or set(evidence)!=keys:return {}
+        media=document['media'];frames=media['frames'];duration=media['duration_ms']
+        if type(frames) is not list or type(duration) is not int or not 0<=duration<=600000:return {}
+        if any(type(f) is not dict or type(f.get('frame_id')) is not str or
+               not re.fullmatch(r'frame-(?:[0-9]{3,6}|end)',f['frame_id']) or
+               type(f.get('timestamp_ms')) is not int or not 0<=f['timestamp_ms']<=duration for f in frames):return {}
+        ids=[f['frame_id'] for f in frames];times={f['frame_id']:f['timestamp_ms'] for f in frames}
+        if len(set(ids))!=len(ids) or [f['timestamp_ms'] for f in frames]!=sorted(f['timestamp_ms'] for f in frames):return {}
+        group=evidence['group_frame_ids'];index=evidence['group_index'];count=evidence['group_count']
+        if (type(index) is not int or type(count) is not int or not 1<=index<=count<=8 or
+            type(group) is not list or not 1<=len(group)<=40 or
+            any(type(r) is not str or r not in times for r in group) or len(set(group))!=len(group)):return {}
+        start=ids.index(group[0])
+        if ids[start:start+len(group)]!=group:return {}
+        for key in ('repaired','preserved'):
+            item=evidence[key]
+            if (type(item) is not dict or set(item)!=event_keys or type(item['event_index']) is not int or
+                not 0<=item['event_index']<120 or type(item['action']) is not str or
+                item['action'] not in {'aiAssert','aiWaitFor'} or type(item['frame_refs']) is not list or
+                not 1<=len(item['frame_refs'])<=8 or
+                any(type(r) is not str or r not in times for r in item['frame_refs']) or
+                len(set(item['frame_refs']))!=len(item['frame_refs']) or
+                type(item['start_ms']) is not int or type(item['end_ms']) is not int or
+                not 0<=item['start_ms']<=item['end_ms']<=duration):return {}
+            stamps=[times[r] for r in item['frame_refs']]
+            if stamps!=sorted(stamps) or any(not item['start_ms']<=t<=item['end_ms'] for t in stamps):return {}
+        new=evidence['repaired'];old=evidence['preserved'];shared=set(new['frame_refs'])&set(old['frame_refs'])
+        overlaps=max(new['start_ms'],old['start_ms'])<=min(new['end_ms'],old['end_ms'])
+        if (not set(new['frame_refs'])<=set(group) or set(old['frame_refs'])<=set(group) or not overlaps or
+            evidence['kind']!=('shared_frame' if shared else 'time_overlap')):return {}
+        return {'state_overlap_evidence':copy.deepcopy(evidence)}
+    except (KeyError,TypeError,ValueError):return {}
 
 
 def _private_target_failure(error,code,document):
@@ -98,6 +138,7 @@ def _private_target_failure(error,code,document):
             1<=evidence['previous_count'] and
             evidence['frame_candidates']<=evidence['value_candidates']<=evidence['target_candidates']<=evidence['action_candidates']<=evidence['candidate_count']):
             result['retry_match_evidence']=dict(evidence)
+        result.update(_state_overlap_failure(error,document))
         return result
     if code=='video_expected_missing':
         evidence=getattr(error,'outcome_failure_evidence',None)

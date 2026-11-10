@@ -495,11 +495,24 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         # A preserved neighbor sharing its evidence with a new local state
         # cannot safely be duplicated or silently replaced.
         state_actions={'aiAssert','aiWaitFor'}
-        if any(new.get('action') in state_actions and old.get('action') in state_actions and
-               (set(new['frame_refs']) & set(old['frame_refs']) or
-                max(new['start_ms'],old['start_ms'])<=min(new['end_ms'],old['end_ms']))
-               for new in repaired['events'] for old in preserved):
-            raise ValueError('video_required_action_missing')
+        conflict=next(((ni,oi,new,old) for ni,new in enumerate(repaired['events'])
+                       for oi,old in enumerate(preserved)
+                       if new.get('action') in state_actions and old.get('action') in state_actions and
+                       (set(new['frame_refs']) & set(old['frame_refs']) or
+                        max(new['start_ms'],old['start_ms'])<=min(new['end_ms'],old['end_ms']))),None)
+        if conflict:
+            error=ValueError('video_required_action_missing')
+            try:
+                ni,oi,new,old=conflict
+                def state_evidence(index,event):
+                    return {'event_index':index,'action':event['action'],'frame_refs':list(event['frame_refs']),
+                            'start_ms':event['start_ms'],'end_ms':event['end_ms']}
+                error.state_overlap_evidence={'kind':'shared_frame' if set(new['frame_refs'])&set(old['frame_refs']) else 'time_overlap',
+                    'group_index':group_index+1,'group_count':len(groups),'group_frame_ids':[f['frame_id'] for f in group],
+                    'repaired':state_evidence(ni,new),'preserved':state_evidence(oi,old)}
+            except (KeyError,TypeError,ValueError):
+                pass  # The original safety failure remains authoritative.
+            raise error
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
             raise ValueError('video_required_action_missing')
