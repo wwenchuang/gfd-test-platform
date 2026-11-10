@@ -690,3 +690,36 @@ def test_real_repair_overlapping_scrolls_block_trial(draft_env,monkeypatch,tmp_p
     edited=DraftStore().revise(draft['draft_id'],'u-a',draft['revision'],{'questions':result['uncertainties']})
     with pytest.raises(ValueError,match='draft_gate_required'):
         trial(edited,'overlapping-repair-scrolls')
+
+
+def test_absorbed_boundary_question_blocks_until_explicit_draft_edit(draft_env,monkeypatch,tmp_path):
+    from task_server.services import ai_skill_service as ai, ui_video_windows as windows
+    from task_server.services import ui_video_reconcile as rec, ui_case_draft_service as service
+    from test_ui_video_adjacent_tap_boundary_v5 import event, FRAMES
+    first=event('选项一',['frame-335','frame-336','frame-337'],176833,176967)
+    second=event('选项二',['frame-337','frame-338','frame-339'],176967,178900)
+    old=[first,second]
+    monkeypatch.setattr(windows,'load_assets',lambda *args:[])
+    def model(*args,**kwargs):
+        rows=[{k:copy.deepcopy(v) for k,v in e.items() if k not in {'start_ms','end_ms','evidence_kind'}} for e in old]
+        rows[1]['target']=rows[0]['target']
+        return {'events':rows,'uncertainties':[],'multiple_scenarios':False,'coverage_resolutions':[]}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    result=rec._repair_coverage(old,{'events':copy.deepcopy(old),'uncertainties':[],
+                                'multiple_scenarios':False},FRAMES,195698,tmp_path,lambda:False,[],{'frame-339'})
+    assert any('边界' in q for q in result['uncertainties'])
+    draft,_=draft_env
+    from task_server import identity
+    original_profile=identity.get_access_profile
+    monkeypatch.setattr(identity,'get_access_profile',lambda name:{**original_profile(name),'permissions':['ui.view','ui.execute','ui.edit']})
+    def update(draft,questions):
+        body={k:copy.deepcopy(draft[k]) for k in ('title','preconditions','steps')}
+        body.update(revision=draft['revision'],questions=questions)
+        with actor_context(ACTORS['a']):return service.update_draft(ACTORS['a'],draft['draft_id'],body)
+    flagged=update(draft,result['uncertainties'])
+    with pytest.raises(ValueError,match='draft_gate_required'):
+        trial(flagged,'v5-boundary-unresolved')
+    edited=update(flagged,[])
+    assert edited['questions']==[]
+    batch=trial(edited,'v5-boundary-explicitly-removed')
+    assert batch['ui_batch_id']
