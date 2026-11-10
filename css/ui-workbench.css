@@ -204,3 +204,53 @@
 .ui-simple-report-row .ui-history-footer em{white-space:nowrap;margin:0}
 .ui-simple[data-ui-mode=reports] .ui-simple-filters{max-width:480px}
 @media(prefers-reduced-motion:reduce){.ui-simple-report-row{transition:none}}
+
+/* Stability evidence lives alongside the existing practice tools. */
+.ui-practice-page > details:has([data-stability-refresh]) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1100px;
+  margin: 12px auto;
+  padding: 18px 20px;
+  color: #edf3f6;
+  background: var(--wb-panel);
+  border: 1px solid var(--wb-border);
+  border-radius: 12px;
+}
+.ui-practice-page details:has(> [data-stability-refresh]) summary {
+  color: #d7e8e9;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ui-practice-page details:has(> [data-stability-refresh]) p {
+  margin: 10px 0;
+  color: var(--wb-muted);
+  line-height: 1.6;
+}
+.ui-practice-page details:has(> [data-stability-refresh]) :is(button, select) {
+  max-width: 100%;
+  min-height: 36px;
+  margin: 4px 8px 4px 0;
+  padding: 6px 12px;
+  color: #e1ebee;
+  background: #1c2932;
+  border: 1px solid #3a4c58;
+  border-radius: 7px;
+  font: inherit;
+}
+.ui-practice-page details:has(> [data-stability-refresh]) button { cursor: pointer; }
+.ui-practice-page details:has(> [data-stability-refresh]) button:hover { border-color: var(--wb-mint); }
+.ui-practice-page details:has(> [data-stability-refresh]) :is(button, select, summary):focus-visible {
+  outline: 2px solid var(--wb-mint);
+  outline-offset: 3px;
+}
+.ui-practice-page details button[data-stability-refresh] {
+  color: #102e28;
+  background: var(--wb-mint);
+  border-color: transparent;
+  font-weight: 650;
+}
+.ui-practice-page [data-stability-state] { color: #c5dad7; }
+.ui-practice-page [data-stability-report] section { margin-top: 8px; }
+.ui-practice-page [data-stability-report] img { border: 1px solid var(--wb-border); border-radius: 8px; }
+.ui-practice-page [data-smoke-example] { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--wb-border); }
