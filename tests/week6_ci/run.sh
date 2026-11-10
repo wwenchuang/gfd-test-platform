@@ -31,7 +31,7 @@ python="$scratch/venv/bin/python"
 "$python" -m pip --isolated install --disable-pip-version-check --no-cache-dir --only-binary=:all: --no-deps -r tests/week6_ci/requirements.lock
 "$python" -m pip check
 cp package.json package-lock.json tests/week1_smoke/ui_smoke.js "$scratch/"
-npm ci --prefix "$scratch" --ignore-scripts --audit=false --fund=false --cache "$scratch/npm-cache"
+(cd "$scratch" && npm ci --include=dev --ignore-scripts --audit=false --fund=false --cache "$scratch/npm-cache")
 stage=browser
 export PLAYWRIGHT_BROWSERS_PATH="$scratch/browsers"
 pw="$scratch/node_modules/playwright/cli.js"
