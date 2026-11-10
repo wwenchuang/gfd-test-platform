@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-import { apiClient, type ApiClient } from '../api/client'
+import { apiClient, ApiClientError, type ApiClient } from '../api/client'
 import type { AiJob, ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useCasesStore } from './cases'
 
@@ -1693,5 +1693,96 @@ describe('cases store', () => {
 
     expect(store.debugExecution).toBeNull()
     expect(store.debugResult).toBeNull()
+  })
+})
+
+describe('AI scoped thinking mode', () => {
+  it('preserves default payload and includes only an explicit off mode', async () => {
+    setActivePinia(createPinia())
+    const store = useCasesStore()
+    vi.spyOn(store, 'pollAiJob').mockResolvedValue()
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { job: { id: 'job-1', state: 'queued', batches: [] } } })
+    await store.generate(['endpoint-1'], 'environment-1', 'intent', 'task-1')
+    expect(post.mock.calls[0][1]).toEqual({endpoint_ids: ['endpoint-1'], environment_revision_id: 'environment-1', intent: 'intent', task_id: 'task-1'})
+    await store.generate(['endpoint-1'], 'environment-1', 'intent', 'task-1', 'off')
+    expect(post.mock.calls[0][0]).toBe('/api/api-testing/v1/ai-jobs')
+    expect(post.mock.calls[1][0]).toBe('/api/api-testing/v1/ai-jobs/thinking-v1')
+    expect(post.mock.calls[1][1]).toEqual({endpoint_ids: ['endpoint-1'], environment_revision_id: 'environment-1', intent: 'intent', task_id: 'task-1', thinking_mode: 'off'})
+  })
+
+  it('fails closed on an old server without retrying the default endpoint', async () => {
+    setActivePinia(createPinia())
+    const store = useCasesStore()
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue(new ApiClientError(404, 'not found'))
+    const poll = vi.spyOn(store, 'pollAiJob')
+    await store.generate(['endpoint-1'], 'environment-1', 'intent', 'task-1', 'off')
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post.mock.calls[0][0]).toBe('/api/api-testing/v1/ai-jobs/thinking-v1')
+    expect(poll).not.toHaveBeenCalled()
+    expect(store.aiError).toContain('当前后台无法接受该请求')
+    expect(store.aiError).toContain('访问权限')
+    expect(store.aiError).toContain('未自动改用默认模式')
+  })
+
+})
+
+describe('version-protected AI failure summary', () => {
+  it.each([
+    ['compatible_worker_timeout', '等待兼容执行器超时', '未发起模型调用'],
+    ['generation_uncertain', '结果不确定', '可能产生费用'],
+  ])('accurately summarizes %s', async (code, first, second) => {
+    setActivePinia(createPinia())
+    const batch = { id: 'b', sequence: 1, state: 'failed_gateway', endpoint_ids: [], requested_model: '', actual_model: '', fallback_used: false, fallback_reason: '', generated_draft_ids: [], validation_errors: [], error_code: code }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: { id: 'j', state: 'failed_gateway', endpoint_ids: [], requested_model: '', actual_model: '', fallback_used: false, summary: {}, batches: [batch] } } })
+    const store = useCasesStore()
+    await store.pollAiJob('j', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiError).toContain(first)
+    expect(store.aiError).toContain(second)
+    if (code === 'generation_uncertain') expect(store.aiError).not.toContain('未生成新草稿')
+  })
+  it('does not erase uncertain outcomes when validation failures occur in another batch', async () => {
+    setActivePinia(createPinia())
+    const batch = { id: 'b', sequence: 1, state: 'failed_gateway', endpoint_ids: [], requested_model: '', actual_model: '', fallback_used: false, fallback_reason: '', generated_draft_ids: [], validation_errors: [], error_code: 'generation_uncertain' }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: { id: 'j', state: 'failed_gateway', endpoint_ids: [], requested_model: '', actual_model: '', fallback_used: false, summary: {}, batches: [batch, { ...batch, id: 'v', state: 'failed_validation', error_code: '', validation_errors: [{code:'output_validation_error', message:'invalid'}] }] } } })
+    const store = useCasesStore()
+    await store.pollAiJob('j', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiError).toContain('结果不确定')
+    expect(store.aiError).toContain('校验')
+    expect(store.aiError).toContain('先核对')
+  })
+})
+
+describe('AI polling state is not mistaken for generation', () => {
+  it('leaves an indefinitely queued task resumable without asserting model execution', async () => {
+    setActivePinia(createPinia())
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: { id:'j', state:'queued', endpoint_ids:[], batches:[] } } })
+    const store = useCasesStore()
+    await store.pollAiJob('j', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiCanResume).toBe(true)
+    expect(store.aiError).toContain('仍在排队')
+    expect(store.aiError).toContain('尚未确认执行器接收')
+    expect(store.aiError).not.toContain('后台生成')
+  })
+  it('reports a status read failure without assuming the worker state', async () => {
+    setActivePinia(createPinia())
+    vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('offline'))
+    const store = useCasesStore()
+    await store.pollAiJob('j', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiCanResume).toBe(true)
+    expect(store.aiError).toContain('无法读取任务状态')
+    expect(store.aiError).not.toContain('后台生成')
+  })
+})
+
+describe('restored queued AI task', () => {
+  it('does not describe a restored queued task as generating', async () => {
+    setActivePinia(createPinia())
+    const client = { get: vi.fn().mockResolvedValue({ data: { job: { id:'j', state:'queued', endpoint_ids:[], batches:[] } } }) }
+    const store = useCasesStore()
+    await store.restoreLatestAiJob('p', 's', client as never)
+    expect(store.aiCanResume).toBe(true)
+    expect(store.aiError).toContain('仍在排队')
+    expect(store.aiError).toContain('尚未确认执行器接收')
+    expect(store.aiError).not.toContain('后台生成')
   })
 })

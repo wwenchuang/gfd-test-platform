@@ -32,6 +32,7 @@ const endpointTreeTab = ref<'all' | 'selected'>('all')
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const executionStarting = ref(false)
+const aiSubmitting = ref(false)
 const localError = ref('')
 let sourceLoadGeneration = 0
 let endpointActivationGeneration = 0
@@ -100,6 +101,10 @@ const aiJobMatchesSelection = computed(() => {
     && aiJobEndpointIds.value.every(id => selected.has(id))
 })
 const visibleAiJob = computed(() => aiJobMatchesSelection.value ? cases.aiJob : null)
+const aiScopeKey = computed(() => JSON.stringify([
+  context.projectId, context.sourceRevisionId, context.environmentRevisionId,
+  tasks.task?.id || '', [...selectedIds.value].sort(),
+]))
 const historicalAiScopeMessage = computed(() => {
   if (!cases.aiJob || !selectedIds.value.length || aiJobMatchesSelection.value) return ''
   const historicalCount = aiJobEndpointIds.value.length
@@ -511,19 +516,37 @@ async function saveDraft() {
     return null
   }
 }
-async function generate(intent: string): Promise<void> {
-  if (!context.environmentRevisionId) { localError.value = '请先选择执行环境'; return }
-  cases.clearAiJob()
-  const task = await saveCurrentTask()
-  if (!task) return
-  await cases.generate([...task.selected_endpoint_ids], context.environmentRevisionId, intent, task.id)
-  if (context.projectId) await tasks.restore(context.projectId)
-  const firstGenerated = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
-  if (firstGenerated) {
-    const version = cases.versions[firstGenerated]
-    const endpoint = assets.endpoints.find(item => item.id === version?.endpoint_id)
-    if (endpoint) await activate(endpoint)
-  }
+async function generate(intent: string, thinkingMode?: 'off'): Promise<void> {
+  if (aiSubmitting.value || cases.aiPolling) return
+  aiSubmitting.value = true
+  try {
+    if (!context.environmentRevisionId) { localError.value = '请先选择执行环境'; return }
+    const session = sessionIdentity()
+    const scope = captureApiExecutionScope(context)
+    const selection = [...selectedIds.value].sort().join('|')
+    cases.clearAiJob()
+    const task = await saveCurrentTask()
+    if (!task) return
+    if (!scope) { localError.value = '登录状态或测试范围已变化，请重新确认后生成。'; return }
+    const isCurrent = () => session === sessionIdentity() && isExecutionScopeCurrent(scope)
+      && task.executionSelectionGeneration === taskSelectionGeneration
+      && [...selectedIds.value].sort().join('|') === selection
+    if (!isCurrent() || [...task.selected_endpoint_ids].sort().join('|') !== selection) {
+      localError.value = '登录状态或测试范围已变化，请重新确认后生成。'
+      return
+    }
+    if (thinkingMode === 'off') await cases.generate([...task.selected_endpoint_ids], scope.environmentRevisionId, intent, task.id, thinkingMode)
+    else await cases.generate([...task.selected_endpoint_ids], scope.environmentRevisionId, intent, task.id)
+    if (!isCurrent()) return
+    if (context.projectId) await tasks.restore(context.projectId, apiClient, { isCurrent })
+    if (!isCurrent()) return
+    const firstGenerated = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
+    if (firstGenerated) {
+      const version = cases.versions[firstGenerated]
+      const endpoint = assets.endpoints.find(item => item.id === version?.endpoint_id)
+      if (endpoint) await activate(endpoint)
+    }
+  } finally { aiSubmitting.value = false }
 }
 async function generateBasicPositive(): Promise<void> {
   const session = sessionIdentity()
@@ -656,6 +679,7 @@ async function editDebugStep(target: { stage: 'setup' | 'main' | 'cleanup'; inde
 
 async function saveCurrentTask(confirmedScope?: ApiExecutionScope, confirmedTaskGeneration = taskSelectionGeneration) {
   const scope = confirmedScope || captureApiExecutionScope(context)
+  const session = sessionIdentity()
   if (!scope) {
     localError.value = '请先选择接口项目、接口版本和执行环境'
     return null
@@ -666,18 +690,18 @@ async function saveCurrentTask(confirmedScope?: ApiExecutionScope, confirmedTask
   }
   localError.value = ''
   try {
-    if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) throw new Error('范围已变化或当前任务已变化，任务未保存，请重新确认。')
+    if (session !== sessionIdentity() || !isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) throw new Error('登录状态或测试范围已变化，任务未保存，请重新确认。')
     const endpointIds = [...selectedIds.value]
     await context.saveContext()
     if (context.error) throw new Error(context.error)
-    if (!isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) throw new Error('范围已变化或当前任务已变化，任务未保存，请重新确认。')
+    if (session !== sessionIdentity() || !isExecutionScopeCurrent(scope) || taskSelectionGeneration !== confirmedTaskGeneration) throw new Error('登录状态或测试范围已变化，任务未保存，请重新确认。')
     const name = taskNameDraft.value.trim() || defaultTaskName()
     const task = await tasks.saveSelection({
       projectId: scope.projectId,
       sourceRevisionId: scope.sourceRevisionId,
       environmentRevisionId: scope.environmentRevisionId,
-    }, endpointIds, name, { isCurrent: () => isExecutionScopeCurrent(scope) && taskSelectionGeneration === confirmedTaskGeneration })
-    if (!isExecutionScopeCurrent(scope)
+    }, endpointIds, name, { isCurrent: () => session === sessionIdentity() && isExecutionScopeCurrent(scope) && taskSelectionGeneration === confirmedTaskGeneration })
+    if (session !== sessionIdentity() || !isExecutionScopeCurrent(scope)
         || (taskSelectionGeneration !== confirmedTaskGeneration
           && !(taskSelectionGeneration === confirmedTaskGeneration + 1 && tasks.task?.id === task.id))) {
       throw new Error('任务已保存，但范围或当前任务已变化，请重新确认。')
@@ -905,7 +929,7 @@ function sourceRevisionLabel(revisionId: string | null): string {
           <CaseEditor v-if="activeDraft" ref="caseEditor" :model-value="activeDraft" :draft-identity="`${activeEndpoint?.id || ''}:${activeVersionId}:${cases.activeGeneratedPreviewId || ''}`" :editing-version="cases.versions[activeVersionId] || null" :dependency-options="dependencyOptions" :endpoint-options="assets.endpoints" :environment-variable-names="context.environmentVariableNames" :environment-revision-id="context.environmentRevisionId || ''" :environment-name="environmentName" :saving="cases.saving || executionStarting" :debugging="debugRunning" :saved-message="cases.savedMessage" :operation-error="localError" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" @debug="submitDebug" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         </main>
-        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :job="visibleAiJob" :generated-cases="aiGeneratedCases" :historical-scope-message="historicalAiScopeMessage" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" :diagnosing-batch-id="cases.aiDiagnosisBatchId" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @diagnose-validation="diagnoseValidation" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />
+        <AiAssistant id="mobile-workbench-panel-ai" role="tabpanel" aria-labelledby="mobile-workbench-tab-ai" :class="['mobile-workbench-pane', { 'mobile-pane-active': mobilePane === 'ai' }]" :selected-count="selectedIds.length" :scope-key="aiScopeKey" :job="visibleAiJob" :generated-cases="aiGeneratedCases" :historical-scope-message="historicalAiScopeMessage" :error="cases.aiError" :polling="cases.aiPolling" :preparing="aiSubmitting && !cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" :diagnosing-batch-id="cases.aiDiagnosisBatchId" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" @diagnose-validation="diagnoseValidation" @open-generated="openAiGenerated" @manage-generated="manageAiGenerated" />
       </div>
     </div>
     </template>
