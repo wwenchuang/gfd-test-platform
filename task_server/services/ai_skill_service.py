@@ -175,6 +175,10 @@ class TouchTargetProviderTimeoutError(RuntimeError):
     """Exact completed Gateway timeout response for the touch-target probe only."""
 
 
+class VideoObservationProviderTimeoutError(RuntimeError):
+    """Exact completed Gateway timeout response for an ordinary video window."""
+
+
 def validate_json_schema_minimal(value, schema, path="$"):
     """最小化 JSON Schema 校验。"""
     expected = schema.get("type")
@@ -563,6 +567,9 @@ def run_ai_skill(
         except TouchTargetProviderTimeoutError:
             runtime_trace.update({"source": "ai_gateway", "error": "touch_target_provider_timeout"})
             raise
+        except VideoObservationProviderTimeoutError:
+            runtime_trace.update({"source": "ai_gateway", "error": "video_observation_provider_timeout"})
+            raise
         except TimeoutError:
             runtime_trace.update({"source": "ai_gateway", "error": f"AI Gateway skill {skill_name} timeout"})
             raise
@@ -638,6 +645,24 @@ def _decode_ai_gateway_json_response(raw, status=200, content_type="", endpoint=
             f"content-type={normalized_type} type={type(data).__name__}"
         )
     return data
+
+
+def _is_exact_observation_timeout(raw, content_type):
+    """Reject ambiguous envelopes only for this narrow retry classification."""
+    if str(content_type).split(';', 1)[0].strip().lower() != 'application/json':
+        return False
+    try:
+        pairs = json.loads(raw, object_pairs_hook=lambda items: items)
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return False
+    if (type(pairs) is not list or len(pairs) != 2 or
+            any(type(item) is not tuple or len(item) != 2 for item in pairs)):
+        return False
+    keys = [item[0] for item in pairs]
+    if set(keys) != {'success', 'error'}:
+        return False
+    values = dict(pairs)
+    return values['success'] is False and values['error'] == 'Request timed out.'
 
 
 def _ai_gateway_response_content_type(response):
@@ -792,11 +817,15 @@ def ai_gateway_skill_content(
                              'http_status':exc.code, 'rejection_code':rejection,
                              'gateway_request_sha256':hashlib.sha256(body).hexdigest()})
             raise RuntimeError('video_stage_gateway_rejected') from None
+        error_data = None
+        error_raw = b''
+        content_type = _ai_gateway_response_content_type(exc)
         try:
+            error_raw = read_response_bytes(exc, AI_MAX_RESPONSE_BYTES, "AI Gateway 错误")
             error_data = _decode_ai_gateway_json_response(
-                read_response_bytes(exc, AI_MAX_RESPONSE_BYTES, "AI Gateway 错误"),
+                error_raw,
                 status=exc.code,
-                content_type=_ai_gateway_response_content_type(exc),
+                content_type=content_type,
                 endpoint=endpoint,
             )
             error_text = str(error_data.get("error") or error_data.get("message") or "AI Gateway skill 调用失败")
@@ -805,6 +834,11 @@ def ai_gateway_skill_content(
         if skill_name == 'ui_video_observe' and version == 'touch-target' and exc.code == 500 and error_text == 'Request timed out.':
             exc.close()
             raise TouchTargetProviderTimeoutError('touch_target_provider_timeout') from None
+        if (skill_name == 'ui_video_observe' and version == 'v1' and whole_video and
+                isinstance(payload, dict) and payload.get('phase') == 'whole-observe' and
+                exc.code == 500 and _is_exact_observation_timeout(error_raw, content_type)):
+            exc.close()
+            raise VideoObservationProviderTimeoutError('video_observation_provider_timeout') from None
         raise RuntimeError(f"AI Gateway HTTP {exc.code}：{error_text}") from exc
     except TimeoutError:
         if stage:

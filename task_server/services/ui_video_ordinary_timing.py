@@ -65,8 +65,8 @@ def span(kind,detail=0,attempt=1):
     except BaseException as error:
         outcome='error'
         try:
-            from .ai_skill_service import TouchTargetProviderTimeoutError
-            if isinstance(error,(TimeoutError,TouchTargetProviderTimeoutError)):outcome='timeout_observed'
+            from .ai_skill_service import TouchTargetProviderTimeoutError,VideoObservationProviderTimeoutError
+            if isinstance(error,(TimeoutError,TouchTargetProviderTimeoutError,VideoObservationProviderTimeoutError)):outcome='timeout_observed'
             elif isinstance(error,ValueError) and error.args==('video_cancelled',):outcome='cancelled'
         except Exception:pass
         raise

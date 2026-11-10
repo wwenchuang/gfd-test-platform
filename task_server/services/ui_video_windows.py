@@ -92,13 +92,16 @@ def observation_windows(frames):
     return [frames[i:i+size] for i in range(0,max(1,len(frames)-4),size-4)]
 
 
-def observe_windows(frames,duration,root,cancelled,progress=None,review_events=None,prior_secrets=()):
+def observe_windows(frames,duration,root,cancelled,progress=None,review_events=None,prior_secrets=(),observation_timeout_retry_budget=None):
     from . import ai_skill_service as ai
     from . import ui_video_ordinary_timing as timing
     from .ui_video_analysis import _bind_whole_evidence,validate_analysis,_text,_check_question_count
     windows=observation_windows(frames)
     events=[];questions=[];secrets=list(prior_secrets);multi=False;previous_end=-1
     touch_target_timeout_retry_budget={'used':False}
+    if observation_timeout_retry_budget is None:observation_timeout_retry_budget={'used':False}
+    if (type(observation_timeout_retry_budget) is not dict or set(observation_timeout_retry_budget)!={'used'} or
+            type(observation_timeout_retry_budget['used']) is not bool):raise ValueError('video_retry_invalid')
     def preserve_new_questions(old,event):
         from .ui_video_business_inputs import _MANUAL
         questions.extend('局部事件待核对：'+q
@@ -150,9 +153,17 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                 if 'validation_feedback' in payload:
                     payload['validation_feedback']=_redact_audit(payload['validation_feedback'],secrets)
                 try:
-                    result=timing.measure('observe_model',lambda:ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
-                        timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False,
-                        **({'allow_missing_video_questions':True} if attempt else {})),attempt=attempt+1)
+                    while True:
+                        if cancelled():raise ValueError('video_cancelled')
+                        try:
+                            result=timing.measure('observe_model',lambda:ai.run_ai_skill('ui_video_observe',payload,image_assets=assets,
+                                timeout=120,retry_count=0,max_tokens=10000,repair_invalid_json=False,
+                                **({'allow_missing_video_questions':True} if attempt else {})),attempt=attempt+1)
+                            break
+                        except ai.VideoObservationProviderTimeoutError:
+                            if cancelled():raise ValueError('video_cancelled') from None
+                            if observation_timeout_retry_budget['used']:raise
+                            observation_timeout_retry_budget['used']=True
                     if cancelled():raise ValueError('video_cancelled')
                     if isinstance(result,dict) and isinstance(result.get('events'),list):
                         secrets.extend(e['value'] for e in result['events'] if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])

@@ -239,12 +239,13 @@ def _overlapping_tap_refs(events):
     return refs
 
 
-def reconcile(events,frames,duration,root,cancelled,secrets,progress=None):
+def reconcile(events,frames,duration,root,cancelled,secrets,progress=None,observation_timeout_retry_budget=None):
     from .ui_video_windows import observe_windows
     # Revisit all decoded pixels. Resampling a long film back to sixty images
     # would lose the before/after states this pass is intended to recover.
     checked,new_secrets=observe_windows(frames,duration,root,cancelled,progress,
-                                       review_events=events,prior_secrets=secrets)
+                                       review_events=events,prior_secrets=secrets,
+                                       observation_timeout_retry_budget=observation_timeout_retry_budget)
     secrets.extend(new_secrets)
     from .ui_video_automatic_motion import (review_refs,disputed_scroll_refs,disputed_tap_scroll_refs,
         contradictory_tap_assertion_refs,fresh_dialog_review_questions,

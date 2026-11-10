@@ -536,14 +536,15 @@ def _analyze_whole_frames(document, root, cancelled, progress=None):
     if not 2<=len(frames)<=MAX_ORDINARY_FRAMES:raise ValueError('video_vision_limit')
     if len(frames)>MAX_FRAMES:_check_extended_whole_assets(frames,root,cancelled)
     from .ui_video_windows import observe_windows
-    observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress)
+    observation_timeout_retry_budget={'used':False}
+    observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress,None,(),observation_timeout_retry_budget)
     first_pass=copy.deepcopy(observed['events'])
     first_root_questions=list(observed['uncertainties'])
     repaired=False
     from .ui_video_reconcile import needs_reconciliation,reconcile
     if needs_reconciliation(first_pass,frames):
         if progress:progress('reconciling',0,1,first_pass)
-        reviewed=reconcile(first_pass,frames,duration,root,cancelled,known_secrets,progress)
+        reviewed=reconcile(first_pass,frames,duration,root,cancelled,known_secrets,progress,observation_timeout_retry_budget)
         observed={**reviewed,'multiple_scenarios':observed['multiple_scenarios'] or reviewed['multiple_scenarios']}
         repaired=True
     else:

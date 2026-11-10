@@ -195,3 +195,23 @@ def test_window_total_closes_on_model_exception_without_retrying_call(monkeypatc
     finished=[r for r in rows(caplog) if r['event']=='end']
     assert [(r['kind'],r['outcome']) for r in finished[-2:]]==[('observe_model','error'),('window_total','error')]
     assert 'PRIVATE_ERROR' not in caplog.text
+
+
+def test_main_observation_timeout_retry_has_separate_redacted_timing(monkeypatch,tmp_path,caplog):
+    from task_server.services import ui_video_windows as windows,ui_video_touch_detail as detail,ai_skill_service as ai
+    frames=[{'frame_id':'frame-001','timestamp_ms':0},{'frame_id':'frame-002','timestamp_ms':100}]
+    monkeypatch.setattr(windows,'load_assets',lambda fs,*args:[{'name':f['frame_id']} for f in fs])
+    monkeypatch.setattr(detail,'append_details',lambda *args,**kwargs:[])
+    calls=[]
+    def model(skill,payload,**kw):
+        calls.append(1)
+        if len(calls)==1:raise ai.VideoObservationProviderTimeoutError('SECRET')
+        return {'events':[],'uncertainties':[],'multiple_scenarios':False}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    monkeypatch.setenv('TASK_UI_VIDEO_TIMING_LOG','1')
+    caplog.set_level(logging.WARNING,logger='task_server.services.ui_video_ordinary_timing')
+    with timing.session(SID,3):windows.observe_windows(frames,200,tmp_path,lambda:False)
+    records=[r for r in rows(caplog) if r['event']=='end' and r['kind']=='observe_model']
+    assert len(calls)==2 and [r['outcome'] for r in records]==['timeout_observed','returned']
+    assert records[0]['call_id']!=records[1]['call_id']
+    assert 'SECRET' not in caplog.text

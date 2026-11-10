@@ -156,9 +156,10 @@ def test_same_analysis_reuses_pixels_but_calls_model_for_both_passes(tmp_path, m
                 'uncertainties':[],'multiple_scenarios':False}
     monkeypatch.setattr(ai, 'run_ai_skill', model)
     monkeypatch.setattr(reconcile, 'needs_reconciliation', lambda *a: True)
-    def second_pass(events, frames, duration, root, cancelled, secrets, progress):
+    def second_pass(events, frames, duration, root, cancelled, secrets, progress, timeout_budget):
         reviewed,_ = windows.observe_windows(frames,duration,root,cancelled,progress,
-                                               review_events=events,prior_secrets=secrets)
+                                               review_events=events,prior_secrets=secrets,
+                                               observation_timeout_retry_budget=timeout_budget)
         return reviewed
     monkeypatch.setattr(reconcile, 'reconcile', second_pass)
     monkeypatch.setattr(delayed, 'review_pending_responses', lambda observed,*a: observed)
