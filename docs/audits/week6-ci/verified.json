@@ -1,0 +1,75 @@
+{
+  "revision": "cda1e77d84210614dbc6f86c7aebe72b436691c4",
+  "results": [
+    {
+      "profile": "pr",
+      "round": 1,
+      "exit": 0,
+      "checks": 2,
+      "expected": "功夫豆测试平台",
+      "actual": "功夫豆测试平台",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "trace_events": 29,
+      "screenshot_sha256": "70b2839d51e568bf6fa933b521cb0cc9c2a01f3fb000fc96c37fbfdc1094993c"
+    },
+    {
+      "profile": "wrong-title",
+      "round": 1,
+      "exit": 1,
+      "checks": 2,
+      "expected": "故意设置不存在的标题",
+      "actual": "功夫豆测试平台",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "trace_events": 29,
+      "screenshot_sha256": "70b2839d51e568bf6fa933b521cb0cc9c2a01f3fb000fc96c37fbfdc1094993c"
+    },
+    {
+      "profile": "nightly",
+      "round": 1,
+      "exit": 0,
+      "checks": 2,
+      "expected": "功夫豆测试平台",
+      "actual": "功夫豆测试平台",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "trace_events": 29,
+      "screenshot_sha256": "70b2839d51e568bf6fa933b521cb0cc9c2a01f3fb000fc96c37fbfdc1094993c"
+    },
+    {
+      "profile": "nightly",
+      "round": 2,
+      "exit": 0,
+      "checks": 2,
+      "expected": "功夫豆测试平台",
+      "actual": "功夫豆测试平台",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "trace_events": 31,
+      "screenshot_sha256": "70b2839d51e568bf6fa933b521cb0cc9c2a01f3fb000fc96c37fbfdc1094993c"
+    },
+    {
+      "profile": "nightly",
+      "round": 3,
+      "exit": 0,
+      "checks": 2,
+      "expected": "功夫豆测试平台",
+      "actual": "功夫豆测试平台",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "trace_events": 31,
+      "screenshot_sha256": "70b2839d51e568bf6fa933b521cb0cc9c2a01f3fb000fc96c37fbfdc1094993c"
+    }
+  ]
+}

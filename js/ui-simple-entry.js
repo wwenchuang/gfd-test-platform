@@ -332,12 +332,12 @@ function attachCatalogWebCheck(page,current){
   const clear=()=>{history.replaceChildren();if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=null;}};
   const valid=()=>{
     const live=current()&&hasPermission('ui.view')&&scope()===snapshot;
-    if(!live){serial++;clear();notice.textContent='账号或权限已变化，请重新打开此页面。';}
+    if(!live){serial++;clear();clearMeasurement();notice.textContent='账号或权限已变化，请重新打开此页面。';}
     return live;
   };
   const stability=document.createElement('details');
   stability.className='ui-practice-details';
-  stability.innerHTML='<summary>Web 回归稳定性</summary><p>同一版本下，10 个核心流程各执行 20 次。每个位置只记录首跑。</p><button type="button" data-stability-refresh>查看最新测量</button> <span aria-live="polite" data-stability-state></span><div data-stability-report></div>';
+  stability.innerHTML='<summary>Web 回归稳定性</summary><p>同一版本下，10 个核心流程各执行 20 次。每个位置只记录首跑。</p><button type="button" data-stability-refresh>查看最新测量</button> <span aria-live="polite" data-stability-state></span><div data-stability-report></div><details data-smoke-example><summary>流水线和视觉演练记录</summary><p>锁定环境下，正向冒烟通过，故意写错登录标题后退出码为 1。登录标识间距增加 12 像素时，视觉比对检出 63,574 个差异像素。人工基线审核待办。</p><button type="button" data-smoke-download>下载复现说明与证据</button><span data-example-state aria-live="polite"></span></details>';
   page.append(stability);
   const summary=stability.querySelector('[data-stability-report]'),state=stability.querySelector('[data-stability-state]');
   const refresh=stability.querySelector('button');
@@ -359,7 +359,7 @@ function attachCatalogWebCheck(page,current){
       const r=data.report;
       if(!Array.isArray(r.rows)||r.rows.length!==r.attempted||r.planned!==200||r.attempted>200)throw Error();
       const percent=n=>r.attempted?(100*n/r.attempted).toFixed(1)+'%':'—';
-      state.textContent=(r.unrun?'进行中':'已结束')+' · '+r.attempted+' / '+r.planned+' · '+uiPracticeTime(r.updated*1000);
+      state.textContent=(r.state==='interrupted'?'已中断':r.unrun?'进行中':r.passed/r.planned>=.95?'已结束 · 达到 95% 目标':'已结束 · 低于 95% 目标')+' · '+r.attempted+' / '+r.planned+' · '+uiPracticeTime(r.updated*1000);
       const line=document.createElement('p');
       line.textContent='首跑通过 '+r.passed+'（'+percent(r.passed)+'），失败 '+r.failed+'，阻塞 '+r.blocked+'（'+percent(r.blocked)+'），未执行 '+r.unrun+'。';
       summary.append(line);
@@ -374,6 +374,25 @@ function attachCatalogWebCheck(page,current){
         const a=document.createElement('a');a.href=url;a.download='web-stability.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
       };
       summary.append(exportButton);
+      const samples=r.rows.filter(row=>/^[a-f0-9]{32}$/.test(row.run_id||''));
+      if(samples.length&&/^[a-f0-9]{32}$/.test(r.id)){
+        const evidence=document.createElement('section'),choice=document.createElement('select');
+        choice.setAttribute('aria-label','选择要查看证据的首跑');
+        for(const row of samples){
+          const option=document.createElement('option');
+          option.textContent='第 '+row.round+' 轮 · '+(labels[row.scenario]||row.scenario)+' · '+({passed:'通过',blocked:'阻塞',failed:'失败'}[row.status]||'');
+          choice.append(option);
+        }
+        evidence.append(choice);
+        let sample=document.createElement('div');
+        choice.onchange=()=>{const replacement=document.createElement('div');sample.replaceWith(replacement);sample=replacement;};
+        for(const [key,title] of [['screenshot','查看该次截图'],['trace','下载该次 trace']]){
+          const button=document.createElement('button');button.type='button';button.textContent=title;
+          button.onclick=()=>{const row=samples[choice.selectedIndex];if(row&&valid()&&ticket===generation)void openArtifact(sample,row.run_id,key,{measurement:r.id,round:row.round},state);};
+          evidence.append(button);
+        }
+        evidence.append(sample);summary.append(evidence);
+      }
     }catch(_){if(valid()&&generation===ticket)state.textContent='读取失败，请核对登录状态后重试。';}
     finally{clearTimeout(timer);uiSimpleDownloads.delete(controller);refresh.disabled=false;}
   };
@@ -393,12 +412,13 @@ function attachCatalogWebCheck(page,current){
       const data=await response.json();if(!valid()||controller.signal.aborted||sequence!==serial)throw Error('session changed');return data;
     }finally{clearTimeout(timer);uiSimpleDownloads.delete(controller);}
   };
-  const openArtifact=async(row,id,item)=>{
-    if(!valid()||busy||!row.isConnected||!/^[a-f0-9]{32}$/.test(id)||!['screenshot','trace'].includes(item))return;
+  const openArtifact=async(row,id,item,measurement=null,feedback=notice)=>{
+    if(!valid()||busy||!row.isConnected||(item!=='example'&&(!/^[a-f0-9]{32}$/.test(id)||!['screenshot','trace'].includes(item))))return;
     setBusy(true);const controller=new AbortController();uiSimpleDownloads.add(controller);artifactRequests.add(controller);const timer=setTimeout(()=>controller.abort(),30000);
     const image=item==='screenshot',mime=image?'image/png':'application/zip',limit=(image?8:30)*1024*1024;
     try{
-      const response=await nativeFetch('/api/ui-executions/web-check/artifact?id='+id+'&item='+item,{headers:authHeaders(),signal:controller.signal,redirect:'error'});
+      const qs=item==='example'?new URLSearchParams({example:'smoke'}):new URLSearchParams({id,item,...(measurement||{})});
+      const response=await nativeFetch('/api/ui-executions/web-check/artifact?'+qs,{headers:authHeaders(),signal:controller.signal,redirect:'error'});
       if(!valid()||controller.signal.aborted||!row.isConnected)return;
       if(!response.ok)throw Object.assign(Error('unavailable'),{status:response.status});
       if((response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase()!==mime||Number(response.headers.get('content-length'))>limit)throw Error('invalid evidence');
@@ -407,11 +427,13 @@ function attachCatalogWebCheck(page,current){
       else {const length=response.headers.get('content-length');if(!length||!/^\d+$/.test(length)||Number(length)<1||Number(length)>limit)throw Error('invalid evidence length');blob=await response.blob();}
       if(!valid()||controller.signal.aborted||!row.isConnected||!blob.size||blob.size>limit)return;
       const src=URL.createObjectURL(blob);
-      if(image){if(previewUrl)URL.revokeObjectURL(previewUrl);previewUrl=src;panel.querySelector('[data-catalog-preview]')?.remove();const img=document.createElement('img');img.dataset.catalogPreview='';img.alt='用例库页面检查截图';img.style.maxWidth='100%';img.style.maxHeight='320px';img.src=src;row.append(img);notice.textContent='已加载本次页面截图。';}
-      else {const link=document.createElement('a');link.href=src;link.download='用例库页面检查-trace.zip';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(src),60000);notice.textContent='已发起 trace 下载，请查看浏览器下载记录。';}
-    }catch(error){if(valid()&&row.isConnected){if([401,403,404].includes(error?.status))clear();notice.textContent=error?.status===401?'登录已失效，请重新登录。':error?.status===403||error?.status===404?'证据不存在或当前账号无权查看。':'证据读取失败，请稍后重试。';}}
+      if(image){if(previewUrl)URL.revokeObjectURL(previewUrl);previewUrl=src;page.querySelector('[data-catalog-preview]')?.remove();const img=document.createElement('img');img.dataset.catalogPreview='';img.alt='用例库页面检查截图';img.style.maxWidth='100%';img.style.maxHeight='320px';img.src=src;row.append(img);feedback.textContent='已加载本次页面截图。';}
+      else {const link=document.createElement('a');link.href=src;link.download=item==='example'?'流水线与视觉演练.zip':'用例库页面检查-trace.zip';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(src),60000);feedback.textContent='已发起证据下载，请查看浏览器下载记录。';}
+    }catch(error){if(valid()&&row.isConnected){if([401,403,404].includes(error?.status)){clear();if(measurement)clearMeasurement();}feedback.textContent=error?.status===401?'登录已失效，请重新登录。':error?.status===403||error?.status===404?'证据不存在或当前账号无权查看。':'证据读取失败，请稍后重试。';}}
     finally{clearTimeout(timer);uiSimpleDownloads.delete(controller);artifactRequests.delete(controller);if(valid())setBusy(false);}
   };
+  const example=stability.querySelector('[data-smoke-example]');
+  example.querySelector('button').onclick=()=>void openArtifact(example,'','example',null,example.querySelector('[data-example-state]'));
   const render=items=>{
     clear();if(!items.length){history.textContent='暂无检查记录。';return;}
     for(const item of items){if(!Object.hasOwn(labels,item?.scenario)&&!item?.scope_changed)continue;const row=document.createElement('section');row.className='ui-week-probe-row';
@@ -527,7 +549,7 @@ function attachUiWeekOneSmoke(slot,current){
   const fail=error=>{notice.textContent=error?.status===403?'没有所需权限或完整应用范围，请联系管理员。':error?.status===401?'登录已失效，请重新登录。':error?.status===429?'已有服务器冒烟正在执行，请稍后刷新结果。':'操作未完成；请求可能仍在服务器执行，请先刷新结果，再检查服务和依赖。';};
   const status=value=>({passed:'通过',failed:'失败',blocked:'阻塞',running:'进行中'})[value]||'状态未知';
   const field=value=>value==null?'未记录':typeof value==='object'?JSON.stringify(value):String(value);
-  const openArtifact=async(row,id,item)=>{
+  const openArtifact=async(row,id,item,measurement=null,feedback=notice)=>{
     if(!valid()||busy||!row.isConnected||!/^[a-f0-9]{32}$/.test(id)||!['positive-screenshot','negative-screenshot','positive-trace','negative-trace'].includes(item))return;
     setBusy(true);notice.textContent='正在读取本人的受控证据…';
     const controller=new AbortController();uiSimpleDownloads.add(controller);

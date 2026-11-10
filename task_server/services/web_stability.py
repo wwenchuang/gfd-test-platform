@@ -3,14 +3,17 @@ import csv
 import fcntl
 import getpass
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import statistics
 import time
 import urllib.request
 import uuid
+import zipfile
 
 from task_server import auth, identity
 from task_server.services import week1_smoke, week5_web_service as web
@@ -36,9 +39,47 @@ def latest(owner, username, token):
         data = json.loads((folder(owner) / 'latest.json').read_text())
     except FileNotFoundError:
         return None
-    if data['scope'] != web._scope(profile):
+    refreshed = web._profile(owner, username, token)
+    if not refreshed or data['scope'] != web._scope(profile) or data['scope'] != web._scope(refreshed):
         return None
-    return data['report']
+    report = data['report']
+    if report['unrun']:
+        with (folder(owner) / 'measurement.lock').open('r') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                report['state'] = 'running'
+            else:
+                report['state'] = 'interrupted'
+    else:
+        report['state'] = 'finished'
+    return report
+
+
+def artifact(actor, query):
+    """Only read an existing round for this user. The evidence reader rechecks scope."""
+    measurement, number = query['measurement'], query['round']
+    if (not re.fullmatch(r'[0-9a-f]{32}', measurement)
+            or not re.fullmatch(r'(?:[1-9]|1[0-9]|20)', number)
+            or not re.fullmatch(r'[0-9a-f]{32}', query['id'])):
+        raise ValueError('not_found')
+    batch = folder(actor[0]) / measurement / number
+    db = batch / 'results.sqlite3'
+    if not db.is_file():
+        raise ValueError('not_found')
+    return web.artifact(*actor, query['id'], query['item'], db_path=db, root=batch/'evidence')
+
+
+def smoke_evidence():
+    files = ('tests/week6_ci/README.md', 'docs/audits/week6-ci/verified.json',
+             'docs/audits/week6-ci/wrong-title-trace.zip', 'docs/audits/week6-ci/wrong-title.png',
+             'docs/audits/week6-visual/README.md', 'docs/audits/week6-visual/spacing-actual.png',
+             'docs/audits/week6-visual/spacing-diff.png', 'tests/week6_visual/baselines/anonymous-login.png')
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in files:
+            archive.write(ROOT/name, name)
+    return buffer.getvalue()
 
 
 def build_report(rows, started, run, fingerprint):

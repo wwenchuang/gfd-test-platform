@@ -1343,3 +1343,23 @@ test('availability refresh still opens advanced tools for advanced workflows',as
  const {w}=fixture(t);w.activeWorkflow='config';const advanced=w.document.querySelector('[data-ui-advanced]');advanced.open=false;
  await w.initUiSimpleAvailability({navigate:false});assert.equal(advanced.open,true);
 });
+test('stability summary keeps partial results and binds screenshot to its round and session',async t=>{
+ const {w}=fixture(t),id='a'.repeat(32),measurement='b'.repeat(32);
+ w.canAccessWorkflow=()=>true;
+ w.apiRequest=async path=>path==='/ui-executions/availability'?{ok:true,enabled:true}:{ok:true};
+ let request,resolveArtifact;
+ w.nativeFetch=async(path,options)=>{
+   if(path.includes('/artifact?')){request={path,options};return new Promise(done=>{resolveArtifact=done;});}
+   return {ok:true,json:async()=>({ok:true,report:{id:measurement,planned:200,attempted:1,unrun:199,passed:1,failed:0,blocked:0,updated:1000,state:'interrupted',median_ms:{ui_catalog_count:1000},rows:[{round:1,scenario:'ui_catalog_count',status:'passed',duration_ms:1000,run_id:id}]}})};
+ };
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();
+ w.document.querySelector('[data-stability-refresh]').click();await wait();await wait();
+ const report=w.document.querySelector('[data-stability-report]');
+ assert.match(report.textContent,/未执行 199/);assert.match(w.document.querySelector('[data-stability-state]').textContent,/已中断/);
+ Array.from(report.querySelectorAll('button')).find(b=>b.textContent==='查看该次截图').click();
+ assert.ok(request.options.headers.has('Authorization'));
+ const url=new URL(request.path,'http://localhost');
+ assert.deepEqual(Object.fromEntries(url.searchParams),{id,item:'screenshot',measurement,round:'1'});
+ w.sessionStorage.setItem('sessionToken','another-session');resolveArtifact({ok:false,status:403});await wait();await wait();
+ assert.equal(report.children.length,0);
+});

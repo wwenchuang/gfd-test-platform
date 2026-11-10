@@ -2904,18 +2904,28 @@ def _get_week5_web_artifact(handler, qs):
     if not actor:
         return
     try:
-        if set(qs) != {'id','item'} or qs['item'] not in ('screenshot','trace'):
+        from task_server.services import web_stability
+        if qs == {'example':'smoke'}:
+            data = web_stability.smoke_evidence()
+        elif qs.get('item') not in ('screenshot','trace'):
             raise ValueError('not_found')
-        data = week5_web_service.artifact(*actor, qs['id'], qs['item'])
+        elif set(qs) == {'id','item','measurement','round'}:
+            data = web_stability.artifact(actor, qs)
+        elif set(qs) == {'id','item'}:
+            data = week5_web_service.artifact(*actor, qs['id'], qs['item'])
+        else:
+            raise ValueError('not_found')
     except (ValueError, OSError):
         handler._json({'ok':False, 'error':'证据不存在或无权访问'}, 404)
         return
     handler.send_response(200)
     handler._cors()
-    handler.send_header('Content-Type', 'image/png' if qs['item'] == 'screenshot' else 'application/zip')
+    handler.send_header('Content-Type', 'image/png' if qs.get('item') == 'screenshot' else 'application/zip')
     handler.send_header('Cache-Control', 'private, no-store')
     handler.send_header('X-Content-Type-Options', 'nosniff')
-    if qs['item'] == 'trace':
+    if qs.get('example') == 'smoke':
+        handler.send_header('Content-Disposition', 'attachment; filename="platform-smoke-evidence.zip"')
+    elif qs.get('item') == 'trace':
         handler.send_header('Content-Disposition', 'attachment; filename="web-check-trace.zip"')
     handler.send_header('Content-Length', str(len(data)))
     handler.end_headers()
