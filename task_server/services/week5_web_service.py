@@ -29,6 +29,7 @@ _FREE_RESERVE = 1024 * 1024 * 1024
 _SHM_FREE_RESERVE = 512 * 1024 * 1024
 _SHM_RUN_LIMIT = 128 * 1024 * 1024
 _SINGLE_FILE_LIMIT = 32 * 1024 * 1024
+SCENARIOS = ('ui_catalog_count', 'ui_catalog_filter', 'ui_catalog_empty')
 
 
 class ResourceLimit(Exception):
@@ -96,8 +97,10 @@ def _scratch_within_limit(root):
         return False
 
 
-def _bounded_process(argv, env, token, owner, *, scratch=None):
-    payload = json.dumps({'token':token, 'userId':owner}, separators=(',', ':')).encode()
+def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_catalog_count'):
+    if scenario not in SCENARIOS:
+        raise ValueError('invalid_scenario')
+    payload = json.dumps({'token':token, 'userId':owner, 'scenario':scenario}, separators=(',', ':')).encode()
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                env=env, start_new_session=True)
     first = True
@@ -124,13 +127,23 @@ def _bounded_process(argv, env, token, owner, *, scratch=None):
     if process.returncode != 0 or len(stdout) > 4096:
         raise ValueError('browser_unavailable')
     result = json.loads(stdout)
-    if (not isinstance(result, dict) or result.get('scenario') != 'ui_catalog_count' or result.get('version') != 1
+    if (not isinstance(result, dict) or result.get('scenario') != scenario or result.get('version') != 1
             or result.get('status') not in ('passed', 'failed', 'blocked')
             or result.get('error_kind') not in (None, 'business', 'authentication', 'environment', 'evidence')):
         raise ValueError('invalid_browser_result')
     if result['status'] == 'passed' and (result['error_kind'] is not None or type(result.get('total')) is not int or result['total'] < 0):
         raise ValueError('invalid_browser_result')
-    return {key: result[key] for key in ('scenario','version','status','error_kind','total') if key in result}
+    asset = result.get('asset')
+    if scenario != 'ui_catalog_filter' and asset is not None:
+        raise ValueError('invalid_browser_result')
+    if asset is not None or (scenario == 'ui_catalog_filter' and result['status'] in ('passed', 'failed')):
+        if (not isinstance(asset, dict) or set(asset) != {'app_id','case_id','revision'}
+                or not isinstance(asset['app_id'], str) or not 0 < len(asset['app_id']) <= 128
+                or not isinstance(asset['case_id'], str) or not 0 < len(asset['case_id']) <= 512
+                or not isinstance(asset['revision'], str) or len(asset['revision']) != 64
+                or any(char not in '0123456789abcdef' for char in asset['revision'])):
+            raise ValueError('invalid_browser_result')
+    return {key: result[key] for key in ('scenario','version','status','error_kind','total','asset') if key in result}
 
 
 def _load_private(path, limit):
@@ -145,7 +158,7 @@ def _load_private(path, limit):
         os.close(fd)
 
 
-def _execute(owner, token):
+def _execute(owner, token, scenario='ui_catalog_count'):
     scratch = Path(_memory_temp())
     try:
         node = week1_smoke._configured_path('TASK_WEEK1_NODE', executable=True)
@@ -159,7 +172,7 @@ def _execute(owner, token):
             if not os.path.isabs(fontconfig) or not Path(fontconfig).is_file() or not os.access(fontconfig, os.R_OK):
                 raise ValueError('dependency_unavailable')
             env['FONTCONFIG_FILE'] = fontconfig
-        result = _bounded_process(_core_limited_args([node, str(_WORKER)]), env, token, owner, scratch=scratch)
+        result = _bounded_process(_core_limited_args([node, str(_WORKER)]), env, token, owner, scratch=scratch, scenario=scenario)
         image = _load_private(scratch / 'screenshot.png', 8 * 1024 * 1024)
         trace = _load_private(scratch / 'trace.zip', 30 * 1024 * 1024)
         return result, image, trace
@@ -244,9 +257,11 @@ def _save_files(root, run_id, image, trace):
         raise
 
 
-def run(owner, username, token, *, db_path=None, root=None):
+def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, root=None):
+    if scenario not in SCENARIOS:
+        raise ValueError('invalid_scenario')
     profile = _profile(owner, username, token)
-    blocked = {'scenario':'ui_catalog_count', 'version':1, 'status':'blocked', 'error_kind':'authentication'}
+    blocked = {'scenario':scenario, 'version':1, 'status':'blocked', 'error_kind':'authentication'}
     if not profile:
         return blocked
     scope = _scope(profile)
@@ -257,7 +272,7 @@ def run(owner, username, token, *, db_path=None, root=None):
         if not _check_quota(db_path, owner, 38 * 1024 * 1024, root):
             return dict(blocked, error_kind='evidence', detail='quota_exceeded')
         try:
-            result, image, trace = _execute(owner, token)
+            result, image, trace = _execute(owner, token, scenario)
         except Exception:
             return dict(blocked, error_kind='environment')
         refreshed = _profile(owner, username, token)
@@ -273,7 +288,7 @@ def run(owner, username, token, *, db_path=None, root=None):
             if not refreshed or _scope(refreshed) != scope:
                 return blocked
             created = time.time()
-            pending_result = {'scenario':'ui_catalog_count', 'version':1, 'status':'blocked',
+            pending_result = {'scenario':scenario, 'version':1, 'status':'blocked',
                               'error_kind':'evidence', 'id':run_id, 'created':created,
                               'deletion_pending':True, 'artifacts':[]}
             payload = {'result':pending_result, 'scope':scope, 'state':'saving',

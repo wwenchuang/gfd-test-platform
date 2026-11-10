@@ -142,6 +142,9 @@
       if(s.notificationChannel?.channel_id!==channel?.channel_id)s.notifyEnabled=false;
       s.notificationChannel=channel;
       renderCases(s,data);
+      // Mark the query whose response has actually been rendered; callers must
+      // not infer completion solely from a count that may be unchanged.
+      s.node.querySelector('[data-ui-cases]').dataset.uiCatalogQuery=query.toString();
     }catch(error){
       if(s.app&&['app_forbidden','app_unavailable'].includes(error.code)&&!s.uncertain){changeApp(s,'');notice(s,'之前选择的应用已不可用，请重新选择。',true);}
       else{

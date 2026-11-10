@@ -5,6 +5,18 @@ const {JSDOM}=require('../api-testing-ui/node_modules/jsdom');
 const wait=()=>new Promise(setImmediate);
 const mockPracticeFetch=w=>{const handler=w.apiRequest;w.nativeFetch=async(path,options)=>({ok:true,status:200,json:async()=>({ok:true,data:await handler(path.slice(4),options)})});};
 const mockCatalogFetch=(w,artifact)=>{w.nativeFetch=async(path,options={})=>{if(!path.startsWith('/api/ui-executions/web-check')||path.includes('/artifact'))return artifact(path,options);try{const value=await w.apiRequest(path.slice(4),{...options,body:options.body?JSON.parse(options.body):undefined});return {ok:true,status:200,json:async()=>value};}catch(error){return {ok:false,status:error.status||500};}};};
+test('catalog checks expose separate real-asset filter and empty-search cases',async t=>{
+ const {w}=fixture(t),posts=[];w.canAccessWorkflow=()=>true;
+ w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(options.method==='POST'){posts.push(options.body);return {ok:true,result:{id:'a'.repeat(32),scenario:options.body.scenario,status:'passed',total:0,artifacts:['trace']}};}return {ok:true,results:[]};};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');
+ for(const scenario of ['ui_catalog_filter','ui_catalog_empty']){const button=panel.querySelector(`[data-catalog-scenario="${scenario}"]`);assert.ok(button);button.click();await wait();await wait();assert.equal(posts.at(-1).scenario,scenario);assert.ok(panel.querySelector('[data-catalog-artifact="trace"]'));}
+ assert.match(panel.textContent,/空.*搜索/);assert.match(panel.textContent,/不代表.*业务/);
+});
+test('catalog filter evidence identifies its real asset version for repeatability',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const asset={app_id:'real.app',case_id:'real-case',revision:'a'.repeat(64)};
+ w.apiRequest=async(path,options={})=>path==='/ui-executions/availability'?{ok:true,enabled:true}:options.method==='POST'?{ok:true,result:{id:'f'.repeat(32),scenario:'ui_catalog_filter',status:'passed',total:1,asset,artifacts:[]}}:{ok:true,results:[]};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-scenario="ui_catalog_filter"]').click();await wait();await wait();assert.match(panel.textContent,/real.app/);assert.match(panel.textContent,/real-case/);assert.match(panel.textContent,new RegExp('a{64}'));
+});
 test('read-only catalog check is explicit and keeps the evidence distinct from business success',async t=>{
  const {w}=fixture(t),calls=[];w.canAccessWorkflow=()=>true;
  w.apiRequest=async(path,options={})=>{calls.push([path,options]);if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(path==='/ui-executions/web-check'&&options.method==='POST')return {ok:true,result:{id:'a'.repeat(32),scenario:'ui_catalog_count',status:'passed',total:7,created:1730000000,artifacts:['screenshot','trace']}};return {ok:true,results:[]};};

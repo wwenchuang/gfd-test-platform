@@ -28,6 +28,23 @@ PNG = b'\x89PNG\r\n\x1a\n' + b'test-pixels'
 
 
 class ServiceTest(unittest.TestCase):
+    def test_filter_result_records_owned_asset_revision_and_cannot_relabel_another_scenario(self):
+        asset={'app_id':'app1','case_id':'case-a','revision':'a'*64}
+        worker={'scenario':'ui_catalog_filter','version':1,'status':'passed','error_kind':None,'total':1,'asset':asset}
+        command=[sys.executable,'-c','import json; print(json.dumps('+repr(worker)+'))']
+        result=service._bounded_process(command,{'PATH':'/usr/bin:/bin'},TOKEN,'user1',scenario='ui_catalog_filter')
+        self.assertEqual(result['asset'],asset)
+        with self.assertRaises(ValueError):
+            service._bounded_process(command,{'PATH':'/usr/bin:/bin'},TOKEN,'user1',scenario='ui_catalog_empty')
+        with tempfile.TemporaryDirectory() as tmp, patch.object(service,'_profile',return_value=PROFILE), \
+             patch.object(service,'_execute',return_value=(result,PNG,trace_bytes())):
+            db,root=Path(tmp)/'runs.db',Path(tmp)/'files'
+            saved=service.run('user1','user',TOKEN,scenario='ui_catalog_filter',db_path=db,root=root)
+            self.assertEqual(saved['asset'],asset)
+            self.assertEqual(service.list_results('user1','user',TOKEN,db_path=db)[0]['asset'],asset)
+            with patch.object(service,'_profile',return_value=dict(PROFILE,scope={'ui_apps':[]})):
+                self.assertNotIn('asset',service.list_results('user1','user',TOKEN,db_path=db)[0])
+
     def test_identity_error_during_ready_update_rolls_back_to_saving(self):
         with tempfile.TemporaryDirectory() as tmp, \
              patch.object(service, '_execute', return_value=(WORKER, PNG, trace_bytes())):

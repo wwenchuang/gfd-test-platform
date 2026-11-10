@@ -2,7 +2,19 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {allowRequest, responseContainsSecret, classifyIncomplete, recordRouteError} = require('../task_server/fixtures/week5_web/policy');
+const crypto = require('node:crypto');
+const {allowRequest, responseContainsSecret, classifyIncomplete, recordRouteError, catalogTarget} = require('../task_server/fixtures/week5_web/policy');
+
+test('filter target comes from an authorized visible group and a real named case', () => {
+ const item={app_id:'real.app',case_id:'case1',task_name:'真实用例',execution_eligible:true,revision:'a'.repeat(64)};
+ const data={apps:[{app_id:'real.app'}],groups:[{app_id:'real.app',items:[item]}]};
+ assert.deepEqual(catalogTarget(data),{app:'real.app',caseId:'case1',name:'真实用例',revision:'a'.repeat(64)});
+ assert.equal(catalogTarget({...data,apps:[]}),null);
+ assert.equal(catalogTarget({...data,groups:[{app_id:'other',items:[item]}]}),null);
+ assert.equal(catalogTarget({...data,groups:[{app_id:'real.app',items:[{...item,task_name:'a'.repeat(201)}]}]}),null);
+ assert.equal(catalogTarget({...data,groups:[{app_id:'real.app',items:[{...item,revision:''}]}]}),null);
+ assert.equal(catalogTarget({apps:[],groups:[]}),null);
+});
 
 test('only the fixed same-origin static page and approved read-only APIs pass', () => {
   const origin = 'http://127.0.0.1:8088';
@@ -26,6 +38,15 @@ test('only the fixed same-origin static page and approved read-only APIs pass', 
   ]) assert.equal(allowRequest(origin, method, url), false, `${method} ${url}`);
 });
 
+test('catalog filter only allows exact server-discovered queries and never writes', () => {
+  const origin='http://127.0.0.1:8088';
+  const allowed=new Set(['?app_id=com.example.app&module=&query=&scope=published&limit=20','?app_id=com.example.app&module=&query=%E7%94%A8%E4%BE%8B&scope=published&limit=20']);
+  for(const query of allowed)assert.equal(allowRequest(origin,'GET',`${origin}/api/ui-executions/catalog${query}`,allowed),'api');
+  assert.equal(allowRequest(origin,'POST',`${origin}/api/ui-executions/catalog${[...allowed][0]}`,allowed),false);
+  assert.equal(allowRequest(origin,'GET',`${origin}/api/ui-executions/catalog?app_id=other&module=&query=&scope=published&limit=20`,allowed),false);
+  assert.equal(allowRequest(origin,'GET',`${origin}/api/ui-executions/catalog${[...allowed][0]}`,new Set()),false);
+});
+
 test('the 35 observed HTML assets and the candidate hashed entry are on the fixed list', () => {
   const origin='http://127.0.0.1:8088';
   const assets=fs.readFileSync(path.join(__dirname,'fixtures/week5_html_assets_20261110.txt'),'utf8').trim().split('\n');
@@ -33,6 +54,17 @@ test('the 35 observed HTML assets and the candidate hashed entry are on the fixe
   for (const asset of assets) assert.equal(allowRequest(origin,'GET',`${origin}/${asset}`),'static',asset);
   const next=assets.find(x=>x.startsWith('js/ui-simple-entry.')).replace('1514fe455649371c','d6214cd9458c31ef');
   assert.equal(allowRequest(origin,'GET',`${origin}/${next}`),'static');
+});
+
+test('all actual candidate HTML assets including both exact content-hashed scripts are allowed', () => {
+  const origin='http://127.0.0.1:8088',root=path.resolve(__dirname,'..');let html=fs.readFileSync(path.join(root,'task-manager.html'),'utf8');
+  for(const name of ['ui-simple-entry','ui-test-home']){
+    const digest=crypto.createHash('sha256').update(fs.readFileSync(path.join(root,'js',name+'.js'))).digest('hex').slice(0,16);
+    const raw=`js/${name}.js?`, hashed=`js/${name}.${digest}.js?`;assert.ok(html.includes(raw));html=html.replace(raw,hashed);
+  }
+  const urls=[...html.matchAll(/(?:src|href)="((?:js|css|assets)\/[^"#]+)"/g)].map(match=>match[1]);
+  assert.ok(urls.length>=35);
+  for(const url of urls)assert.equal(allowRequest(origin,'GET',`${origin}/${url}`),'static',url);
 });
 
 test('authentication failure wins over network failure regardless of callback order', () => {

@@ -65,6 +65,16 @@ test('typing invalidates an older response before the debounce starts a new sear
  query.value='new';query.dispatchEvent(new f.w.Event('input'));assert.equal(old.options.signal.aborted,true);
  resolve({ok:true,apps:[],groups:[{name:'过期搜索结果',items:[CASE]}],total:1});await wait();assert.doesNotMatch(f.node.textContent,/过期搜索结果/);tick();await wait();assert.equal(catalogParams(f).get('query'),'new');
 });
+test('catalog render marker follows the completed filter response even when totals are unchanged',async t=>{
+ let resolve;const next={...CASE,case_id:'c2',task_name:'不同用例'};
+ const f=fixture(t,path=>path.includes('query=new')?new Promise(r=>resolve=r):path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:['导航'],items:[],groups:[{app_id:'app.a',name:'应用甲',items:[CASE]}],total:1,next_cursor:null}:undefined);f.mount('library');await wait();
+ const host=f.node.querySelector('[data-ui-cases]'),query=f.node.querySelector('[name="ui-query"]');
+ assert.match(host.dataset.uiCatalogQuery,/query=&/);assert.ok(host.querySelector('[data-case-id="c1"]'));
+ query.value='new';query.dispatchEvent(new f.w.Event('input'));f.node.querySelector('[data-ui-search]').click();await wait();
+ assert.match(host.dataset.uiCatalogQuery,/query=&/);assert.ok(host.querySelector('[data-case-id="c1"]'));
+ resolve({ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:['导航'],items:[],groups:[{app_id:'app.a',name:'应用甲',items:[next]}],total:1,next_cursor:null});await wait();await wait();
+ assert.match(host.dataset.uiCatalogQuery,/query=new&/);assert.ok(host.querySelector('[data-case-id="c2"]'));assert.equal(host.querySelector('[data-case-id="c1"]'),null);
+});
 test('empty published results explain the baseline scope',async t=>{
  const f=fixture(t,path=>path.startsWith('/ui-executions/catalog')?{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:[],items:[],groups:[],total:0}:undefined);f.mount();await wait();
  const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();assert.match(f.node.querySelector('[data-ui-cases]').textContent,/没有匹配的已发布基线/);

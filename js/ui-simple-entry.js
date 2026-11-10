@@ -315,7 +315,7 @@ function attachCatalogWebCheck(page,current){
   const scope=()=>JSON.stringify({token:sessionToken(),user:uiSimpleIdentity(),scope:currentAccessProfile?.scope,permissions:currentAccessProfile?.permissions,superuser:currentAccessProfile?.is_superuser,status:currentAccessProfile?.status});
   const snapshot=scope();
   const panel=document.createElement('details');panel.dataset.catalogCheck='';panel.className='ui-case-source-picker ui-practice-panel';
-  panel.innerHTML='<summary>用例库页面检查</summary><p>服务器只读打开本平台用例库，核对页面显示数量与当前账号有权查看的接口返回数量是否一致。不操作手机，不执行用例；显示一致不代表业务数据正确或业务通过。</p><div class="ui-week-probe-actions"><button type="button" data-catalog-run>运行页面检查</button><button type="button" data-catalog-refresh>刷新检查记录</button></div><p data-catalog-notice role="status" aria-live="polite">展开后可查看本人已有的检查记录。</p><div data-catalog-history></div>';
+  panel.innerHTML='<summary>用例库页面检查</summary><p>服务器只读打开本平台用例库，核对授权接口与页面显示。筛选检查使用已有应用和用例，空搜索使用随机词；不操作手机，不执行用例，显示一致不代表业务数据正确或业务通过。</p><div class="ui-week-probe-actions"><button type="button" data-catalog-run data-catalog-scenario="ui_catalog_count">检查页面数量</button><button type="button" data-catalog-scenario="ui_catalog_filter">检查应用与名称筛选</button><button type="button" data-catalog-scenario="ui_catalog_empty">检查空搜索结果</button><button type="button" data-catalog-refresh>刷新检查记录</button></div><p data-catalog-notice role="status" aria-live="polite">展开后可查看本人已有的检查记录。</p><div data-catalog-history></div>';
   page.append(panel);
   const notice=panel.querySelector('[data-catalog-notice]'),history=panel.querySelector('[data-catalog-history]');
   let busy=false,loaded=false,serial=0,previewUrl=null;const artifactRequests=new Set();
@@ -329,12 +329,12 @@ function attachCatalogWebCheck(page,current){
   uiCatalogCleanup=()=>{serial++;clear();window.removeEventListener('focus',changed);document.removeEventListener('visibilitychange',changed);};
   const setBusy=value=>{busy=value;panel.querySelectorAll('button').forEach(button=>{button.disabled=value;});};
   const errorText=error=>error?.status===401?'登录已失效，请重新登录。':error?.status===403?'当前账号没有查看权限。':error?.status===429?'已有检查正在运行，请稍后刷新记录。':'检查未完成，请先刷新结果；如仍无记录，请检查服务和浏览器依赖。';
-  const request=async(method,timeoutMs,id)=>{
+  const request=async(method,timeoutMs,id,scenario)=>{
     if(!valid())throw Error('session changed');
     if(method==='DELETE'&&!/^[a-f0-9]{32}$/.test(id||''))throw Error('invalid id');
     const sequence=serial,controller=new AbortController();uiSimpleDownloads.add(controller);const timer=setTimeout(()=>controller.abort(),timeoutMs);
     try{
-      const body=method==='POST'?'{}':method==='DELETE'?'{"confirm":true}':null;
+      const body=method==='POST'?JSON.stringify({scenario}):method==='DELETE'?'{"confirm":true}':null;
       const response=await nativeFetch('/api/ui-executions/web-check'+(method==='DELETE'?'?id='+id:''),{method,headers:authHeaders(body?{'Content-Type':'application/json'}:{}),...(body?{body}:{}),signal:controller.signal,redirect:'error'});
       if(!valid()||controller.signal.aborted||sequence!==serial)throw Error('session changed');
       if(!response.ok)throw Object.assign(Error('request failed'),{status:response.status});
@@ -362,9 +362,11 @@ function attachCatalogWebCheck(page,current){
   };
   const render=items=>{
     clear();if(!items.length){history.textContent='暂无检查记录。';return;}
-    for(const item of items){if(item?.scenario!=='ui_catalog_count'&&!item?.scope_changed)continue;const row=document.createElement('section');row.className='ui-week-probe-row';
-      const heading=document.createElement('strong');heading.textContent=item.deletion_pending?'删除未完成，可再次尝试':item.scope_changed?'权限范围已变化，历史内容不可查看；该记录仍占用存储，可删除':(({passed:'页面显示一致',failed:'页面检查未通过',blocked:'检查阻塞'})[item.status]||'状态未知');row.append(heading);
+    for(const item of items){if(!['ui_catalog_count','ui_catalog_filter','ui_catalog_empty'].includes(item?.scenario)&&!item?.scope_changed)continue;const row=document.createElement('section');row.className='ui-week-probe-row';
+      const label=({ui_catalog_count:'页面数量',ui_catalog_filter:'应用与名称筛选',ui_catalog_empty:'空搜索结果'})[item.scenario]||'';
+      const heading=document.createElement('strong');heading.textContent=item.deletion_pending?'删除未完成，可再次尝试':item.scope_changed?'权限范围已变化，历史内容不可查看；该记录仍占用存储，可删除':label+' · '+(({passed:'页面显示一致',failed:'页面检查未通过',blocked:'检查阻塞'})[item.status]||'状态未知');row.append(heading);
       const meta=document.createElement('p');meta.textContent=(Number.isFinite(item.created)?'时间：'+uiPracticeTime(item.created*1000)+'；':'')+(Number.isSafeInteger(item.total)?'执行时接口返回数量：'+item.total+'。':'')+(({'authentication':'登录状态或权限不可用。','environment':'页面、服务或浏览器依赖不可用。','business':'页面显示与接口返回不一致或页面必要元素缺失。','evidence':'检查证据未能保存。'})[item.error_kind]||'');row.append(meta);
+      if(item.scenario==='ui_catalog_filter'&&item.asset&&typeof item.asset.app_id==='string'&&typeof item.asset.case_id==='string'&&/^[a-f0-9]{64}$/.test(item.asset.revision||'')){const asset=document.createElement('p');asset.textContent='执行时资产：'+item.asset.app_id+' / '+item.asset.case_id+'；版本：'+item.asset.revision+'。重复检查时请比较资产及版本。';row.append(asset);}
       if(/^[a-f0-9]{32}$/.test(item.id||'')){
         if(!item.deletion_pending&&!item.scope_changed&&Array.isArray(item.artifacts)){for(const [key,label] of [['screenshot','查看截图'],['trace','下载 trace']])if(item.artifacts.includes(key)){const button=document.createElement('button');button.type='button';button.dataset.catalogArtifact=key;button.textContent=label;button.onclick=()=>void openArtifact(row,item.id,key);row.append(button);}}
         const remove=document.createElement('button');remove.type='button';remove.dataset.catalogDelete='';remove.textContent=item.deletion_pending?'重试删除':'删除本条记录';remove.onclick=async()=>{
@@ -383,7 +385,7 @@ function attachCatalogWebCheck(page,current){
   const load=async(fresh)=>{const sequence=++serial,data=await request('GET',10000);if(!valid()||sequence!==serial)return;if(data?.ok!==true||!Array.isArray(data.results))throw Error('invalid history');const items=[...data.results];if(fresh?.id&&!items.some(item=>item.id===fresh.id))items.unshift(fresh);render(items);loaded=true;notice.textContent='显示当前账号可查看的检查记录。';};
   panel.addEventListener('toggle',async()=>{if(!panel.open||loaded||busy||!valid())return;setBusy(true);try{await load();}catch(error){if(valid())notice.textContent=errorText(error);}finally{if(valid())setBusy(false);}});
   panel.querySelector('[data-catalog-refresh]').onclick=async()=>{if(!valid()||busy)return;setBusy(true);try{await load();}catch(error){if(valid()){clear();notice.textContent=errorText(error);}}finally{if(valid())setBusy(false);}};
-  panel.querySelector('[data-catalog-run]').onclick=async()=>{if(!valid()||busy)return;setBusy(true);notice.textContent='服务器正在只读检查页面，请勿重复点击。';let complete=false;try{const data=await request('POST',65000);if(!valid())return;if(data?.ok!==true||!data.result)throw Error('invalid result');render([data.result]);complete=true;if(data.result.id)await load(data.result);else notice.textContent='检查未生成保存记录，请查看阻塞原因。';}catch(error){if(valid()){if(error?.status===401||error?.status===403){clear();notice.textContent=errorText(error);}else notice.textContent=complete?'本次结果已返回，但历史刷新失败，请稍后刷新。':errorText(error);}}finally{if(valid())setBusy(false);}};
+  for(const button of panel.querySelectorAll('[data-catalog-scenario]'))button.onclick=async()=>{const scenario=button.dataset.catalogScenario;if(!valid()||busy||!['ui_catalog_count','ui_catalog_filter','ui_catalog_empty'].includes(scenario))return;setBusy(true);notice.textContent='服务器正在只读检查页面，请勿重复点击。';let complete=false;try{const data=await request('POST',65000,null,scenario);if(!valid())return;if(data?.ok!==true||!data.result||data.result.scenario!==scenario)throw Error('invalid result');render([data.result]);complete=true;if(data.result.id)await load(data.result);else notice.textContent='检查未生成保存记录，请查看阻塞原因。';}catch(error){if(valid()){if(error?.status===401||error?.status===403){clear();notice.textContent=errorText(error);}else notice.textContent=complete?'本次结果已返回，但历史刷新失败，请稍后刷新。':errorText(error);}}finally{if(valid())setBusy(false);}};
 }
 
 function uiPracticeTime(value){

@@ -4,17 +4,18 @@
 const staticPaths = new Set([
   '/task-manager.html', '/assets/brand/kongfudou-icon.png', '/assets/icons/flask-conical.svg',
   '/js/ui-simple-entry.1514fe455649371c.js', '/js/ui-simple-entry.d6214cd9458c31ef.js',
+  '/js/ui-simple-entry.cc3d421d522c3502.js', '/js/ui-test-home.550ea3ea79d3dd5a.js',
   '/css/ui-case-draft.98c46b5734c85379.css',
   ...['operation-history','app','round5','ui-simple','platform-workbench','ui-workbench','ui-case-draft'].map(name=>`/css/${name}.css`),
   ...['utils','error-handler','empty-states','loading-manager','form-steps','state','auth','identity-management','operation-history','navigation','agent-workbench','agent-status','device-recorder','cases','execution','reports','ai-repair','model-config','yaml-editor','pending-actions','ui-execution-replay','ui-batch-view','ui-batch-report','ui-test-home','ui-case-draft','ui-simple-entry','app'].map(name=>`/js/${name}.js`),
 ]);
 const apiPaths = new Set(['/api/auth/me', '/api/ui-executions/availability']);
 
-function allowRequest(origin, method, input) {
+function allowRequest(origin, method, input, catalogQueries = new Set()) {
   if (origin !== 'http://127.0.0.1:8088' || method !== 'GET') return false;
   let url; try { url = new URL(input); } catch (_) { return false; }
   if (url.origin !== origin || url.username || url.password || url.hash || url.pathname.includes('%')) return false;
-  if (url.pathname === '/api/ui-executions/catalog') return url.search === '?app_id=&module=&query=&scope=published&limit=20' ? 'api' : false;
+  if (url.pathname === '/api/ui-executions/catalog') return url.search === '?app_id=&module=&query=&scope=published&limit=20' || catalogQueries.has(url.search) ? 'api' : false;
   if (apiPaths.has(url.pathname)) return url.search ? false : 'api';
   if (!staticPaths.has(url.pathname)) return false;
   if (url.pathname === '/task-manager.html' && url.search) return false;
@@ -45,4 +46,18 @@ function recordRouteError(state, kind) {
   else if (!state.routeError) state.routeError = true;
 }
 
-module.exports = {allowRequest, responseContainsSecret, classifyIncomplete, recordRouteError};
+function catalogTarget(data) {
+  if (!Array.isArray(data?.apps) || !Array.isArray(data?.groups)) return null;
+  const apps=new Set(data.apps.map(app=>app?.app_id).filter(id=>typeof id==='string'&&id.length>0&&id.length<=128&&!/[\x00-\x1f\x7f]/.test(id)));
+  for (const group of data.groups) {
+    if(!apps.has(group?.app_id)||!Array.isArray(group.items))continue;
+    for(const item of group.items){
+      if(item?.app_id===group.app_id&&item.execution_eligible===true&&typeof item.case_id==='string'&&item.case_id.length>0&&item.case_id.length<=512&&/^[a-f0-9]{64}$/.test(item.revision||'')
+         &&typeof item.task_name==='string'&&item.task_name.trim().length>0&&item.task_name.trim().length<=200&&!/[\x00-\x1f\x7f]/.test(item.task_name))
+        return {app:group.app_id,caseId:item.case_id,name:item.task_name.trim(),revision:item.revision};
+    }
+  }
+  return null;
+}
+
+module.exports = {allowRequest, responseContainsSecret, classifyIncomplete, recordRouteError, catalogTarget};

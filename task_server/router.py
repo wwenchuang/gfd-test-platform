@@ -2876,14 +2876,15 @@ def _post_week5_web_check(handler, qs):
     if not actor:
         return
     body = handler._body()
-    if qs or not isinstance(body, dict) or body:
+    if qs or not isinstance(body, dict) or set(body) - {'scenario'} or body.get('scenario', 'ui_catalog_count') not in week5_web_service.SCENARIOS:
         handler._json({'ok':False, 'error':'固定检查不接受额外参数'}, 400)
         return
+    scenario = body.get('scenario', 'ui_catalog_count')
     if not acquire_heavy_workload_slot('sync', blocking=False):
         handler._json({'ok':False, 'code':'heavy_workload_busy', 'error':'当前任务较多，请稍后再试'}, 503)
         return
     try:
-        result = week5_web_service.run(*actor)
+        result = week5_web_service.run(*actor, scenario=scenario)
     except week1_smoke.SmokeBusy:
         handler._json({'ok':False, 'code':'check_busy', 'error':'检查正在执行，请稍后查看结果'}, 429)
         return

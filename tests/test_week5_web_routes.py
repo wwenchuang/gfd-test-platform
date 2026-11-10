@@ -7,6 +7,23 @@ from task_server.response import request_body_limit
 
 
 class Week5RouteAccessTest(unittest.TestCase):
+    def test_only_named_fixed_read_only_scenarios_reach_the_service(self):
+        class Handler:
+            headers = {}
+            def __init__(self, body): self.body=body
+            def _body(self): return self.body
+            def _json(self, value, status=200): self.result=(value,status)
+        with patch.object(router, '_week5_web_actor', return_value=('id','user','token')), \
+             patch.object(router, 'acquire_heavy_workload_slot', return_value=True), \
+             patch.object(router, 'release_heavy_workload_slot'), \
+             patch('task_server.services.week5_web_service.run',return_value={'status':'blocked'}) as run:
+            for scenario in ('ui_catalog_filter','ui_catalog_empty'):
+                handler=Handler({'scenario':scenario});router._post_week5_web_check(handler,{})
+                self.assertEqual(handler.result[1],200)
+                self.assertEqual(run.call_args.kwargs['scenario'],scenario)
+            for body in ({'scenario':'evil'}, {'scenario':'ui_catalog_filter','query':'private'}, {'scenario':None}):
+                handler=Handler(body);router._post_week5_web_check(handler,{})
+                self.assertEqual(handler.result[1],400)
     def test_fixed_check_rejects_large_request_bodies(self):
         self.assertEqual(request_body_limit('/api/ui-executions/web-check'), 1024)
 
