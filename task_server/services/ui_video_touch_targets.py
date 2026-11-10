@@ -5,6 +5,7 @@ from . import ai_skill_service as ai
 
 
 def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=None):
+    from . import ui_video_ordinary_timing as timing
     from .ui_video_analysis import _bind_whole_evidence, validate_analysis,_text,_check_question_count,_redact_question
     from .ui_video_automatic_motion import explicit_no_action_assertion
     timeout_retry_budget = timeout_retry_budget if isinstance(timeout_retry_budget, dict) else {'used': False}
@@ -13,7 +14,7 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
     probe_secrets=[]
     schema_correction_used = False
     format_review='局部复核首轮输出未通过格式校验，重答可能遗漏相关操作，请核对原视频。'
-    for detail in details[:6]:
+    for detail_index,detail in enumerate(details[:6],start=1):
         if cancelled():
             raise ValueError('video_cancelled')
         parent = next((f for f in frames if f['frame_id'] == detail['source_frame_id']),None)
@@ -31,12 +32,14 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
         pending_questions=[];pending_multiple=False
         # One extra schema correction for the entire probe, not per detail.
         # Never turn malformed output into an empty successful observation.
+        call_attempt=0
         while True:
             if cancelled():raise ValueError('video_cancelled')
             try:
-                result = ai.run_ai_skill('ui_video_observe', payload, version='touch-target',
+                call_attempt+=1
+                result = timing.measure('touch_model',lambda:ai.run_ai_skill('ui_video_observe', payload, version='touch-target',
                     image_assets=[by_name[f['frame_id']] for f in selected]+[by_name[detail['frame_id']]],
-                    timeout=120, retry_count=0, max_tokens=5000, repair_invalid_json=False)
+                    timeout=120, retry_count=0, max_tokens=5000, repair_invalid_json=False),detail=detail_index,attempt=call_attempt)
                 if cancelled():raise ValueError('video_cancelled')
                 if isinstance(result,dict) and isinstance(result.get('events'),list):
                     for event in result['events']:
