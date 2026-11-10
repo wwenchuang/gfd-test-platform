@@ -60,6 +60,29 @@ describe('AiAssistant', () => {
     expect(wrapper.find('[data-testid="diagnose-validation-batch-1"]').exists()).toBe(false)
   })
 
+  it.each([0, 1])('explains an imprecise business-code assertion at index %s without calling AI', (index) => {
+    const original = `deterministic case validation failed: business_assertion_imprecise:assertions[${index}].operator`
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job, state: 'partial', batches: [{ ...job.batches[0], state: 'partial', validation_errors: [{
+        code: 'candidate_validation_error', message: original,
+        diagnosis: { model: 'qwen-plus', analysis: {
+          summary: '旧的错误建议', root_cause: '随便填写 code 值', recommendations: ['使用 200'],
+        } },
+      }] }],
+    } } })
+    expect(wrapper.text()).toContain(`第 ${index + 1} 条断言`)
+    expect(wrapper.text()).toContain('业务码')
+    expect(wrapper.text()).toContain('等于')
+    expect(wrapper.text()).toContain('属于')
+    expect(wrapper.text()).toContain('接口合同')
+    expect(wrapper.text()).toContain('未保存')
+    expect(wrapper.text()).toContain('草稿')
+    expect(wrapper.find('[data-testid="validation-original-message"]').text()).toBe(original)
+    expect(wrapper.find('[data-testid="diagnose-validation-batch-1"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('旧的错误建议')
+    expect(wrapper.emitted('diagnose-validation')).toBeUndefined()
+  })
+
   it('defaults to business and parameter cases instead of runtime header cases', () => {
     const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null } })
     const textarea = wrapper.get('textarea').element as HTMLTextAreaElement
