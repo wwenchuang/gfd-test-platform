@@ -348,7 +348,63 @@ def _adjacent_tap_overlaps(events):
             yield earlier,later,shared
 
 
-def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,missing_refs):
+def _overlap_closure(frames,group,sources,cancelled):
+    """Bound the transitive frame/time closure; return nothing if it cannot fit."""
+    import bisect
+    positions={frame['frame_id']:i for i,frame in enumerate(frames)}
+    times=[frame['timestamp_ms'] for frame in frames]
+    indexes={positions[f['frame_id']] for f in group}
+    while True:
+        if cancelled():raise ValueError('video_cancelled')
+        lo,hi=min(indexes),max(indexes)
+        low,high=frames[lo]['timestamp_ms'],frames[hi]['timestamp_ms']
+        expanded=set(range(lo,hi+1))
+        for event in sources:
+            refs=[positions[r] for r in event['frame_refs']]
+            if not (set(refs)&indexes or max(low,event['start_ms'])<=min(high,event['end_ms'])):continue
+            if event['start_ms']<frames[0]['timestamp_ms'] or event['end_ms']>frames[-1]['timestamp_ms']:
+                return None
+            expanded.add(bisect.bisect_right(times,event['start_ms'])-1)
+            expanded.add(bisect.bisect_left(times,event['end_ms']))
+            for i,frame in enumerate(frames):
+                if event['start_ms']<=frame['timestamp_ms']<=event['end_ms']:expanded.add(i)
+            expanded.update(refs)
+        expanded=set(range(min(expanded),max(expanded)+1))
+        if len(expanded)>40:return None
+        if expanded==indexes:return {frames[i]['frame_id'] for i in expanded}
+        indexes=expanded
+
+
+def _overlap_retained(previous,current,*,ordered=True):
+    """All prior hypotheses must remain distinct with their original evidence."""
+    edges=[]
+    for old in previous:
+        matches=[]
+        for i,new in enumerate(current):
+            if ({k:v for k,v in old.items() if k not in {'frame_refs','uncertainties'}}==
+                {k:v for k,v in new.items() if k not in {'frame_refs','uncertainties'}} and
+                set(old['frame_refs'])<=set(new['frame_refs']) and
+                set(old['uncertainties'])<=set(new['uncertainties'])):matches.append(i)
+        edges.append(matches)
+    if ordered:
+        last=-1
+        for candidates in edges:
+            last=next((i for i in candidates if i>last),None)
+            if last is None:return False
+        return True
+    assigned={}
+    def assign(index,seen):
+        for candidate in edges[index]:
+            if candidate in seen:continue
+            seen.add(candidate)
+            if candidate not in assigned or assign(assigned[candidate],seen):
+                assigned[candidate]=index
+                return True
+        return False
+    return all(assign(i,set()) for i in range(len(previous)))
+
+
+def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,missing_refs,_overlap_retry=None):
     """Keep distant conflicts separate with at most one targeted sixth call."""
     import copy
     from .ui_video_analysis import validate_analysis
@@ -478,6 +534,9 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     all_ids={f['frame_id'] for f in window}
     return_retry_only=len(groups)>=5
     calls_remaining=(len(groups)+1 if len(groups)>5 else 6) if return_retry_only else 4
+    if _overlap_retry is not None:
+        if len(groups)!=1:raise ValueError('video_required_action_missing')
+        calls_remaining=_overlap_retry['remaining']
     for group_index,group in enumerate(groups):
         if cancelled():raise ValueError('video_cancelled')
         ids={f['frame_id'] for f in group}
@@ -512,6 +571,18 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
                     'repaired':state_evidence(ni,new),'preserved':state_evidence(oi,old)}
             except (KeyError,TypeError,ValueError):
                 pass  # The original safety failure remains authoritative.
+            audit=repaired['reconciliation_audit']
+            # The first version deliberately handles only one group and no
+            # earlier claimed resolutions; all other cases keep the old gate.
+            if (_overlap_retry is None and len(groups)==1 and calls_remaining>0 and
+                not audit.get('coverage_resolutions') and not audit.get('redundant_assert_claims') and
+                not audit.get('redundant_tap_claims') and not repaired.get('frame_role_audit')):
+                refs=_overlap_closure(frames,group,original+checked['events']+repaired['events'],cancelled)
+                if refs and ids<refs:
+                    retry={'remaining':calls_remaining,'first':copy.deepcopy(repaired),
+                           'preserved_states':[copy.deepcopy(e) for e in preserved
+                               if e['action'] in state_actions and set(e['frame_refs'])<=refs]}
+                    return _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,refs,retry)
             raise error
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
@@ -538,6 +609,40 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     result['events']=preserved+replacements
     result['events'].sort(key=lambda e:(e['start_ms'],e['end_ms']))
     result=validate_analysis(result,frames,duration,secrets,max_events=120)
+    if _overlap_retry is not None:
+        first=_overlap_retry['first']
+        required=first['events']+_overlap_retry['preserved_states']
+        if (not _overlap_retained(required,result['events'],ordered=False) or
+            not _overlap_retained(first['events'],result['events'])):raise ValueError('video_required_action_missing')
+        for source in (original,checked['events']):
+            evidence=[e for e in source if set(e['frame_refs'])<=all_ids]
+            if not _overlap_retained(evidence,result['events']):raise ValueError('video_required_action_missing')
+        # Re-observation may only carry forward an already observed hypothesis;
+        # it cannot insert a new action/state at a convenient boundary.
+        known=[]
+        for event in first['events']+original+checked['events']:
+            # Multiple passes can describe the same hypothesis. They cannot
+            # become independent support for duplicating an action.
+            identity={k:v for k,v in event.items() if k!='uncertainties'}
+            if not any({k:v for k,v in prior.items() if k!='uncertainties'}==identity for prior in known):
+                known.append(event)
+        known.sort(key=lambda e:(e['start_ms'],e['end_ms']))
+        last=-1
+        for event in replacements:
+            last=next((i for i,old in enumerate(known) if i>last and
+                       _overlap_retained([old],[event])),None)
+            if last is None:raise ValueError('video_required_action_missing')
+        for i,event in enumerate(replacements):
+            if any(all(event.get(k)==other.get(k) for k in
+                       ('action','target','value','start_ms','end_ms')) and
+                   bool(set(event['frame_refs'])&set(other['frame_refs']))
+                   for other in replacements[:i]):
+                raise ValueError('video_required_action_missing')
+        result['uncertainties']=list(dict.fromkeys(result['uncertainties']+_redact_audit(first['uncertainties'],secrets)+
+            ['局部状态证据存在重叠，请对照原视频逐项核对状态和操作后再试跑。']))
+        result['multiple_scenarios']=result['multiple_scenarios'] or first['multiple_scenarios']
+        from .ui_video_analysis import _check_question_count
+        _check_question_count(result['uncertainties'],30)
     # A selected state omitted or altered by a re-observation is not verified.
     # Keep an independent platform-owned blocker; do not invent a replacement.
     missing_state=False
@@ -571,6 +676,8 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     check_coverage(checked['events'],result['events'],duration,resolutions,'independent_review')
     before=validate_analysis({'events':checked['events'],'uncertainties':[],'multiple_scenarios':False},frames,duration,secrets,max_events=120)['events']
     result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims,'redundant_tap_claims':redundant_tap_claims},secrets)
+    if _overlap_retry is not None:
+        result['reconciliation_audit']['state_overlap_first_repair']=_redact_audit(_overlap_retry['first'],secrets)
     if frame_role_audit:result['frame_role_audit']=frame_role_audit
     return result
 
