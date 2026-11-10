@@ -8,12 +8,12 @@ case "$profile" in pr|nightly|wrong-title) ;; *) exit 2 ;; esac
 mkdir -p "$(dirname "$out")"
 mkdir "$out"
 out=$(cd "$out" && pwd)
-scratch=$(mktemp -d)
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/platform-smoke.XXXXXXXX")
 stage=checkout
 finish() {
     rc=$?
-    printf 'stage=%s\nexit=%s\n' "$stage" "$rc" > "$out/status.txt"
     rm -rf "$scratch"
+    printf 'stage=%s\nexit=%s\n' "$stage" "$rc" > "$out/status.txt"
 }
 trap finish EXIT
 exec > >(tee "$out/pipeline.log") 2>&1
