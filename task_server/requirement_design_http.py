@@ -59,6 +59,28 @@ def _params(args, expected, optional=()):
 def register_routes(route_get,route_post):
     from task_server.requirement_collection_http import register_collection_routes
     register_collection_routes(route_get, route_post, _actor, _serve)
+    from task_server.services import practice_result_view as practice
+
+    def read_result(handler, qs, kind):
+        def read(owner, username):
+            _params(qs, ())
+            return {'report': practice.report(kind, owner, username)}
+        _serve(handler, read)
+
+    @route_get(BASE+'/practice-results/replay')
+    def replay_result(handler, qs):
+        read_result(handler, qs, 'replay')
+
+    @route_get(BASE+'/practice-results/visual')
+    def visual_result(handler, qs):
+        read_result(handler, qs, 'visual')
+
+    @route_get(BASE+'/practice-results/screenshot')
+    def visual_screenshot(handler, qs):
+        def read(owner, username):
+            _params(qs, ('id',))
+            return practice.screenshot(owner, username, qs['id'])
+        _serve(handler, read, image=True)
 
     @route_get(BASE)
     def overview(handler,qs):

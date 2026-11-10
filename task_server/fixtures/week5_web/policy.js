@@ -2,6 +2,8 @@
 
 // A closed, versioned list: no user-provided target, route, query or method.
 const staticPaths = new Set([
+  '/js/ui-practice-results.cd1a9970aa904f16.js',
+  '/js/ui-simple-entry.646bd2bdf3e59095.js',
   '/task-manager.html', '/assets/brand/kongfudou-icon.png', '/assets/icons/flask-conical.svg',
   '/js/ui-simple-entry.1514fe455649371c.js', '/js/ui-simple-entry.d6214cd9458c31ef.js',
   '/js/ui-simple-entry.cc3d421d522c3502.js', '/js/ui-test-home.550ea3ea79d3dd5a.js',
@@ -11,7 +13,7 @@ const staticPaths = new Set([
   '/js/ui-simple-entry.4066b05157b7ed35.js', '/js/ui-simple-entry.4e7bbb6db84a5b84.js',
   '/css/ui-case-draft.98c46b5734c85379.css',
   ...['operation-history','app','round5','ui-simple','platform-workbench','ui-workbench','ui-case-draft'].map(name=>`/css/${name}.css`),
-  ...['utils','error-handler','empty-states','loading-manager','form-steps','state','auth','identity-management','operation-history','navigation','agent-workbench','agent-status','device-recorder','cases','execution','reports','ai-repair','model-config','yaml-editor','pending-actions','ui-execution-replay','ui-batch-view','ui-batch-report','ui-test-home','ui-case-draft','ui-simple-entry','app'].map(name=>`/js/${name}.js`),
+  ...['utils','error-handler','empty-states','loading-manager','form-steps','state','auth','identity-management','operation-history','navigation','agent-workbench','agent-status','device-recorder','cases','execution','reports','ai-repair','model-config','yaml-editor','pending-actions','ui-execution-replay','ui-batch-view','ui-batch-report','ui-test-home','ui-case-draft','ui-practice-results','ui-simple-entry','app'].map(name=>`/js/${name}.js`),
 ]);
 const apiPaths = new Set(['/api/auth/me', '/api/ui-executions/availability']);
 

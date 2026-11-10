@@ -73,7 +73,7 @@ def checks(row):
     expected_status=row['http_status']
     if type(expected_status) is not int or not 100<=expected_status<=599 or not isinstance(row['body'],dict):
         raise ValueError('invalid_response_projection')
-    if row.get('scope') != 'sanitized_response_projection' or not row.get('run_id') or not row.get('execution_case_id'):
+    if row.get('scope') not in ('sanitized_response_projection','complete_sanitized_response') or not row.get('run_id') or not row.get('execution_case_id'):
         raise ValueError('missing_response_origin')
     if row['method'] not in {'GET','POST','PUT','PATCH','DELETE','HEAD'} or not re.fullmatch(r'/[A-Za-z0-9_./{}-]{1,250}',row['path']):
         raise ValueError('invalid_known_operation')
@@ -85,6 +85,9 @@ def checks(row):
             continue
         if a.get('type')=='status_code' and a.get('operator')=='equals' and type(a.get('expected')) is int:
             assertions.append(dict(type='status_code',operator='equals',expected=a['expected']))
+        elif (a.get('type')=='schema' and a.get('operator')=='equals'
+              and row['scope']=='complete_sanitized_response' and isinstance(a.get('expected'),dict)):
+            assertions.append(dict(type='schema',operator='equals',expected=a['expected']))
         elif a.get('type')=='json_path' and a.get('operator') in ('equals','exists','not_exists') and re.fullmatch(r'\$(?:\.[A-Za-z_][\w-]*|\[\d{1,4}\])+',a.get('path','')):
             if a['operator']=='equals' and 'expected' not in a:
                 raise ValueError('missing_expected')
@@ -115,6 +118,46 @@ def passed(row, ordered, *, negative=False):
     response = SimpleNamespace(status_code=row['http_status'], json_body=body)
     result = evaluate_assertions(assertions,response)
     return bool(result) and all(a.passed for a in result) and evaluate_business_response(assertions,response) is None
+
+
+def frozen_checks(definitions):
+    frozen = []
+    for a in definitions:
+        if a.get('enabled') is False:
+            continue
+        fields = ('type','operator','path','expected') if a.get('type')=='json_path' else ('type','operator','expected')
+        frozen.append({k:a[k] for k in fields if k in a and (k!='expected' or a.get('operator') not in ('exists','not_exists'))})
+    return frozen
+
+
+def step_replays(row):
+    steps = []
+    seen = set()
+    for step in row.get('steps', []):
+        phase, position = step['phase'], step['index']
+        if (row['scope']!='complete_sanitized_response' or phase not in ('setup_steps','cleanup_steps')
+                or type(position) is not int or position < 0 or (phase,position) in seen):
+            raise ValueError('invalid_replay_step')
+        seen.add((phase,position))
+        fixture = {key:row[key] for key in ('scope','run_id','execution_case_id')}
+        fixture.update({key:step[key] for key in ('method','path','http_status','body','assertions')})
+        steps.append((fixture, checks(fixture)))
+    return steps
+
+
+def steps_match_frozen(row, origin, steps):
+    expected = origin.get('version_step_assertions', [])
+    if not isinstance(expected,list):
+        return False
+    coverage = []
+    for definition in expected:
+        assertions = frozen_checks(definition['assertions'])
+        if assertions:
+            coverage.append((definition['phase'],definition['index'],definition.get('method'),definition.get('path'),assertions))
+    actual = [(step['phase'],step['index'],fixture['method'],fixture['path'],assertions)
+              for step,(fixture,assertions) in zip(row.get('steps',[]),steps)]
+    return (origin.get('enabled_step_assertion_count')==sum(len(item[-1]) for item in actual)
+            and canonical(coverage)==canonical(actual))
 
 
 def inspect_inputs(source, review_file=None):
@@ -154,16 +197,14 @@ def inspect_inputs(source, review_file=None):
                 if not isinstance(version_assertions,list):
                     reasons.append('frozen_assertion_set_unverified')
                 else:
-                    frozen = []
-                    for a in version_assertions:
-                        if a.get('enabled') is False:
-                            continue
-                        fields = ('type','operator','path','expected') if a.get('type')=='json_path' else ('type','operator','expected')
-                        frozen.append({k:a[k] for k in fields if k in a and (k!='expected' or a.get('operator') not in ('exists','not_exists'))})
-                    if canonical(frozen) != canonical(assertions):
+                    if canonical(frozen_checks(version_assertions)) != canonical(assertions):
                         reasons.append('replay_does_not_cover_frozen_assertions')
-                if origin.get('enabled_step_assertion_count') != 0:
+                steps=step_replays(row)
+                if not steps_match_frozen(row,origin,steps):
                     reasons.append('multi_step_assertion_coverage_unavailable')
+                elif any(not passed(fixture, rules) or passed(fixture, rules, negative=True)
+                         for fixture, rules in steps):
+                    reasons.append('step_replay_control_failed')
             except (ValueError,TypeError,KeyError):
                 reasons.append('unsupported_or_failed_replay')
         results.append(dict(id=cid,case_version_id=version,platform_status=origin.get('platform_status'),
@@ -231,11 +272,16 @@ def sandbox_worker():
         compiled=compile(script,'candidate.py','exec')
         row=candidate['fixture']
         frozen=checks(row)
+        steps=step_replays(row)
+        for fixture,rules in steps:
+            if not passed(fixture,rules) or passed(fixture,rules,negative=True):
+                raise ValueError('step_replay_control_failed')
         for negative in (False,True):
             def check_record(key, positions):
                 if key!=row['id'] or sorted(positions)!=list(range(len(frozen))):
                     raise ValueError('unbound_candidate')
-                return passed(row,[frozen[i] for i in positions],negative=negative)
+                return (passed(row,[frozen[i] for i in positions],negative=negative)
+                        and all(passed(fixture,rules) for fixture,rules in steps))
             ns={'check_record':check_record,'__name__':'controlled_replay'}
             exec(compiled,ns)
             suite=unittest.defaultTestLoader.loadTestsFromTestCase(ns['BusinessReplay'])

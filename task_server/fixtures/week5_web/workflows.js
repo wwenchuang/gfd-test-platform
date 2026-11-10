@@ -59,7 +59,11 @@ function browserData(path, data, app, scenario) {
   throw Error('unexpected_api');
 }
 
-async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries}) {
+async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries, experiment}) {
+  // A comparison can replace only these user actions. Both arms use the original
+  // setup, live backend responses and business assertions below.
+  const act = (locator, instruction, method='click') => experiment
+    ? experiment.act(locator,instruction,method) : locator[method]();
   const blocked = detail => ({status:'blocked',error_kind:'precondition',detail});
   const profile=state.auth.profile;
   const catalogOnly=['ui_catalog_paging','ui_catalog_module'].includes(scenario);
@@ -95,7 +99,7 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
     const oldRow=await host.getAttribute('data-ui-catalog-query')===query.slice(1)
       ? await host.locator('[data-case-id]').first().elementHandle({timeout:3000}):null;
     const [response]=await Promise.all([
-      page.waitForResponse(r=>r.url()==='http://127.0.0.1:8088/api/ui-executions/catalog'+query,{timeout:6000}),
+      page.waitForResponse(r=>r.url()==='http://127.0.0.1:8088/api/ui-executions/catalog'+query,{timeout:experiment ? experiment.actionTimeoutMs + 6000 : 6000}),
       action(),
     ]);
     const catalog=state.catalogs.get(query);
@@ -118,6 +122,7 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
   }
   let catalog=await catalogAfter(target.app,()=>appSelect.selectOption(target.app));
   if (!matchesAsset(catalog)) return blocked('case_version_changed');
+  if (experiment) await experiment.freeze({asset,items:catalog.items.map(i=>[i.case_id,i.revision]),total:catalog.total});
   const passed=()=>({status:'passed',error_kind:null,phase:'workflow',asset,total:catalog.total,...evidence});
   const ids=data=>data.items.map(item=>item.case_id);
   const sameIds=(left,right)=>JSON.stringify(left)===JSON.stringify(right);
@@ -129,17 +134,18 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
   if (scenario==='ui_catalog_paging') {
     const next=page.locator('[data-ui-next]'), prev=page.locator('[data-ui-prev]');
     const first=ids(catalog), total=catalog.total;
+    if (experiment && total<=20) return blocked('no_second_page');
     if (!await rowsMatch(catalog) || !await prev.isDisabled() || first.length!==Math.min(total,20) ||
         new Set(first).size!==first.length || !!catalog.next_cursor!==(total>20) || await next.isEnabled()!==(total>20)) return failed;
     evidence.pages_checked=1;
     if (total>20) {
-      catalog=await catalogAfter(target.app,()=>next.click(),{cursor:catalog.next_cursor});
+      catalog=await catalogAfter(target.app,()=>act(next,'用例列表底部的“下一页”按钮'),{cursor:catalog.next_cursor});
       if (catalog.total!==total) return blocked('catalog_changed');
       const second=ids(catalog);
       if (!await rowsMatch(catalog) || !await prev.isEnabled() || second.length!==Math.min(total-20,20) ||
           new Set([...first,...second]).size!==first.length+second.length || !!catalog.next_cursor!==(total>40) ||
           await next.isEnabled()!==(total>40)) return failed;
-      catalog=await catalogAfter(target.app,()=>prev.click());
+      catalog=await catalogAfter(target.app,()=>act(prev,'用例列表底部的“上一页”按钮'));
       if (catalog.total!==total || !sameIds(first,ids(catalog)) || !matchesAsset(catalog)) return blocked('catalog_changed');
       if (!await rowsMatch(catalog) || !await next.isEnabled() || !await prev.isDisabled()) return failed;
       evidence.pages_checked=2;
@@ -159,10 +165,10 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
     return passed();
   }
   if (await checkbox.count()!==1 || !await checkbox.isEnabled()) return failed;
-  await checkbox.check();
+  await act(checkbox,'标题为「'+target.name+'」的基线行左侧复选框，只定位这个方框','check');
   if (!await selectedVersion('library') || !await go.isEnabled()) return failed;
   if (scenario==='ui_case_selection') {
-    await chips.first().click();
+    await act(chips.first(),'已选清单中名称为「'+target.name+'」的已选标签，点击该标签上的移除符号 ×');
     if (await checkbox.isChecked() || await chips.count() || !await go.isDisabled() ||
         await page.locator('[data-ui-selection-count]').innerText()!=='已选 0 条基线') return failed;
   } else if (scenario==='ui_case_hidden_selection') {
@@ -180,17 +186,17 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
     if (!matchesAsset(catalog)) return blocked('case_version_changed');
     if (!await rowsMatch(catalog) || !await selectedVersion('library')) return failed;
   } else if (scenario==='ui_case_revision') {
-    catalog=await catalogAfter(target.app,()=>page.locator('[data-ui-refresh]').click());
+    catalog=await catalogAfter(target.app,()=>act(page.locator('[data-ui-refresh]'),'用例库标题行右侧的“刷新”按钮'));
     if (!matchesAsset(catalog)) return blocked('case_version_changed');
     if (!await selectedVersion('library') || !await go.isEnabled()) return failed;
   } else {
     deviceQueries.add(deviceQuery(target.app));
-    catalog=await catalogAfter(target.app,()=>go.click());
+    catalog=await catalogAfter(target.app,()=>act(go,'已选清单区域的“去开始测试 →”按钮，只打开交接页面'));
     if (!matchesAsset(catalog)) return blocked('case_version_changed');
     if (await page.locator('[data-ui-mode="start"] h1').innerText()!=='开始测试' || await appSelect.inputValue()!==target.app ||
         !await selectedVersion('start') || !await start.isDisabled()) return failed;
     if (scenario==='ui_start_empty_guard') {
-      await chips.first().click();
+      await act(chips.first(),'已选清单中名称为「'+target.name+'」的已选标签，点击该标签上的移除符号 ×');
       if (await checkbox.isChecked() || await chips.count() || !await start.isDisabled() ||
           await page.locator('[data-ui-selection-count]').innerText()!=='已选 0 条用例' ||
           await page.locator('[data-ui-start-hint]').innerText()!=='勾选至少一条已发布基线。') return failed;

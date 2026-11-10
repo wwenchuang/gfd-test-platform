@@ -13,6 +13,7 @@ const uiSimplePictureRequests=new Set();
 const uiSimpleDownloads=new Set();
 let uiCatalogCleanup=null;
 let uiRequirementCleanup=null;
+let uiPracticeResultCleanup=null;
 function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].includes(key);}
 function isUiSimpleAvailable(key){return key==='ui_reports'?uiSimpleEvidenceAvailable:uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
@@ -23,6 +24,7 @@ function confirmUiCaseDraftLeave(){
 function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
   uiCatalogCleanup?.();uiCatalogCleanup=null;
   uiRequirementCleanup?.();uiRequirementCleanup=null;
+  uiPracticeResultCleanup?.();uiPracticeResultCleanup=null;
   uiCaseCreationEpoch++;uiCaseDraftHandle?.dispose();uiCaseDraftHandle=null;
   if(discardReportIntent)clearUiSimpleReportIntent();
   for(const progress of document.querySelectorAll('[data-week2-progress]'))progress.textContent='本人分析结果待核验。';
@@ -176,6 +178,9 @@ function attachTaskWorkbench(page){
   if(hasPermission('api.view'))attachPracticeAiResults(page,current);
   if(hasPermission('ui.view'))attachCatalogWebCheck(page,current);
   if(!hasPermission('platform.configure')||(currentAccessProfile?.is_superuser!==true&&currentAccessProfile?.scope?.ui_apps!=='*'))return;
+  if(hasPermission('ui.view')&&hasPermission('api.view')&&window.UiPracticeResults){
+    uiPracticeResultCleanup=window.UiPracticeResults.attach(page,current,()=>JSON.stringify([sessionToken(),currentAccessProfile]));
+  }
   attachRequirementDesign(page,current);
   attachUiFirstWeekGuide(page);
   const previousEnvironment=page.querySelector('[data-ui-week-one]');
@@ -625,7 +630,7 @@ function attachRequirementDesign(page,current){
     const valid=fields.every(key=>Number.isSafeInteger(record?.[key])&&record[key]>=0);
     line.hidden=!valid;
     line.textContent=valid?'实测：'+record.real_case_count+' 条历史用例完成 Excel 往返，'+record.stress_row_count+
-      ' 行边界数据通过。可回放业务断言 '+record.offline_controls+' 条，可进入候选脚本生成 '+record.eligible_count+
+      ' 行边界数据通过。首次核查时可回放业务断言 '+record.offline_controls+' 条，可进入候选脚本生成 '+record.eligible_count+
       ' 条，已生成 '+record.generated+' 条。人工审核待办。':'';
   }
   async function collectionAction(action){

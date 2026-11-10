@@ -1,0 +1,10 @@
+{
+  "name": "practice-visual-comparison",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@midscene/web": "1.10.7",
+    "@playwright/test": "1.55.1",
+    "playwright": "1.55.1"
+  }
+}

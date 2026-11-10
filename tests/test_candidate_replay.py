@@ -112,6 +112,43 @@ class ControlledReplayTests(unittest.TestCase):
         self.assertEqual(audit['reason_counts']['replay_does_not_cover_frozen_assertions'],1)
         self.assertEqual(audit['eligible_count'],9)
 
+    def test_full_body_schema_and_recorded_step_must_match_frozen_version(self):
+        fixtures=gate.read(self.src/'replay.json')
+        origins=gate.read(self.src/'provenance.json')
+        row,origin=fixtures['fixtures'][0],origins['cases'][0]
+        row['scope']='complete_sanitized_response'
+        row['assertions'].append(dict(type='schema',operator='equals',expected={
+            'type':'object','required':['name'],'properties':{'name':{'type':'string'}}}))
+        origin['version_assertions']=copy.deepcopy(row['assertions'])
+        step=dict(phase='setup_steps',index=0,method='GET',path='/demo/setup',
+                  assertions=[dict(type='json_path',operator='equals',path='$.code',expected=0)])
+        origin['version_step_assertions']=[copy.deepcopy(step)]
+        origin['enabled_step_assertion_count']=1
+        row['steps']=[dict(step,http_status=200,body={'code':0})]
+        (self.src/'provenance.json').write_text(json.dumps(origins))
+
+        def inspect():
+            (self.src/'replay.json').write_text(json.dumps(fixtures))
+            return gate.inspect_inputs(self.src,self.reviews)
+
+        report,eligible=inspect()
+        self.assertIn('case-0',eligible)
+        order=list(range(len(eligible['case-0']['checks'])))
+        bundle=[dict(id='case-0',order=order,script=gate.render('case-0',order),fixture=row)]
+        self.assertEqual(gate.sandbox(bundle)['passed'],1)
+        row['steps'][0]['body']['code']=200
+        self.assertNotIn('case-0',inspect()[1])
+        with self.assertRaisesRegex(ValueError,'isolated_replay_failed'):
+            gate.sandbox(bundle)
+        row['steps'][0]['body']['code']=0
+        row['steps'][0]['path']='/other'
+        self.assertNotIn('case-0',inspect()[1])
+        row['steps']=[]
+        self.assertNotIn('case-0',inspect()[1])
+        row['steps']=[dict(step,http_status=200,body={'code':0})]
+        row['scope']='sanitized_response_projection'
+        self.assertNotIn('case-0',inspect()[1])
+
     def test_staged_ten_are_collectible_pass_business_checks_and_fail_mutated_body(self):
         receipt={'id':'fake-response','model':'fixture','usage':{'total_tokens':10}}
         with patch.object(model,'_call',return_value=(self.valid,receipt,'fake-request')) as call:

@@ -11,28 +11,34 @@ class Unavailable(Exception):
     pass
 
 
-def _published_file(name):
+def _published_bytes(name, *, subdirectories=(), limit=4 * 1024 * 1024):
     directory_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
     try:
         with ExitStack() as stack:
             directory = os.open(design._root(), directory_flags)
             stack.callback(os.close, directory)
-            for part in ('requirement-design-materials', 'evaluation'):
+            for part in ('requirement-design-materials', 'evaluation', *subdirectories):
                 directory = os.open(part, directory_flags, dir_fd=directory)
                 stack.callback(os.close, directory)
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
             with os.fdopen(fd, 'rb') as stream:
-                limit = 4 * 1024 * 1024
                 info = os.fstat(fd)
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
                     raise Unavailable()
                 data = stream.read(limit + 1)
                 if len(data) > limit:
                     raise Unavailable()
-                return json.loads(data)
+                return data
     except FileNotFoundError:
         raise design.Missing() from None
     except (OSError, ValueError, RecursionError):
+        raise Unavailable() from None
+
+
+def _published_file(name):
+    try:
+        return json.loads(_published_bytes(name))
+    except (ValueError, RecursionError):
         raise Unavailable() from None
 
 
