@@ -264,3 +264,28 @@ describe('AI generation advanced options', () => {
     }
   })
 })
+
+describe('version-protected generation diagnostics', () => {
+  it('explains compatible worker timeout without calling it a model failure', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway', error_code: 'compatible_worker_timeout' }],
+    } } })
+    expect(wrapper.text()).toContain('等待兼容执行器超时')
+    expect(wrapper.text()).toContain('未发起模型调用')
+    expect(wrapper.text()).not.toContain('模型调用失败')
+  })
+  it('warns that an interrupted generation result is uncertain and may have cost money', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway', error_code: 'generation_uncertain' }],
+    } } })
+    expect(wrapper.text()).toContain('结果不确定')
+    expect(wrapper.text()).toContain('可能产生费用')
+    expect(wrapper.text()).toContain('先核对')
+    expect(wrapper.text()).not.toContain('本次模型调用没有生成新草稿')
+  })
+  it('does not describe fallback for explicit no-thinking mode', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null } })
+    expect(wrapper.text()).toContain('不使用备用模型')
+    expect(wrapper.text()).not.toContain('兼容的备用渠道')
+  })
+})

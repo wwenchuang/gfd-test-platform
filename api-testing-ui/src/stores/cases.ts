@@ -1191,6 +1191,14 @@ function aiJobFailureMessage(job: AiJob): string {
   if (job.state === 'failed_gateway') {
     const failedBatches = job.batches.filter(batch => batch.state === 'failed_gateway')
     const validationFailed = job.batches.some(batch => batch.state === 'failed_validation' || batch.validation_errors?.length)
+    if (failedBatches.some(batch => batch.error_code === 'generation_uncertain')) {
+      const validationNote = validationFailed ? '，并有生成结果未通过校验' : ''
+      return `部分批次生成结果不确定${validationNote}，模型调用可能产生费用；请先核对任务和草稿，再决定是否重试`
+    }
+    if (failedBatches.some(batch => batch.error_code === 'compatible_worker_timeout')) {
+      const validationNote = validationFailed ? '，并有生成结果未通过校验' : ''
+      return `部分批次等待兼容执行器超时${validationNote}，这些批次未发起模型调用；请联系管理员检查执行器和队列`
+    }
     if (failedBatches.length && validationFailed) {
       const allTimeout = failedBatches.every(batch => batch.error_code === 'gateway_timeout')
       const allEnqueue = failedBatches.every(batch => batch.error_code === 'enqueue_failed')

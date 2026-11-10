@@ -1725,3 +1725,29 @@ describe('AI scoped thinking mode', () => {
   })
 
 })
+
+describe('version-protected AI failure summary', () => {
+  it.each([
+    ['compatible_worker_timeout', '等待兼容执行器超时', '未发起模型调用'],
+    ['generation_uncertain', '结果不确定', '可能产生费用'],
+  ])('accurately summarizes %s', async (code, first, second) => {
+    setActivePinia(createPinia())
+    const batch = { id: 'b', sequence: 1, state: 'failed_gateway', endpoint_ids: [], requested_model: '', actual_model: '', fallback_used: false, fallback_reason: '', generated_draft_ids: [], validation_errors: [], error_code: code }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: { id: 'j', state: 'failed_gateway', endpoint_ids: [], requested_model: '', actual_model: '', fallback_used: false, summary: {}, batches: [batch] } } })
+    const store = useCasesStore()
+    await store.pollAiJob('j', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiError).toContain(first)
+    expect(store.aiError).toContain(second)
+    if (code === 'generation_uncertain') expect(store.aiError).not.toContain('未生成新草稿')
+  })
+  it('does not erase uncertain outcomes when validation failures occur in another batch', async () => {
+    setActivePinia(createPinia())
+    const batch = { id: 'b', sequence: 1, state: 'failed_gateway', endpoint_ids: [], requested_model: '', actual_model: '', fallback_used: false, fallback_reason: '', generated_draft_ids: [], validation_errors: [], error_code: 'generation_uncertain' }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: { id: 'j', state: 'failed_gateway', endpoint_ids: [], requested_model: '', actual_model: '', fallback_used: false, summary: {}, batches: [batch, { ...batch, id: 'v', state: 'failed_validation', error_code: '', validation_errors: [{code:'output_validation_error', message:'invalid'}] }] } } })
+    const store = useCasesStore()
+    await store.pollAiJob('j', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiError).toContain('结果不确定')
+    expect(store.aiError).toContain('校验')
+    expect(store.aiError).toContain('先核对')
+  })
+})
