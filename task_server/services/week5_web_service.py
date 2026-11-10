@@ -134,16 +134,23 @@ def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_cata
     if result['status'] == 'passed' and (result['error_kind'] is not None or type(result.get('total')) is not int or result['total'] < 0):
         raise ValueError('invalid_browser_result')
     asset = result.get('asset')
+    phase = result.get('phase')
+    if phase is not None and phase not in ('initial','filter','empty'):
+        raise ValueError('invalid_browser_result')
     if scenario != 'ui_catalog_filter' and asset is not None:
         raise ValueError('invalid_browser_result')
-    if asset is not None or (scenario == 'ui_catalog_filter' and result['status'] in ('passed', 'failed')):
+    if scenario == 'ui_catalog_filter' and asset is None and (result['status'] == 'passed' or (result['status'] == 'failed' and phase != 'initial')):
+        raise ValueError('invalid_browser_result')
+    if asset is not None:
+        if scenario != 'ui_catalog_filter' or phase != 'filter':
+            raise ValueError('invalid_browser_result')
         if (not isinstance(asset, dict) or set(asset) != {'app_id','case_id','revision'}
                 or not isinstance(asset['app_id'], str) or not 0 < len(asset['app_id']) <= 128
                 or not isinstance(asset['case_id'], str) or not 0 < len(asset['case_id']) <= 512
                 or not isinstance(asset['revision'], str) or len(asset['revision']) != 64
                 or any(char not in '0123456789abcdef' for char in asset['revision'])):
             raise ValueError('invalid_browser_result')
-    return {key: result[key] for key in ('scenario','version','status','error_kind','total','asset') if key in result}
+    return {key: result[key] for key in ('scenario','version','phase','status','error_kind','total','asset') if key in result}
 
 
 def _load_private(path, limit):

@@ -20,7 +20,7 @@ async function main() {
   const origin = 'http://127.0.0.1:8088';
   const output = path.resolve(process.env.WEEK5_ARTIFACTS || '');
   if (!process.env.WEEK5_ARTIFACTS || !path.isAbsolute(process.env.WEEK5_ARTIFACTS)) throw Error('output_invalid');
-  const result = {scenario,version:1,status:'blocked',error_kind:'environment'};
+  const result = {scenario,version:1,phase:'initial',status:'blocked',error_kind:'environment'};
   const state = {auth:null, availability:null, catalog:null, catalogs:new Map(), routeError:false, staticCount:0,writeAttempts:0};
   const catalogQueries=new Set();
   let browser, context, page, tracing = false;
@@ -81,7 +81,7 @@ async function main() {
         const target=scenario==='ui_catalog_filter'?catalogTarget(state.catalog):null;
         if(scenario==='ui_catalog_filter'&&!target){result.error_kind='environment';}
         else {
-          if(target)result.asset={app_id:target.app,case_id:target.caseId,revision:target.revision};
+          if(target){result.phase='filter';result.asset={app_id:target.app,case_id:target.caseId,revision:target.revision};}else result.phase='empty';
           const app=target?.app||'', query=target?target.name:'__web_check_missing_'+crypto.randomBytes(16).toString('hex');
           const finalQuery=params(app,query);
           if(app){const initial=params(app,'');catalogQueries.add(initial);await Promise.all([waitCatalog(initial),page.locator('[name="ui-app"]').selectOption(app)]);}

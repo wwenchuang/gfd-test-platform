@@ -28,9 +28,27 @@ PNG = b'\x89PNG\r\n\x1a\n' + b'test-pixels'
 
 
 class ServiceTest(unittest.TestCase):
+    def test_initial_page_failure_before_filter_target_is_not_discarded(self):
+        worker={'scenario':'ui_catalog_filter','version':1,'phase':'initial','status':'failed','error_kind':'business'}
+        command=[sys.executable,'-c','import json; print(json.dumps('+repr(worker)+'))']
+        result=service._bounded_process(command,{'PATH':'/usr/bin:/bin'},TOKEN,'user1',scenario='ui_catalog_filter')
+        self.assertEqual(result['status'],'failed')
+        self.assertEqual(result['phase'],'initial')
+        with tempfile.TemporaryDirectory() as tmp, patch.object(service,'_profile',return_value=PROFILE), \
+             patch.object(service,'_execute',return_value=(result,PNG,trace_bytes())):
+            db,root=Path(tmp)/'runs.db',Path(tmp)/'files'
+            saved=service.run('user1','user',TOKEN,scenario='ui_catalog_filter',db_path=db,root=root)
+            self.assertEqual(saved['status'],'failed')
+            self.assertEqual(service.artifact('user1','user',TOKEN,saved['id'],'screenshot',db_path=db,root=root),PNG)
+            self.assertEqual(service.artifact('user1','user',TOKEN,saved['id'],'trace',db_path=db,root=root),trace_bytes())
+        worker['phase']='filter'
+        command=[sys.executable,'-c','import json; print(json.dumps('+repr(worker)+'))']
+        with self.assertRaises(ValueError):
+            service._bounded_process(command,{'PATH':'/usr/bin:/bin'},TOKEN,'user1',scenario='ui_catalog_filter')
+
     def test_filter_result_records_owned_asset_revision_and_cannot_relabel_another_scenario(self):
         asset={'app_id':'app1','case_id':'case-a','revision':'a'*64}
-        worker={'scenario':'ui_catalog_filter','version':1,'status':'passed','error_kind':None,'total':1,'asset':asset}
+        worker={'scenario':'ui_catalog_filter','version':1,'phase':'filter','status':'passed','error_kind':None,'total':1,'asset':asset}
         command=[sys.executable,'-c','import json; print(json.dumps('+repr(worker)+'))']
         result=service._bounded_process(command,{'PATH':'/usr/bin:/bin'},TOKEN,'user1',scenario='ui_catalog_filter')
         self.assertEqual(result['asset'],asset)
