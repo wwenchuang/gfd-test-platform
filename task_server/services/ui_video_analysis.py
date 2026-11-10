@@ -516,6 +516,14 @@ def _check_extended_whole_assets(frames, root, cancelled):
 
 
 def analyze_whole_frames(document, root, cancelled, progress=None):
+    from .ui_video_touch_detail import pixel_cache_scope
+    # Keep only raw, content-addressed detector results for this analysis;
+    # model observations, crops and candidate actions are never cached.
+    with pixel_cache_scope():
+        return _analyze_whole_frames(document, root, cancelled, progress)
+
+
+def _analyze_whole_frames(document, root, cancelled, progress=None):
     """One full-context observation, one bounded plan, at most one correction."""
     frames=document['media']['frames'];duration=document['media']['duration_ms']
     if cancelled():raise ValueError('video_cancelled')

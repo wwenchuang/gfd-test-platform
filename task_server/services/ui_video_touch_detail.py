@@ -1,8 +1,83 @@
 """Optional same-frame pointer detail, never an action or an execution coordinate."""
 import base64
+from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
+import hashlib
 import io
 import math
 from PIL import Image,ImageChops,ImageStat
+
+
+# Cache only deterministic detector results within one analysis. A concurrent
+# task, retry or nested analysis must never inherit another task's results.
+_PIXEL_CACHE = ContextVar('ui_video_pixel_cache', default=None)
+_MAX_CACHED_IMAGE_BYTES = 8 * 1024 * 1024
+
+
+@contextmanager
+def pixel_cache_scope(max_entries=1024):
+    if type(max_entries) is not int or max_entries < 1:
+        raise ValueError('video_pixel_cache_invalid')
+    cache = _PixelCache(max_entries)
+    token = _PIXEL_CACHE.set(cache)
+    try:
+        yield cache
+    finally:
+        _PIXEL_CACHE.reset(token)
+        cache.clear()
+
+
+class _PixelCache:
+    def __init__(self, limit):
+        self.limit = limit
+        self.entries = OrderedDict()
+
+    def __len__(self):
+        return len(self.entries)
+
+    def clear(self):
+        self.entries.clear()
+
+    def detect(self, fn, a, b, a_digest, b_digest):
+        if a_digest is None or b_digest is None:
+            return fn(a, b)
+        key = (fn, a_digest, b_digest)
+        if key in self.entries:
+            self.entries.move_to_end(key)
+            return self.entries[key]
+        result = fn(a, b)  # Failed or cancelled work is never cached.
+        self.entries[key] = result
+        if len(self.entries) > self.limit:
+            self.entries.popitem(last=False)
+        return result
+
+
+@contextmanager
+def _pixel_image(path, cached):
+    if not cached:
+        with Image.open(path) as image:
+            yield image, None
+        return
+    # Hash the exact bytes subsequently decoded. Path/mtime alone is not safe
+    # across a retry or a concurrent replacement of the shared frame directory.
+    with path.open('rb') as source:
+        data = source.read(_MAX_CACHED_IMAGE_BYTES + 1)
+    if len(data) > _MAX_CACHED_IMAGE_BYTES:
+        # Preserve the original large-file handling without retaining its bytes.
+        del data
+        with Image.open(path) as image:
+            yield image, None
+        return
+    digest = hashlib.sha256(data).digest()
+    with Image.open(io.BytesIO(data)) as image:
+        yield image, digest
+
+
+def _detect(cache, fn, a, b, a_digest, b_digest):
+    if cache is None:
+        return fn(a, b)
+    return cache.detect(fn, a, b, a_digest, b_digest)
 
 
 def locate_ring(before,after):
@@ -73,17 +148,18 @@ def locate_solid(before,after):
 def append_details(frames,root,assets,cancelled,local_ids=None):
     limit=min(6,60-len(assets));details=[]
     if limit<=0:return details
+    cache=_PIXEL_CACHE.get()
     total=sum(len(a['base64']) for a in assets);last=None
     detailed={a.get('name') for a in assets}
     for before,after in zip(frames,frames[1:]):
         if cancelled():raise ValueError('video_cancelled')
         if not 0<after['timestamp_ms']-before['timestamp_ms']<=500:continue
         try:
-            with Image.open(root/'frames'/(before['frame_id']+'.jpg')) as a,Image.open(root/'frames'/(after['frame_id']+'.jpg')) as b:
+            with _pixel_image(root/'frames'/(before['frame_id']+'.jpg'),cache is not None) as (a,ah),_pixel_image(root/'frames'/(after['frame_id']+'.jpg'),cache is not None) as (b,bh):
                 parent,source=after,b
-                point=locate_ring(a,b) or locate_solid(a,b)
+                point=_detect(cache,locate_ring,a,b,ah,bh) or _detect(cache,locate_solid,a,b,ah,bh)
                 if not point:
-                    point=locate_solid(b,a);parent,source=before,a
+                    point=_detect(cache,locate_solid,b,a,bh,ah);parent,source=before,a
                 if not point:continue
                 if local_ids is not None and parent['frame_id'] not in local_ids:continue
                 if parent['frame_id']+'-detail' in detailed:continue
