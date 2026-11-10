@@ -264,6 +264,74 @@ def _same_explicit_input_label(left, right):
     return False
 
 
+def _dialog_and_bare_label(left, right):
+    """Recognize a shape to *review*, not proof of a shared control."""
+    for qualified, bare in ((_unquote(left), _unquote(right)), (_unquote(right), _unquote(left))):
+        match=re.fullmatch(r'(.{1,60}(?:弹窗|对话框))的(.{1,60})按钮', qualified)
+        if not match or not bare or bare.endswith(('按钮','入口','输入框','链接')):continue
+        if match[2]==bare:return True
+    return False
+
+
+def dialog_target_review(events,hints,frames,diagnostic):
+    """Return an untrusted same-frame candidate for explicit human review.
+
+    The helper never proves targets equivalent, discards actions, or replaces
+    either name. Multi-action and multi-probe ambiguity remains a hard error.
+    """
+    frame=diagnostic.get('frame_id')
+    if diagnostic.get('binding')!='explicit' or diagnostic.get('comparison')!='mismatch':return None
+    if frame not in {item['frame_id'] for item in frames}:return None
+    matches=[event for event in events if event.get('action')=='aiTap' and frame in event.get('frame_refs',[])]
+    local_hints=[hint for hint in hints if hint.get('frame_id')==frame and
+                 hint.get('kind')!='unresolved_observation' and hint.get('action') not in ('navigateBack','aiAssert')]
+    if len(matches)!=1 or len(local_hints)!=1:return None
+    event,hint=matches[0],local_hints[0]
+    if hint.get('action') not in (None,'aiTap'):return None
+    left,right=event.get('target'),hint.get('target')
+    if not isinstance(left,str) or not isinstance(right,str) or not _dialog_and_bare_label(left,right):return None
+    # Do not let the first reviewable disagreement hide a second hard conflict.
+    if conflict(events,[other for other in hints if other is not hint],frames):return None
+    return event,frame,left,right
+
+
+def _dialog_review_failure():
+    error=ValueError('video_model_invalid')
+    error.dialog_review_blocked=True
+    return error
+
+
+def guard_ambiguous_dialog_hints(events,hints,frames):
+    """Do not retry away multi-action, multi-probe or other conflicts."""
+    times={item['frame_id']:item['timestamp_ms'] for item in frames}
+    for hint in hints:
+        frame=hint.get('frame_id');target=hint.get('target')
+        if not isinstance(target,str) or hint.get('kind')=='unresolved_observation' or hint.get('action') not in (None,'aiTap'):continue
+        taps=[event for event in events if event.get('action')=='aiTap' and frame in event.get('frame_refs',[])]
+        if not taps and frame in times:
+            nearby=[event for event in events if event.get('action')=='aiTap' and event.get('frame_refs') and
+                    abs(times[event['frame_refs'][0]]-times[frame])<=350]
+            if any(isinstance(event.get('target'),str) and _dialog_and_bare_label(event['target'],target) for event in nearby):
+                raise _dialog_review_failure()
+        if not any(isinstance(event.get('target'),str) and _dialog_and_bare_label(event['target'],target) for event in taps):continue
+        if len(taps)!=1 or sum(other.get('frame_id')==frame for other in hints)!=1:
+            raise _dialog_review_failure()
+        others=[other for other in hints if other is not hint]
+        used={id(taps[0])}
+        for other in others:
+            if other.get('kind')=='unresolved_observation' or other.get('action') in ('navigateBack','aiAssert'):continue
+            fid=other.get('frame_id')
+            if fid not in times:raise _dialog_review_failure()
+            selected=[event for event in events if event.get('action')=='aiTap' and fid in event.get('frame_refs',[])]
+            # Another concrete probe requires its own explicit evidence: even
+            # the same label nearby could be a separate rapid second tap.
+            if len(selected)!=1:raise _dialog_review_failure()
+            if id(selected[0]) in used:raise _dialog_review_failure()
+            used.add(id(selected[0]))
+        if conflict(events,others,frames):
+            raise _dialog_review_failure()
+
+
 def conflict(events, hints, frames, diagnostic=None, evidence=None):
     times = {f['frame_id']:f['timestamp_ms'] for f in frames}
     for hint in hints:

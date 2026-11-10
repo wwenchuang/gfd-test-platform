@@ -108,7 +108,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         assets=load_assets(images,root,cancelled)
         from .ui_video_touch_detail import append_details
         payload['detail_frames']=append_details(images,root,assets,cancelled,current_ids)
-        from .ui_video_touch_targets import probe,conflict,bind_uncertain_hints
+        from .ui_video_touch_targets import probe,conflict,bind_uncertain_hints,dialog_target_review,guard_ambiguous_dialog_hints
         from .ui_video_reconcile import _redact_audit
         payload['touch_targets']=probe(images,payload['detail_frames'],assets,duration,cancelled,
                                        touch_target_timeout_retry_budget)
@@ -116,6 +116,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         for attempt in range(2):
             if cancelled():raise ValueError('video_cancelled')
             attempt_questions=[];attempt_multiple=False
+            dialog_reviewed=False
             payload['touch_targets']=_redact_audit(payload['touch_targets'],secrets)
             if 'prior_events' in payload:
                 payload['prior_events']=_redact_audit(payload['prior_events'],secrets)
@@ -144,7 +145,21 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                 checked['uncertainties']=all_questions
                 checked['multiple_scenarios']|=sticky_multiple
                 target_diagnostic={};target_evidence={}
+                guard_ambiguous_dialog_hints(checked['events'],payload['touch_targets'],images)
                 target_conflict=conflict(checked['events'],payload['touch_targets'],images,target_diagnostic,evidence=target_evidence)
+                if target_conflict:
+                    candidate=dialog_target_review(checked['events'],payload['touch_targets'],images,target_diagnostic) if not attempt else None
+                    if candidate:
+                        dialog_reviewed=True
+                        event,frame,observed,probe_target=candidate
+                        question=_text(_redact_audit(f'触点 {frame} 的目标有两种描述：主观察“{observed}”，局部复核“{probe_target}”；请对照原视频核对是否实际点击、是否同一次操作及具体控件。',secrets))
+                        if question not in event['uncertainties']:
+                            if len(event['uncertainties'])>=10:raise ValueError('video_model_invalid')
+                            event['uncertainties'].append(question)
+                        if question not in checked['uncertainties']:
+                            if len(checked['uncertainties'])>=30:raise ValueError('video_model_invalid')
+                            checked['uncertainties'].append(question)
+                        target_conflict=''
                 if target_conflict:
                     error=ValueError('video_model_invalid')
                     error.model_feedback=target_conflict
@@ -165,7 +180,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                         checked['uncertainties'].append(hint_question)
                 break
             except ValueError as error:
-                if cancelled() or attempt or getattr(error,'target_diagnostic',{}).get('ambiguous_bare_probe'):raise
+                if cancelled() or attempt or dialog_reviewed or getattr(error,'dialog_review_blocked',False) or getattr(error,'target_diagnostic',{}).get('ambiguous_bare_probe'):raise
                 sticky_questions.extend(attempt_questions)
                 sticky_multiple|=attempt_multiple
                 if getattr(error,'reference_reason',None)=='outside_window':
