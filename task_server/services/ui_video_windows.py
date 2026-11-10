@@ -97,7 +97,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
     from . import ui_video_ordinary_timing as timing
     from .ui_video_analysis import _bind_whole_evidence,validate_analysis,_text,_check_question_count
     windows=observation_windows(frames)
-    events=[];questions=[];secrets=list(prior_secrets);multi=False;previous_end=-1
+    events=[];questions=[];secrets=list(prior_secrets);multi=False;previous_end=-1;unbound_touches=[]
     touch_target_timeout_retry_budget={'used':False}
     if observation_timeout_retry_budget is None:observation_timeout_retry_budget={'used':False}
     if (type(observation_timeout_retry_budget) is not dict or set(observation_timeout_retry_budget)!={'used'} or
@@ -144,6 +144,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
             for attempt in range(2):
                 if cancelled():raise ValueError('video_cancelled')
                 attempt_questions=[];attempt_multiple=False
+                pending=[];unmatched_probe=False
                 dialog_reviewed=False
                 payload['touch_targets']=_redact_audit(payload['touch_targets'],secrets)
                 if dialog_retry and payload['touch_targets']!=dialog_retry['hints']:
@@ -178,6 +179,9 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                         attempt_multiple|=result['multiple_scenarios']
                     result=_bind_whole_evidence(result,window)
                     checked=validate_analysis(result,window,duration,secrets)
+                    unmatched_probe=any(h.get('requires_review') and h.get('action') not in ('navigateBack','aiAssert') and
+                        h.get('kind')!='unresolved_observation' and not any(e['action']=='aiTap' and h.get('frame_id') in e['frame_refs'] for e in checked['events'])
+                        for h in payload['touch_targets'])
                     all_questions=list(dict.fromkeys(_redact_audit(checked['uncertainties']+sticky_questions,secrets)))
                     _check_question_count(all_questions,30)
                     checked['uncertainties']=all_questions
@@ -236,7 +240,18 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                                 if secret:target_evidence[key]=target_evidence[key].replace(secret,'[输入内容未保存]')
                         error.target_failure_evidence=target_evidence
                         raise error
-                    hint_questions=bind_uncertain_hints(checked['events'],payload['touch_targets'],checked)
+                    hint_questions=bind_uncertain_hints(checked['events'],payload['touch_targets'],checked,unbound=pending)
+                    pending=_redact_audit(pending,secrets)
+                    candidate_touches=[]
+                    if pending:
+                        import hashlib
+                        assets_by_name={asset['name']:asset for asset in assets}
+                        for hint in pending:
+                            frame_id=hint['frame_id']
+                            if frame_id not in current_ids or frame_id not in assets_by_name:raise ValueError('video_model_invalid')
+                            try: frame_sha=hashlib.sha256(base64.b64decode(assets_by_name[frame_id]['base64'],validate=True)).hexdigest()
+                            except (KeyError,ValueError):raise ValueError('video_model_invalid') from None
+                            candidate_touches.append({**hint,'frame_sha256':frame_sha,'phase':'review' if review_events is not None else 'observe','reason':'no_match'})
                     if not isinstance(hint_questions,list):raise ValueError('video_model_invalid')
                     from .ui_video_analysis import _text
                     for hint_question in hint_questions:
@@ -244,8 +259,14 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                         if hint_question and hint_question not in checked['uncertainties']:
                             if len(checked['uncertainties'])>=30:raise ValueError('video_model_invalid')
                             checked['uncertainties'].append(hint_question)
+                    if len(unbound_touches)+len(candidate_touches)>100:raise ValueError('video_model_invalid')
+                    unbound_touches.extend(candidate_touches)
                     break
                 except ValueError as error:
+                    # Once a source-frame hint has no matching action, a generic
+                    # format retry could replace the first answer and erase
+                    # its action evidence. Keep the whole attempt closed.
+                    if pending:raise
                     guard=getattr(error,'dialog_guard_evidence',{})
                     anticipated=list(dict.fromkeys(_redact_audit(checked['uncertainties']+attempt_questions,secrets))) if getattr(error,'dialog_review_blocked',False) else []
                     if (not cancelled() and not attempt and getattr(error,'dialog_review_blocked',False) and
@@ -258,6 +279,7 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                         sticky_questions.extend(attempt_questions);sticky_multiple|=attempt_multiple
                         payload['validation_feedback']='上次局部探针的原帧尚未被主观察明确解释。重新观察当前原帧，完整保留首答全部操作、结果、证据和疑问；仅原图确证时补充相关操作和帧。不能为满足校验编造、删除或合并操作；不确定时保留疑问。'
                         continue
+                    if unmatched_probe:raise
                     if cancelled() or attempt or dialog_reviewed or getattr(error,'dialog_review_blocked',False) or getattr(error,'target_diagnostic',{}).get('ambiguous_bare_probe'):raise
                     sticky_questions.extend(attempt_questions)
                     sticky_multiple|=attempt_multiple
@@ -330,6 +352,9 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
     # Revalidate aggregate budgets, chronology and redaction across all windows.
     result=validate_analysis({'events':events,'uncertainties':list(dict.fromkeys(questions)),
                               'multiple_scenarios':multi},frames,duration,secrets,max_events=120)
+    if unbound_touches:
+        from .ui_video_touch_review import redact_touch_evidence
+        result['touch_ambiguities']=redact_touch_evidence(unbound_touches,secrets)
     if progress:progress('planning',len(windows),len(windows),result['events'])
     return result,secrets
 

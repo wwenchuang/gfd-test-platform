@@ -130,3 +130,86 @@ def test_recording_import_route_permission_and_service(monkeypatch):
     handler = Handler()
     routes[path](handler,{})
     assert handler.response['draft']['app_id'] == 'com.kfb.model'
+
+
+def test_touch_decision_requires_edit_and_dispatches_to_service(monkeypatch):
+    from task_server import ui_case_draft_http
+    from task_server.services import ui_case_draft_service
+    path='/api/ui-case-drafts/draft-1/touch-decision'
+    MainAccess({'permissions':['ui.edit'],'scope':{'ui_apps':'*'}},[]).check('POST',path)
+    with pytest.raises(AccessDenied,match='ui.edit'):
+        MainAccess({'permissions':['ui.view'],'scope':{'ui_apps':'*'}},[]).check('POST',path)
+    routes={}
+    def reg(pattern):
+        def bind(fn):routes[pattern]=fn;return fn
+        return bind
+    ui_case_draft_http.register_routes(reg,reg,reg,reg)
+    payload={'revision':2,'index':0,'frame_id':'frame-001','disposition':'not_action','step_id':''}
+    calls=[]
+    monkeypatch.setenv('UI_SIMPLE_FLOW_ENABLED','1')
+    monkeypatch.setattr(ui_case_draft_service,'resolve_touch_ambiguity',lambda actor,identifier,body:(calls.append((actor,identifier,body)) or {'draft_id':identifier,'revision':3}))
+    class Handler:
+        headers={}
+        def _body(self):return payload
+        def _json(self,body,status=200):self.response,self.status=body,status
+    import re
+    matches=[(fn,re.fullmatch(pattern,path)) for pattern,fn in routes.items() if re.fullmatch(pattern,path)]
+    assert len(matches)==1
+    handler=Handler();matches[0][0](handler,{},matches[0][1])
+    assert handler.status==200 and handler.response['draft']['revision']==3
+    assert calls==[(None,'draft-1',payload)]
+
+
+def test_touch_decision_audit_is_scoped_and_omits_private_body():
+    from task_server import operation_http
+    path='/api/ui-case-drafts/private-id/touch-decision'
+    assert operation_http.route_key('POST',path)=='POST.post_ui_case_draft_action.touch-decision'
+    assert operation_http._resource(path,'POST',{'observation':'PRIVATE'}, {},200)==('ui_draft','','ui_draft.touch-decision')
+
+
+def test_touch_frame_route_uses_view_permission_and_sends_checked_bytes(monkeypatch):
+    import io,re
+    from task_server import ui_case_draft_http,operation_http
+    from task_server.services import ui_case_draft_service
+    path='/api/ui-case-drafts/draft-1/touch-frame'
+    MainAccess({'permissions':['ui.view'],'scope':{'ui_apps':'*'}},[]).check('GET',path)
+    with pytest.raises(AccessDenied,match='ui.view'):
+        MainAccess({'permissions':['ui.edit'],'scope':{'ui_apps':'*'}},[]).check('GET',path)
+    assert operation_http.route_key('GET',path)=='GET.get_ui_case_draft_touch_frame'
+    assert operation_http._resource(path,'GET',{}, {},200)==('ui_draft','','ui_draft.touch_frame')
+    routes={}
+    def reg(pattern):
+        def bind(fn):routes[pattern]=fn;return fn
+        return bind
+    ui_case_draft_http.register_routes(reg,reg,reg,reg)
+    calls=[]
+    monkeypatch.setattr(ui_case_draft_service,'get_touch_frame',lambda actor,identifier,revision,index:(calls.append((actor,identifier,revision,index)) or b'verified-jpeg'))
+    class Handler:
+        def __init__(self):self.wfile=io.BytesIO();self.headers={}
+        def send_response(self,status):self.status=status
+        def send_header(self,key,value):self.headers[key]=value
+        def end_headers(self):pass
+        def _json(self,body,status=200):self.response,self.status=body,status
+    matches=[(fn,re.fullmatch(pattern,path)) for pattern,fn in routes.items() if re.fullmatch(pattern,path)]
+    assert len(matches)==1
+    handler=Handler();matches[0][0](handler,{'revision':'3','index':'0'},matches[0][1])
+    assert handler.status==200 and handler.wfile.getvalue()==b'verified-jpeg'
+    assert handler.headers['Content-Type']=='image/jpeg' and handler.headers['Content-Length']=='13'
+    assert handler.headers['Cache-Control']=='private, no-store' and handler.headers['X-Content-Type-Options']=='nosniff'
+    assert calls==[(None,'draft-1',3,0)]
+    bad=Handler();matches[0][0](bad,{'revision':'0','index':'-1'},matches[0][1])
+    assert bad.status==400 and len(calls)==1
+
+
+@pytest.mark.parametrize('code,expected',[
+    ('video_touch_decision_invalid','打印下发及恢复过程'),
+    ('video_touch_evidence_invalid','录屏证据'),
+])
+def test_touch_review_errors_have_specific_safe_explanation(monkeypatch,code,expected):
+    from task_server import ui_case_draft_http
+    class Handler:
+        def _json(self,body,status=200):self.response,self.status=body,status
+    handler=Handler()
+    def fail():raise ValueError(code)
+    ui_case_draft_http._run(handler,fail)
+    assert handler.status==400 and handler.response['code']==code and expected in handler.response['error']

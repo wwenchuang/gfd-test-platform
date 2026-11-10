@@ -324,10 +324,10 @@ class MainAccess:
             return 'ui.view'
         if method == 'POST' and (path in {'/api/ui-video-sources/upload','/api/ui-video-sources/history-remove'} or re.fullmatch(r'/api/ui-video-sources/uvs_[0-9a-f]{32}/(?:cancel|retry|import|rename)', path)):
             return 'ui.edit'
-        if method in {'GET', 'HEAD'} and re.fullmatch(r'/api/ui-case-drafts(?:/[^/]+)?', path):
+        if method in {'GET', 'HEAD'} and re.fullmatch(r'/api/ui-case-drafts(?:/[^/]+(?:/touch-frame)?)?', path):
             return 'ui.view'
         if method == 'POST':
-            if path in {'/api/ui-case-drafts', '/api/ui-case-drafts/import-recording', '/api/ui-case-drafts/import-requirement', '/api/ui-case-drafts/import-generation'} or re.fullmatch(r'/api/ui-case-drafts/[^/]+/(update|restore|yaml-candidate)', path):
+            if path in {'/api/ui-case-drafts', '/api/ui-case-drafts/import-recording', '/api/ui-case-drafts/import-requirement', '/api/ui-case-drafts/import-generation'} or re.fullmatch(r'/api/ui-case-drafts/[^/]+/(update|restore|yaml-candidate|touch-decision)', path):
                 return 'ui.edit'
             if re.fullmatch(r'/api/ui-case-drafts/[^/]+/(validate|try)', path):
                 return 'ui.execute'

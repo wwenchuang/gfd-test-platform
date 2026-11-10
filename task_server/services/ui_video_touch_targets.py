@@ -161,7 +161,7 @@ def probe(frames, details, assets, duration, cancelled, timeout_retry_budget=Non
     return hints
 
 
-def bind_uncertain_hints(events,hints,analysis=None):
+def bind_uncertain_hints(events,hints,analysis=None,unbound=None):
     """Attach blockers only to events sharing the evidenced source frame."""
     question='触点目标或页面变化存在疑问，请对照原视频核对'
     root_questions=[]
@@ -208,6 +208,10 @@ def bind_uncertain_hints(events,hints,analysis=None):
         if not hint.get('requires_review'):continue
         root_questions.extend(hint.get('questions',[]))
         matches=[e for e in events if e.get('action')=='aiTap' and hint['frame_id'] in e.get('frame_refs',[])]
+        if not matches and isinstance(unbound,list):
+            unbound.append({key:hint[key] for key in ('frame_id','target','observation','questions') if key in hint})
+            if not hint.get('questions'):root_questions.append(question)
+            continue
         if len(matches)!=1 or len(matches[0].get('uncertainties',[]))>=10:raise ValueError('video_model_invalid')
         if question not in matches[0]['uncertainties']:matches[0]['uncertainties'].append(question)
         if not hint.get('questions'):

@@ -538,6 +538,7 @@ def _analyze_whole_frames(document, root, cancelled, progress=None):
     from .ui_video_windows import observe_windows
     observation_timeout_retry_budget={'used':False}
     observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress,None,(),observation_timeout_retry_budget)
+    first_touch_ambiguities=copy.deepcopy(observed.get('touch_ambiguities',[]))
     first_pass=copy.deepcopy(observed['events'])
     first_root_questions=list(observed['uncertainties'])
     repaired=False
@@ -573,12 +574,23 @@ def _analyze_whole_frames(document, root, cancelled, progress=None):
     if callable(audit_sink) and observed.get('frame_role_audit'):
         try:audit_sink(observed['frame_role_audit'])
         except Exception:pass  # Audit persistence cannot alter generation outcome.
+    review_touch_ambiguities=copy.deepcopy(observed.get('touch_ambiguities',[])) if repaired else []
     from .ui_video_delayed_response import review_pending_responses
     observed=review_pending_responses(observed,document,root,cancelled,known_secrets)
     # Persist the actual post-repair/post-response candidates even when planning
     # later fails; the owner-scoped raw evidence must not stop at first pass.
     if progress:progress('planning',1,1,observed['events'])
-    return consolidate_observed_frames(document,root,cancelled,observed,first_pass,known_secrets,progress)
+    touch_ambiguities=first_touch_ambiguities[:]
+    for item in review_touch_ambiguities:
+        if item not in touch_ambiguities:touch_ambiguities.append(item)
+    if len(touch_ambiguities)>100:raise ValueError('video_model_invalid')
+    planning_secrets=[]
+    result=consolidate_observed_frames(document,root,cancelled,observed,first_pass,known_secrets,progress,
+        **({'touch_secret_sink':planning_secrets} if touch_ambiguities else {}))
+    if touch_ambiguities:
+        from .ui_video_touch_review import redact_touch_evidence
+        result['touch_ambiguities']=redact_touch_evidence(touch_ambiguities,known_secrets+planning_secrets)
+    return result
 
 
 def _result_review_needs(proposal,snapshot,plan,candidates,reviewed_configuration_indexes,print_group):
@@ -622,7 +634,7 @@ def _overlapping_return_review(events):
     return questions
 
 
-def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None, *, skill_runner=None, bounded_business_planning=False, planning_preflight=None):
+def consolidate_observed_frames(document, root, cancelled, observed, first_pass, known_secrets, progress=None, *, skill_runner=None, bounded_business_planning=False, planning_preflight=None, touch_secret_sink=None):
     """Compile observed evidence through the shared planning and draft gates."""
     from . import ai_skill_service as ai
     run_skill=ai.run_ai_skill if skill_runner is None else skill_runner
@@ -727,6 +739,9 @@ def consolidate_observed_frames(document, root, cancelled, observed, first_pass,
                     except PlanningReplyError as error:local_error=error
         if cancelled():raise ValueError('video_cancelled')
         if isinstance(planned,dict) and type(planned.get('multiple_scenarios')) is bool:multi|=planned['multiple_scenarios']
+        if isinstance(touch_secret_sink,list) and isinstance(planned,dict) and isinstance(planned.get('events'),list):
+            touch_secret_sink.extend(e['value'] for e in planned['events'] if isinstance(e,dict) and
+                e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value'])
         try:
             if planning_groups is not None and local_error is not None:raise local_error
             from .ui_video_recovery import review_retries
@@ -1135,6 +1150,7 @@ def draft_proposal(document):
               'events':copy.deepcopy(document['events']),'goal':document['goal'],
               'generated_title':document.get('title',''),'input_recovery':copy.deepcopy(document.get('input_recovery',[])),'response_review':copy.deepcopy(document.get('response_review',[])),'omitted_retries':copy.deepcopy(document.get('omitted_retries',[])),
               'raw_events':copy.deepcopy(document.get('raw_events',[])),'first_pass_events':copy.deepcopy(document.get('first_pass_events',[])),'reconciliation_audit':copy.deepcopy(document.get('reconciliation_audit')),'print_recovery':copy.deepcopy(document.get('print_recovery'))}
+    if 'touch_ambiguities' in document:snapshot['touch_ambiguities']=copy.deepcopy(document['touch_ambiguities'])
     if execution_contract is not None:snapshot['execution_contract']=execution_contract
     snapshot['snapshot_id']=hashlib.sha256(json.dumps([identifier,version]).encode()).hexdigest()
     steps=[];questions=list(document['uncertainties']);root_event_questions=set()
@@ -1232,4 +1248,7 @@ def draft_proposal(document):
         # Normalization can append unresolved step questions. Validate that final
         # presentation too, with the same unchanged normal draft contract.
         normalize_steps(normalized,document['app_id'])
+    if snapshot.get('touch_ambiguities'):
+        from .ui_video_touch_review import source_projection
+        snapshot['touch_source_projection']=source_projection(normalized['steps'])
     return normalized,snapshot

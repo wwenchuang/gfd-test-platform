@@ -278,3 +278,58 @@ test('switching drafts or applications asks before discarding an edited source d
  const requests=f.calls.length;f.node.querySelector('[data-open-draft]').click();await wait();assert.equal(prompts,1);assert.equal(f.calls.length,requests);assert.equal(input.value,'尚未生成的新描述');
  const app=f.node.querySelector('[data-draft-app]');app.value='b';app.dispatchEvent(new f.w.Event('change'));await wait();assert.equal(prompts,2);assert.equal(app.value,'a');assert.equal(input.value,'尚未生成的新描述');assert.equal(f.node.querySelector('[data-draft-title]').value,'导航');
 });
+
+function pendingTouchDraft(){
+ const source={kind:'video',source_id:'uvs_'+'a'.repeat(32),app_id:'a',analysis_version:12,
+  frames:[{frame_id:'frame-001',timestamp_ms:1234}],events:[],
+  touch_ambiguities:[{frame_id:'frame-001',phase:'observe',target:'候选 <img src=x>',observation:'原观察',questions:['是否点了 <script>bad</script>']} ]};
+ return {...draft,questions:[],source_snapshot:source,steps:[{...draft.steps[0],step_id:'manual-1',source_ref:'text',review_state:'confirmed',expected:'页面显示结果'}]};
+}
+
+test('unmatched touch displays escaped source evidence and loads the original frame privately',async t=>{
+ const input=pendingTouchDraft();let opened=null;const f=fixture(t,null,{initialDraft:input,openVideoSource:x=>opened=x});
+ f.w.authHeaders=()=>({'Authorization':'Bearer PRIVATE'});let requests=[];
+ f.w.nativeFetch=async(url,options)=>{requests.push({url,options});return {ok:true,headers:{get:()=> 'image/jpeg'},blob:async()=>new f.w.Blob(['image'],{type:'image/jpeg'})};};
+ f.w.URL.createObjectURL=()=> 'blob:frame';f.w.URL.revokeObjectURL=()=>{};
+ await wait();const row=f.node.querySelector('[data-touch-ambiguity="0"]');assert.ok(row);
+ assert.match(row.textContent,/frame-001/);assert.match(row.textContent,/1\.23/);assert.match(row.textContent,/是否点了/);assert.equal(row.querySelector('script'),null);assert.equal(row.querySelector('img[src=x]'),null);
+ row.querySelector('[data-touch-frame]').click();await wait();await wait();
+ assert.match(requests[0].url,/\/api\/ui-case-drafts\/d1\/touch-frame\?/);assert.match(requests[0].url,/revision=1/);assert.match(requests[0].url,/index=0/);assert.equal(requests[0].options.headers.Authorization,'Bearer PRIVATE');
+ assert.equal(row.querySelector('[data-touch-preview]').getAttribute('src'),'blob:frame');
+ row.querySelector('[data-touch-video]').click();assert.equal(opened.source_id,input.source_snapshot.source_id);
+});
+
+test('touch decisions require saved draft and submit explicit choice with current revision',async t=>{
+ let current=pendingTouchDraft();const f=fixture(t,(path,o)=>{
+  if(path.endsWith('/touch-decision')){current={...current,revision:current.revision+1,touch_decisions:{'0':{frame_id:'frame-001',disposition:o.body.disposition,step_id:o.body.step_id}}};return {ok:true,draft:current};}
+  if(path.endsWith('/update')){current={...current,...o.body,revision:current.revision+1};return {ok:true,draft:current};}
+ },{initialDraft:current});await wait();
+ let row=f.node.querySelector('[data-touch-ambiguity="0"]');assert.ok(row);row.querySelector('[data-touch-not-action]').click();await wait();
+ assert.deepEqual(JSON.parse(JSON.stringify(f.calls.find(c=>c.path.endsWith('/touch-decision')).o.body)),{revision:1,index:0,frame_id:'frame-001',disposition:'not_action',step_id:''});
+ row=f.node.querySelector('[data-touch-ambiguity="0"]');assert.match(row.textContent,/已记录/);
+ const title=f.node.querySelector('[data-draft-title]');title.value='未保存';title.dispatchEvent(new f.w.Event('input',{bubbles:true}));
+ row.querySelector('[data-touch-not-action]').click();assert.equal(f.calls.filter(c=>c.path.endsWith('/touch-decision')).length,1);
+ f.node.querySelector('[data-draft-save]').click();await wait();
+ row=f.node.querySelector('[data-touch-ambiguity="0"]');const select=row.querySelector('[data-touch-step]');select.value='manual-1';row.querySelector('[data-touch-manual]').click();await wait();
+ assert.deepEqual(JSON.parse(JSON.stringify(f.calls.filter(c=>c.path.endsWith('/touch-decision')).at(-1).o.body)),{revision:3,index:0,frame_id:'frame-001',disposition:'manual_step',step_id:'manual-1'});
+});
+
+test('unmatched touch decisions are unavailable without edit permission',async t=>{
+ const f=fixture(t,null,{initialDraft:pendingTouchDraft(),canEdit:()=>false});await wait();
+ const row=f.node.querySelector('[data-touch-ambiguity="0"]');assert.ok(row);assert.equal(row.querySelector('[data-touch-not-action]').disabled,true);assert.equal(row.querySelector('[data-touch-manual]').disabled,true);
+});
+
+test('touch frame response from an old identity is discarded',async t=>{
+ const f=fixture(t,null,{initialDraft:pendingTouchDraft()});f.w.authHeaders=()=>({});let resolve,signal;
+ f.w.nativeFetch=(url,options)=>{signal=options.signal;return new Promise(r=>resolve=r);};
+ let blobs=0;f.w.URL.createObjectURL=()=>{blobs++;return 'blob:private';};f.w.URL.revokeObjectURL=()=>{};
+ await wait();const row=f.node.querySelector('[data-touch-ambiguity="0"]');row.querySelector('[data-touch-frame]').click();f.setIdentity('other');
+ resolve({ok:true,headers:{get:()=> 'image/jpeg'},blob:async()=>new f.w.Blob(['image'],{type:'image/jpeg'})});await wait();await wait();
+ assert.equal(signal.aborted,true);assert.equal(blobs,0);assert.equal(f.node.textContent,'');
+});
+
+test('same-frame independent evidence clearly blocks manual tap but permits separate no-action review',async t=>{
+ const input=pendingTouchDraft();input.source_snapshot.touch_ambiguities.push({...input.source_snapshot.touch_ambiguities[0],phase:'review',questions:['另一阶段疑问']});
+ const f=fixture(t,null,{initialDraft:input});await wait();const rows=f.node.querySelectorAll('[data-touch-ambiguity]');assert.equal(rows.length,2);
+ for(const row of rows){assert.match(row.textContent,/同一原帧存在多条独立疑点/);assert.equal(row.querySelector('[data-touch-manual]').disabled,true);assert.equal(row.querySelector('[data-touch-step]').disabled,true);assert.equal(row.querySelector('[data-touch-not-action]').disabled,false);}
+});

@@ -166,8 +166,26 @@ class DraftStore:
             document = self._read(db, draft_id, owner_id)
             if type(expected_revision) is not int or document['revision'] != expected_revision:
                 raise DraftConflict('draft_revision_changed')
+            # Any content edit, including YAML or restoration, requires fresh
+            # review of evidence against the new complete draft.
+            document.pop('touch_decisions', None)
             document.update(content)
             document.update(revision=document['revision'] + 1, updated_ns=time.time_ns(), generation_status='edited', error='', ready=False)
+            self._save(db, document)
+            return document
+
+    def record_touch_decision(self, draft_id, owner_id, expected_revision, decision):
+        with self._db(write=True) as db:
+            document = self._read(db, draft_id, owner_id)
+            if type(expected_revision) is not int or document['revision'] != expected_revision:
+                raise DraftConflict('draft_revision_changed')
+            from .ui_video_touch_review import content_hash
+            if decision['content_sha256'] != content_hash(document):
+                raise DraftConflict('draft_revision_changed')
+            decisions = dict(document.get('touch_decisions', {}))
+            decisions[str(decision['index'])] = decision
+            document.update(touch_decisions=decisions, revision=document['revision']+1,
+                            updated_ns=time.time_ns(), generation_status='edited', ready=False)
             self._save(db, document)
             return document
 

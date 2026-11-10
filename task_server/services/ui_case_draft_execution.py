@@ -17,6 +17,9 @@ TRIAL_CONTRACT = 'private-draft-trial-v1'
 
 
 def _source(draft):
+    from .ui_video_touch_review import touch_review_blocked
+    if touch_review_blocked(draft):
+        raise BatchValidationError('video_touch_review_required')
     if draft.get('yaml_candidate', {}).get('status') == 'invalid':
         raise BatchValidationError('draft_yaml_candidate_unresolved')
     proposal = {key:draft[key] for key in ('title','preconditions','steps','questions')}

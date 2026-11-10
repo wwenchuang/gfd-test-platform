@@ -53,11 +53,12 @@ _UI_BATCH_ACTIONS = {
 _UI_DRAFT_ACTIONS = {
     'GET.api.ui_case_drafts': 'list', 'POST.api.ui_case_drafts': 'create',
     'GET.get_ui_case_draft': 'view',
+    'GET.get_ui_case_draft_touch_frame': 'touch_frame',
     'POST.api.ui_case_drafts.import_recording': 'import_recording',
     'POST.api.ui_case_drafts.import_requirement': 'import_requirement',
     'POST.api.ui_case_drafts.import_generation': 'import_generation',
     **{'POST.post_ui_case_draft_action.' + action: action
-       for action in ('update', 'restore', 'yaml-candidate', 'validate', 'try', 'publish')},
+       for action in ('update', 'restore', 'yaml-candidate', 'touch-decision', 'validate', 'try', 'publish')},
 }
 
 

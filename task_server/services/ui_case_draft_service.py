@@ -371,6 +371,28 @@ def get_draft(actor, draft_id):
     return _owned(actor, draft_id, 'ui.view')[1]
 
 
+def resolve_touch_ambiguity(actor, draft_id, body):
+    body = _body(body, {'revision','index','frame_id','disposition','step_id'},
+                 {'revision','index','frame_id','disposition','step_id'})
+    profile, document = _owned(actor, draft_id, 'ui.edit')
+    revision = _revision(body)
+    if document['revision'] != revision:raise DraftConflict('draft_revision_changed')
+    from .ui_video_touch_review import decision_for
+    decision=decision_for(document,body['index'],body['frame_id'],body['disposition'],body['step_id'],profile)
+    require_ui_actor(actor,permission='ui.edit',app_id=document['app_id'])
+    return _store().record_touch_decision(draft_id,profile['user_id'],revision,decision)
+
+
+def get_touch_frame(actor,draft_id,revision,index):
+    profile,document=_owned(actor,draft_id,'ui.view')
+    if type(revision) is not int or revision!=document['revision']:raise DraftConflict('draft_revision_changed')
+    from .ui_video_touch_review import read_verified_touch_frame
+    data=read_verified_touch_frame(document,index)
+    require_ui_actor(actor,permission='ui.view',app_id=document['app_id'])
+    if _store().get(draft_id,profile['user_id'])['revision']!=revision:raise DraftConflict('draft_revision_changed')
+    return data
+
+
 def apply_yaml_candidate(actor, draft_id, body):
     from .ui_yaml_candidate import parse_candidate, MAX_RAW_CHARS
     body = _body(body, {'revision', 'yaml_content'}, {'revision', 'yaml_content'})
@@ -462,6 +484,10 @@ def validate_draft(actor, draft_id, body):
         raise ValueError('draft_target_invalid')
     gate = {'ready': False, 'blockers': [], 'compiled_case': {}, 'target_resolution': {},
             'draft': copy.deepcopy(document), 'static_validation': {}, 'executable_score': {}}
+    from .ui_video_touch_review import touch_review_blocked
+    if touch_review_blocked(document):
+        gate['blockers'].append({'code': 'video_touch_review_required', 'message': '请先对照原视频逐一处理触点疑问'})
+        return gate
     if document.get('yaml_candidate', {}).get('status') == 'invalid':
         gate['blockers'].append({'code': 'draft_yaml_candidate_unresolved', 'message': document['yaml_candidate']['error']})
         return gate

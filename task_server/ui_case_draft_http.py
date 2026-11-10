@@ -1,5 +1,6 @@
 """Thin private draft routes; all ownership and execution gates live in services."""
 import sqlite3
+import re
 
 
 def _run(handler, operation, *, admission=False):
@@ -38,6 +39,9 @@ def _run(handler, operation, *, admission=False):
             'draft_gate_failed': '用例尚未通过检查，请先处理待确认内容',
             'draft_trial_required': '请先完成当前版本的手机试跑，再发布基线',
             'draft_gate_required': '请先确认草稿并通过校验',
+            'video_touch_decision_invalid': '来源步骤发生修改、人工点击顺序不符，或位于打印下发及恢复过程；请对照原视频核对，本版暂不能确认此修改',
+            'video_touch_evidence_invalid': '录屏证据已变更或无法校验，请重新打开来源核对',
+            'video_touch_same_frame_ambiguous': '同一原帧存在多条独立疑点，本版暂不能关联人工点击；请勿通过重复增加点击绕过核对',
             'draft_trial_gate_invalid': '草稿试跑快照校验失败，请重新核对',
             'draft_module_invalid': '所选模块不属于当前应用',
             'draft_trial_pass_required': '当前版本尚未成功试跑并确认执行结束',
@@ -107,7 +111,29 @@ def register_routes(route_get, route_post, route_get_regex, route_post_regex):
             return {'draft': draft}, draft['draft_id']
         _run(handler, operation)
 
-    @route_post_regex(r'^/api/ui-case-drafts/([^/]+)/(update|restore|yaml-candidate|validate|try|publish)$')
+    @route_get_regex(r'^/api/ui-case-drafts/([^/]+)/touch-frame$')
+    def _get_ui_case_draft_touch_frame(handler,qs,match):
+        from .services.ui_case_draft_service import get_touch_frame
+        try:
+            revision=qs.get('revision');index=qs.get('index')
+            if (not isinstance(revision,str) or not re.fullmatch(r'[1-9][0-9]{0,8}',revision) or
+                not isinstance(index,str) or not re.fullmatch(r'(?:0|[1-9][0-9]{0,2})',index)):
+                raise ValueError('video_touch_evidence_invalid')
+            data=get_touch_frame(None,match.group(1),int(revision),int(index))
+            from .operation_http import mark_resource
+            mark_resource(handler,'ui_draft',match.group(1))
+            handler.send_response(200)
+            for key,value in {'Content-Type':'image/jpeg','Content-Length':str(len(data)),
+                              'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',
+                              'Content-Security-Policy':"sandbox; default-src 'none'",'Referrer-Policy':'no-referrer'}.items():
+                handler.send_header(key,value)
+            handler.end_headers();handler.wfile.write(data)
+        except (BrokenPipeError,ConnectionResetError):pass
+        except Exception as error:
+            def fail():raise error
+            _run(handler,fail)
+
+    @route_post_regex(r'^/api/ui-case-drafts/([^/]+)/(update|restore|yaml-candidate|touch-decision|validate|try|publish)$')
     def _post_ui_case_draft_action(handler, qs, match):
         def operation():
             from .services import ui_case_draft_service as service
@@ -117,8 +143,8 @@ def register_routes(route_get, route_post, route_get_regex, route_post_regex):
                 gate = service.validate_draft(None, identifier, body)
                 # Compiled YAML/target resolution are internal dispatch inputs.
                 result = {'gate': {key: gate[key] for key in ('ready', 'blockers')}}
-            elif action in {'update', 'restore', 'yaml-candidate'}:
-                method = {'update': service.update_draft, 'restore': service.restore_draft, 'yaml-candidate': service.apply_yaml_candidate}[action]
+            elif action in {'update', 'restore', 'yaml-candidate', 'touch-decision'}:
+                method = {'update': service.update_draft, 'restore': service.restore_draft, 'yaml-candidate': service.apply_yaml_candidate, 'touch-decision': service.resolve_touch_ambiguity}[action]
                 result = {'draft': method(None, identifier, body)}
             else:
                 from .services.ui_case_draft_execution import create_draft_trial, publish_draft

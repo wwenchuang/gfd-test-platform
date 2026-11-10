@@ -246,6 +246,8 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None,observ
     checked,new_secrets=observe_windows(frames,duration,root,cancelled,progress,
                                        review_events=events,prior_secrets=secrets,
                                        observation_timeout_retry_budget=observation_timeout_retry_budget)
+    import copy
+    touch_ambiguities=copy.deepcopy(checked.get('touch_ambiguities',[]))
     secrets.extend(new_secrets)
     from .ui_video_automatic_motion import (review_refs,disputed_scroll_refs,disputed_tap_scroll_refs,
         contradictory_tap_assertion_refs,fresh_dialog_review_questions,
@@ -273,6 +275,7 @@ def reconcile(events,frames,duration,root,cancelled,secrets,progress=None,observ
         contradictory_tap_assertion_questions(events,pre_repair_events)+contradictory_tap_assertion_questions(events,checked['events']))
     warnings=[q for e in checked['events'] for q in e['uncertainties'] if q.startswith(('首轮点击','首轮滚动','点击与返回'))]
     checked['uncertainties']=list(dict.fromkeys(checked['uncertainties']+warnings+motion_questions))
+    if touch_ambiguities:checked['touch_ambiguities']=touch_ambiguities
     return checked
 
 
