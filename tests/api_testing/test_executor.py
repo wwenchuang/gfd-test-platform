@@ -37,6 +37,18 @@ class _TargetHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_truncated_json(self):
+        partial = b'{"code":0,"id":"unconfirmed"}'
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(partial) + 8))
+        self.end_headers()
+        self.wfile.write(partial)
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "128")
+        self.end_headers()
+
     def do_GET(self):
         type(self).request_count += 1
         type(self).workflow_calls.append(("GET", self.path, None))
@@ -131,6 +143,12 @@ class _TargetHandler(BaseHTTPRequestHandler):
                     }
                 },
             )
+        elif self.path == "/read-truncated":
+            self._send_truncated_json()
+        elif self.path == "/close-delimited":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"complete")
         elif self.path.startswith("/disconnect"):
             self.connection.shutdown(2)
             self.connection.close()
@@ -173,7 +191,15 @@ class _TargetHandler(BaseHTTPRequestHandler):
         raw_body = self.rfile.read(length) if length else b""
         body = json.loads(raw_body) if raw_body else None
         type(self).workflow_calls.append(("POST", self.path, body))
-        if self.path.startswith("/workflow/print-fail"):
+        if self.path == "/write-truncated":
+            self._send_truncated_json()
+        elif self.path.startswith("/write-redirect/"):
+            self.send_response(303)
+            self.send_header("Location", "/" + self.path.rsplit("/", 1)[-1])
+            self.end_headers()
+        elif self.path == "/write-timeout":
+            time.sleep(0.25)
+        elif self.path.startswith("/workflow/print-fail"):
             self._send(
                 200,
                 {
@@ -853,6 +879,43 @@ def test_main_assertion_failure_still_cancels_print(target_server):
     assert handler.workflow_calls[-1][2] == {"printTaskSn": "print-task-failed"}
 
 
+@pytest.mark.parametrize(("path", "status", "cause", "http_status"), [
+    ("/workflow/setup", "PASSED", "", 200),
+    ("/status-400", "FAILED", "business_response", 400),
+    ("/status-500", "FAILED", "product_response", 500),
+    ("/slow", "BROKEN", "timeout", None),
+    ("/disconnect", "BROKEN", "transport", None),
+    ("/malformed-json", "BROKEN", "parser", 200),
+])
+def test_http_dependency_records_outcome_and_gates_main(target_server, path, status, cause, http_status):
+    _, handler = target_server
+    handler.workflow_calls = []
+    setup = _workflow_step(
+        "读取依赖", "GET", path,
+        extractions=[_json_extraction("resourceSn", "$.data.resourceSn")],
+    )
+    case = _case("/ok", processing=_workflow_processing(setup_steps=[setup]))
+    case.request["query"] = {"sn": "{{resourceSn}}"}
+    result = _executor(target_server, case, limits=ExecutorLimits(timeout_seconds=0.1)).execute_case(
+        "case", "env", {},
+    )
+    assert result.status == status
+    assert result.failure_category == ("" if status == "PASSED" else "setup")
+    setup_records = [event for event in result.trace if event.get("stage") == "setup"]
+    assert len(setup_records) == 1
+    record = setup_records[0]
+    assert (record["status"], record["failure_category"]) == (status, cause)
+    assert record["response"].get("status_code") == http_status
+    expected_paths = [path]
+    if status == "PASSED":
+        assert record["extracted_variables"] == {"resourceSn": "resource-1"}
+        expected_paths.append("/ok?sn=resource-1")
+    else:
+        assert record["extracted_variables"] == {}
+        assert not any(event.get("stage") == "main" for event in result.trace)
+    assert [call[1] for call in handler.workflow_calls] == expected_paths
+
+
 def test_setup_failure_blocks_main_but_runs_static_cleanup(target_server):
     _, handler = target_server
     handler.workflow_calls = []
@@ -1308,6 +1371,89 @@ def test_transport_and_response_limit_failures_are_broken(
     )
     assert result.status == "BROKEN"
     assert result.failure_category == category
+
+
+@pytest.mark.parametrize(("path", "category"), [
+    ("/write-truncated", "transport"),
+    ("/write-timeout", "timeout"),
+])
+def test_incomplete_write_response_has_uncertain_outcome_and_no_extracted_cleanup_id(
+    target_server, path, category,
+):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _case(
+        path,
+        method="POST",
+        extractions=[_extraction("resourceId", "json_path", "$.id")],
+        processing=_workflow_processing(cleanup_steps=[_workflow_step(
+            "清理本次结果", "POST", "/workflow/cancel",
+            body={"id": "{{resourceId}}"}, required_variables=["resourceId"],
+        )]),
+    )
+    result = _executor(target_server, case, limits=ExecutorLimits(timeout_seconds=0.1)).execute_case(
+        "case", "env", {},
+    )
+    assert result.status == "BROKEN"
+    assert result.failure_category == category
+    assert "无法确认服务端是否已处理" in result.error_message
+    assert result.sanitized_response == {}
+    assert result.extracted_variables == {}
+    assert handler.workflow_calls == [("POST", path, None)]
+
+
+@pytest.mark.parametrize(("redirected_path", "cause"), [
+    ("/slow", "timeout"),
+    ("/read-truncated", "transport"),
+])
+def test_failed_get_after_303_remembers_first_write(target_server, redirected_path, cause):
+    _, handler = target_server
+    handler.workflow_calls = []
+    write_path = "/write-redirect" + redirected_path
+    result = _executor(
+        target_server, _case(write_path, method="POST"), limits=ExecutorLimits(timeout_seconds=0.1),
+    ).execute_case("case", "env", {})
+    assert result.status == "BROKEN" and result.failure_category == cause
+    assert "无法确认服务端是否已处理" in result.error_message
+    assert handler.workflow_calls == [("POST", write_path, None), ("GET", redirected_path, None)]
+
+
+def test_connect_failure_marks_only_a_write_already_attempted():
+    requests = []
+
+    class ClosingRedirect(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_POST(self):
+            requests.append(self.path)
+            self.server.socket.close()
+            self.send_response(303)
+            self.send_header("Location", "/no-listener")
+            self.end_headers()
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), ClosingRedirect) as server:
+        thread = threading.Thread(target=server.handle_request, daemon=True)
+        thread.start()
+        target = (f"http://127.0.0.1:{server.server_port}", ClosingRedirect)
+        executor = _executor(target, _case("/create", method="POST"))
+        redirected = executor.execute_case("case", "env", {})
+        thread.join(timeout=2)
+        pre_send = executor.execute_case("case", "env", {})
+    assert requests == ["/create"]
+    assert redirected.failure_category == pre_send.failure_category == "transport"
+    assert "无法确认服务端是否已处理" in redirected.error_message
+    assert "无法确认服务端是否已处理" not in pre_send.error_message
+
+
+@pytest.mark.parametrize(("method", "path", "expected_body"), [
+    ("HEAD", "/ok", ""),
+    ("GET", "/close-delimited", "complete"),
+])
+def test_response_without_expected_body_length_is_complete(target_server, method, path, expected_body):
+    result = _executor(target_server, _case(path, method=method)).execute_case("case", "env", {})
+    assert result.status == "PASSED"
+    assert result.sanitized_response["body"] == expected_body
 
 
 def test_non_json_is_allowed_until_json_operation_requires_it(target_server):

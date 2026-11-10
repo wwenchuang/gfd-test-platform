@@ -29,7 +29,8 @@ _FREE_RESERVE = 1024 * 1024 * 1024
 _SHM_FREE_RESERVE = 512 * 1024 * 1024
 _SHM_RUN_LIMIT = 128 * 1024 * 1024
 _SINGLE_FILE_LIMIT = 32 * 1024 * 1024
-SCENARIOS = ('ui_catalog_count', 'ui_catalog_filter', 'ui_catalog_empty')
+WORKFLOW_SCENARIOS = ('ui_case_selection', 'ui_case_revision', 'ui_start_handoff', 'ui_start_switch', 'ui_start_unready')
+SCENARIOS = ('ui_catalog_count', 'ui_catalog_filter', 'ui_catalog_empty', 'ui_catalog_failure_drill') + WORKFLOW_SCENARIOS
 
 
 class ResourceLimit(Exception):
@@ -129,20 +130,39 @@ def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_cata
     result = json.loads(stdout)
     if (not isinstance(result, dict) or result.get('scenario') != scenario or result.get('version') != 1
             or result.get('status') not in ('passed', 'failed', 'blocked')
-            or result.get('error_kind') not in (None, 'business', 'authentication', 'environment', 'evidence')):
+            or result.get('error_kind') not in (None, 'business', 'authentication', 'environment', 'evidence', 'drill_assertion', 'precondition')):
         raise ValueError('invalid_browser_result')
     if result['status'] == 'passed' and (result['error_kind'] is not None or type(result.get('total')) is not int or result['total'] < 0):
         raise ValueError('invalid_browser_result')
     asset = result.get('asset')
     phase = result.get('phase')
-    if phase is not None and phase not in ('initial','filter','empty'):
+    if phase is not None and phase not in ('initial','filter','empty','drill','workflow'):
         raise ValueError('invalid_browser_result')
-    if scenario != 'ui_catalog_filter' and asset is not None:
+    if result['error_kind'] == 'drill_assertion':
+        total, expected = result.get('total'), result.get('expected_total')
+        if (scenario != 'ui_catalog_failure_drill' or phase != 'drill' or result['status'] != 'failed'
+                or type(total) is not int or not 0 <= total <= 2**53 - 1
+                or type(expected) is not int or expected != (1 if total == 0 else 0)):
+            raise ValueError('invalid_browser_result')
+    elif ('expected_total' in result
+          or (phase == 'drill' and (scenario != 'ui_catalog_failure_drill' or result['status'] != 'blocked'))
+          or (scenario == 'ui_catalog_failure_drill' and result['status'] == 'passed')):
+        raise ValueError('invalid_browser_result')
+    workflow = scenario in WORKFLOW_SCENARIOS
+    if result['error_kind'] == 'precondition':
+        if not workflow or result['status'] != 'blocked' or result.get('detail') not in (
+                'execute_permission_required','no_published_case','no_second_app','case_version_changed','no_devices','ready_device_present'):
+            raise ValueError('invalid_browser_result')
+    elif 'detail' in result:
+        raise ValueError('invalid_browser_result')
+    if (phase == 'workflow' and not workflow) or (workflow and result['status'] == 'passed' and (phase != 'workflow' or asset is None)):
+        raise ValueError('invalid_browser_result')
+    if not workflow and scenario != 'ui_catalog_filter' and asset is not None:
         raise ValueError('invalid_browser_result')
     if scenario == 'ui_catalog_filter' and asset is None and (result['status'] == 'passed' or (result['status'] == 'failed' and phase != 'initial')):
         raise ValueError('invalid_browser_result')
     if asset is not None:
-        if scenario != 'ui_catalog_filter' or phase != 'filter':
+        if not ((workflow and phase == 'workflow') or (scenario == 'ui_catalog_filter' and phase == 'filter')):
             raise ValueError('invalid_browser_result')
         if (not isinstance(asset, dict) or set(asset) != {'app_id','case_id','revision'}
                 or not isinstance(asset['app_id'], str) or not 0 < len(asset['app_id']) <= 128
@@ -150,7 +170,18 @@ def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_cata
                 or not isinstance(asset['revision'], str) or len(asset['revision']) != 64
                 or any(char not in '0123456789abcdef' for char in asset['revision'])):
             raise ValueError('invalid_browser_result')
-    return {key: result[key] for key in ('scenario','version','phase','status','error_kind','total','asset') if key in result}
+    passed = result['status'] == 'passed'
+    if ('device_count' in result) != (scenario == 'ui_start_unready' and passed):
+        raise ValueError('invalid_browser_result')
+    if 'device_count' in result and (type(result['device_count']) is not int or result['device_count'] <= 0):
+        raise ValueError('invalid_browser_result')
+    if ('switched_app_id' in result) != (scenario == 'ui_start_switch' and passed):
+        raise ValueError('invalid_browser_result')
+    if 'switched_app_id' in result:
+        other = result['switched_app_id']
+        if not isinstance(other, str) or not 0 < len(other) <= 128 or other == asset['app_id']:
+            raise ValueError('invalid_browser_result')
+    return {key: result[key] for key in ('scenario','version','phase','status','error_kind','total','expected_total','asset','detail','device_count','switched_app_id') if key in result}
 
 
 def _load_private(path, limit):
@@ -180,6 +211,8 @@ def _execute(owner, token, scenario='ui_catalog_count'):
                 raise ValueError('dependency_unavailable')
             env['FONTCONFIG_FILE'] = fontconfig
         result = _bounded_process(_core_limited_args([node, str(_WORKER)]), env, token, owner, scratch=scratch, scenario=scenario)
+        if result['status'] == 'blocked':
+            return result, b'', b''
         image = _load_private(scratch / 'screenshot.png', 8 * 1024 * 1024)
         trace = _load_private(scratch / 'trace.zip', 30 * 1024 * 1024)
         return result, image, trace
@@ -283,8 +316,10 @@ def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, ro
         except Exception:
             return dict(blocked, error_kind='environment')
         refreshed = _profile(owner, username, token)
-        if not refreshed or _scope(refreshed) != scope:
+        if not refreshed or _scope(refreshed) != scope or result['error_kind'] == 'authentication':
             return blocked
+        if result['status'] == 'blocked':
+            return {**blocked, 'error_kind':result['error_kind'], **({'detail':result['detail']} if 'detail' in result else {})}
         if not image.startswith(b'\x89PNG\r\n\x1a\n') or not safe_trace(trace, token) or token.encode() in image:
             return dict(blocked, error_kind='evidence')
         if not _check_quota(db_path, owner, len(image) + len(trace), root):

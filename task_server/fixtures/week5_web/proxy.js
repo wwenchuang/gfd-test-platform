@@ -4,8 +4,8 @@ const {allowRequest, responseContainsSecret} = require('./policy');
 
 // port is injected only by the local unit test; production sets the fixed
 // configured loopback port, never a value from the request or browser.
-function readLoopback(path, secret, port = 8088, catalogQueries = new Set()) {
-  const kind = typeof path === 'string' && allowRequest('http://127.0.0.1:8088', 'GET', `http://127.0.0.1:8088${path}`, catalogQueries);
+function readLoopback(path, secret, port = 8088, catalogQueries = new Set(), deviceQueries = new Set()) {
+  const kind = typeof path === 'string' && allowRequest('http://127.0.0.1:8088', 'GET', `http://127.0.0.1:8088${path}`, catalogQueries, deviceQueries);
   if (!kind || !Number.isInteger(port) || port < 1 || port > 65535) return Promise.reject(new Error('blocked'));
   const headers = {'Accept-Encoding': 'identity', 'Cache-Control':'no-store'};
   if (kind === 'api') headers.Authorization = `Bearer ${secret}`;

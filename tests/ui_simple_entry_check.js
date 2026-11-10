@@ -5,12 +5,30 @@ const {JSDOM}=require('../api-testing-ui/node_modules/jsdom');
 const wait=()=>new Promise(setImmediate);
 const mockPracticeFetch=w=>{const handler=w.apiRequest;w.nativeFetch=async(path,options)=>({ok:true,status:200,json:async()=>({ok:true,data:await handler(path.slice(4),options)})});};
 const mockCatalogFetch=(w,artifact)=>{w.nativeFetch=async(path,options={})=>{if(!path.startsWith('/api/ui-executions/web-check')||path.includes('/artifact'))return artifact(path,options);try{const value=await w.apiRequest(path.slice(4),{...options,body:options.body?JSON.parse(options.body):undefined});return {ok:true,status:200,json:async()=>value};}catch(error){return {ok:false,status:error.status||500};}};};
-test('catalog checks expose separate real-asset filter and empty-search cases',async t=>{
+test('workspace submits each named catalog and start workflow and exposes its evidence',async t=>{
  const {w}=fixture(t),posts=[];w.canAccessWorkflow=()=>true;
  w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(options.method==='POST'){posts.push(options.body);return {ok:true,result:{id:'a'.repeat(32),scenario:options.body.scenario,status:'passed',total:0,artifacts:['trace']}};}return {ok:true,results:[]};};
  mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');
- for(const scenario of ['ui_catalog_filter','ui_catalog_empty']){const button=panel.querySelector(`[data-catalog-scenario="${scenario}"]`);assert.ok(button);button.click();await wait();await wait();assert.equal(posts.at(-1).scenario,scenario);assert.ok(panel.querySelector('[data-catalog-artifact="trace"]'));}
+ for(const scenario of ['ui_catalog_filter','ui_catalog_empty','ui_case_selection','ui_case_revision','ui_start_handoff','ui_start_switch','ui_start_unready']){const button=panel.querySelector(`[data-catalog-scenario="${scenario}"]`);assert.ok(button);button.click();await wait();await wait();assert.equal(posts.at(-1).scenario,scenario);assert.ok(panel.querySelector('[data-catalog-artifact="trace"]'));}
  assert.match(panel.textContent,/空.*搜索/);assert.match(panel.textContent,/不代表.*业务/);
+});
+test('workspace starts a fixed failure drill and shows its mismatched counts and evidence',async t=>{
+ const {w}=fixture(t),posts=[];w.canAccessWorkflow=()=>true;
+ const result={id:'a'.repeat(32),scenario:'ui_catalog_failure_drill',status:'failed',error_kind:'drill_assertion',total:3,expected_total:0,artifacts:['screenshot','trace']};
+ w.apiRequest=async(path,options={})=>{
+   if(path==='/ui-executions/availability')return {ok:true,enabled:true};
+   if(options.method==='POST'){posts.push(options.body);return {ok:true,result};}
+   return {ok:true,results:[result]};
+ };
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});
+ w.activeWorkflow='ai_practice';w.showAiPractice();
+ const panel=w.document.querySelector('[data-catalog-check]');
+ const drill=panel.querySelector('[data-catalog-scenario="ui_catalog_failure_drill"]');
+ assert.ok(drill);drill.click();await wait();await wait();
+ assert.deepEqual(JSON.parse(JSON.stringify(posts)),[{scenario:result.scenario}]);
+ const row=panel.querySelector('.ui-week-probe-row');
+ assert.match(row.textContent,/演练断言按预期失败/);assert.match(row.textContent,/预期 0 条，页面实际显示 3 条/);
+ assert.ok(row.querySelector('[data-catalog-artifact="screenshot"]'));assert.ok(row.querySelector('[data-catalog-artifact="trace"]'));
 });
 test('catalog filter evidence identifies its real asset version for repeatability',async t=>{
  const {w}=fixture(t);w.canAccessWorkflow=()=>true;const asset={app_id:'real.app',case_id:'real-case',revision:'a'.repeat(64)};

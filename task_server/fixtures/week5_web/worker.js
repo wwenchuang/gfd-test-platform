@@ -6,6 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const {chromium} = require('playwright');
 const {allowRequest, classifyIncomplete, recordRouteError, catalogTarget} = require('./policy');
+const workflows = require('./workflows');
 const {readLoopback} = require('./proxy');
 
 async function main() {
@@ -15,14 +16,16 @@ async function main() {
   if (!payload || typeof payload.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(payload.token)
       || typeof payload.userId !== 'string' || !payload.userId || payload.userId.length > 128) throw Error('input_invalid');
   const scenario=payload.scenario||'ui_catalog_count';
-  if (!['ui_catalog_count','ui_catalog_filter','ui_catalog_empty'].includes(scenario)) throw Error('input_invalid');
+  const workflow=workflows.scenarios.has(scenario);
+  if (!workflow && !['ui_catalog_count','ui_catalog_filter','ui_catalog_empty','ui_catalog_failure_drill'].includes(scenario)) throw Error('input_invalid');
   let secret = payload.token; payload.token = '';
   const origin = 'http://127.0.0.1:8088';
   const output = path.resolve(process.env.WEEK5_ARTIFACTS || '');
   if (!process.env.WEEK5_ARTIFACTS || !path.isAbsolute(process.env.WEEK5_ARTIFACTS)) throw Error('output_invalid');
   const result = {scenario,version:1,phase:'initial',status:'blocked',error_kind:'environment'};
   const state = {auth:null, availability:null, catalog:null, catalogs:new Map(), routeError:false, staticCount:0,writeAttempts:0};
-  const catalogQueries=new Set();
+  const catalogQueries=new Set(),deviceQueries=new Set();
+  state.devices=new Map();
   let browser, context, page, tracing = false;
   let awaitingAssertion = false;
   try {
@@ -34,21 +37,40 @@ async function main() {
     await context.routeWebSocket('**/*', socket => socket.close());
     await context.route('**/*', async route => {
       const request = route.request();
-      const kind = allowRequest(origin, request.method(), request.url(),catalogQueries);
+      const kind = allowRequest(origin, request.method(), request.url(),catalogQueries,deviceQueries);
       if (!kind) {const url=new URL(request.url());if(request.method()!=='GET'&&url.origin===origin&&url.pathname.startsWith('/api/'))state.writeAttempts++;await route.abort(); return; }
       try {
         const url = new URL(request.url());
-        const response = await readLoopback(url.pathname + url.search, secret,8088,catalogQueries);
-        if (kind === 'static') state.staticCount++;
+        const response = await readLoopback(url.pathname + url.search, secret,8088,catalogQueries,deviceQueries);
+        if (kind === 'static') {
+          // HTML error pages from proxies must never reach screenshots or trace resources.
+          const type=response.contentType;
+          const expected=url.pathname.endsWith('.html')?['text/html']:url.pathname.endsWith('.js')?['application/javascript','text/javascript']:
+            url.pathname.endsWith('.css')?['text/css']:['image/png','image/svg+xml','application/octet-stream'];
+          if (response.status!==200 || !expected.includes(type)) throw Error('unexpected_static_response');
+          state.staticCount++;
+        }
         if (kind === 'api') {
+          let exposed={ok:false};
           if ([401,403].includes(response.status)) recordRouteError(state, 'authentication');
           else if (response.status !== 200) recordRouteError(state, 'environment');
           else {
             const data = JSON.parse(response.body.toString('utf8'));
-            if (url.pathname === '/api/auth/me') state.auth = data;
+            exposed=workflows.browserData(url.pathname,data,url.searchParams.get('app_id'));
+            if (url.pathname === '/api/ui-executions/devices') state.devices.set(url.search,exposed.devices);
+            if (url.pathname === '/api/auth/me') {
+              state.auth=data;
+              if (data?.profile?.user_id!==payload.userId || data.profile.status!=='active' || data.profile.must_change_password ||
+                  !(data.profile.is_superuser===true || data.profile.permissions?.includes('ui.view'))) {
+                recordRouteError(state,'authentication');
+                exposed={ok:false};
+              }
+            }
             if (url.pathname === '/api/ui-executions/availability') state.availability = data;
             if (url.pathname === '/api/ui-executions/catalog') {state.catalog = data;state.catalogs.set(url.search,data);}
           }
+          response.body=Buffer.from(JSON.stringify(exposed));
+          response.contentType='application/json';
         }
         await route.fulfill({status:response.status, contentType:response.contentType, body:response.body, headers:{'Cache-Control':'no-store'}});
       } catch (_) { recordRouteError(state, 'environment'); await route.abort().catch(()=>{}); }
@@ -59,7 +81,7 @@ async function main() {
       sessionStorage.setItem('midscene_active_workflow', 'ui_library');
     });
     result.stage='trace';
-    await context.tracing.start({screenshots:true,snapshots:true}); tracing = true;
+    await context.tracing.start({screenshots:false,snapshots:true}); tracing = true;
     page = await context.newPage();
     result.stage='page';
     await page.goto(`${origin}/task-manager.html`, {waitUntil:'domcontentloaded', timeout:15000});
@@ -73,6 +95,27 @@ async function main() {
       const title = (await page.locator('[data-ui-mode="library"] h1').innerText()).trim();
       if (title !== '用例库' || count !== `${state.catalog.total} 条匹配基线 · 每个应用先显示 3 条`) {
         result.status='failed';result.error_kind='business';
+      } else if (workflow) {
+        Object.assign(result, await workflows.checkWorkflow({scenario,page,state,catalogQueries,deviceQueries}));
+      } else if (scenario === 'ui_catalog_failure_drill') {
+        const total = state.catalog.total;
+        const expected = total === 0 ? 1 : 0;
+        const mismatch = `catalog_drill_mismatch: expected ${expected}, observed ${total}`;
+        // Throw inside the Playwright action so trace viewers show the failing step.
+        try {
+          await page.waitForFunction(({total, expected, mismatch}) => {
+            const node = document.querySelector('[data-ui-case-count]');
+            const suffix = ' 条匹配基线 · 每个应用先显示 3 条';
+            const text = node?.innerText.trim();
+            if (text === total + suffix && text !== expected + suffix) throw Error(mismatch);
+            return true;
+          }, {total, expected, mismatch}, {timeout:2000});
+          result.status = 'failed';
+          result.error_kind = 'business'; // The displayed count changed since the initial check.
+        } catch (error) {
+          if (!error.message.split('\n')[0].endsWith(mismatch)) throw error;
+          Object.assign(result, {phase:'drill', status:'failed', error_kind:'drill_assertion', total, expected_total:expected});
+        }
       } else if(scenario==='ui_catalog_count'){
         result.status='passed';result.error_kind=null;result.total=state.catalog.total;
       } else {
@@ -110,13 +153,34 @@ async function main() {
       Object.assign(result, classifyIncomplete(state, payload.userId));
     }
   } finally {
-    result.observed={auth:!!state.auth,availability:!!state.availability,catalog:!!state.catalog,static_count:state.staticCount,route_error:!!state.routeError};
-    try { if (page) await page.screenshot({path:path.join(output,'screenshot.png')}); else throw Error(); }
-    catch (_) {result.status='blocked';result.error_kind='evidence';}
-    try {if (context && tracing) await context.tracing.stop({path:path.join(output,'trace.zip')});else throw Error();}
-    catch (_) {result.status='blocked';result.error_kind='evidence';}
+    if (result.status !== 'blocked' && !state.routeError && !state.writeAttempts && state.auth?.profile?.user_id===payload.userId) {
+      try {
+        const pane=page.locator('[data-ui-mode="library"]:visible,[data-ui-mode="start"]:visible');
+        if (await pane.count()!==1 || page.url()!==origin+'/task-manager.html') throw Error('unexpected_page');
+        await pane.screenshot({path:path.join(output,'screenshot.png'),timeout:5000});
+      }
+      catch (_) {result.status='blocked';result.error_kind='evidence';}
+      try {if (context && tracing) await context.tracing.stop({path:path.join(output,'trace.zip')});else throw Error();}
+      catch (_) {result.status='blocked';result.error_kind='evidence';}
+    }
     if (context) await context.close().catch(()=>{});
     if (browser) await browser.close().catch(()=>{});
+    if (state.routeError || state.writeAttempts) {
+      result.status = 'blocked';
+      result.error_kind = state.routeError === 'authentication' ? 'authentication' : 'environment';
+      delete result.detail;
+    }
+    if (workflow && result.status === 'blocked') {
+      delete result.asset;
+      delete result.total;
+      delete result.switched_app_id;
+      delete result.device_count;
+    }
+    if (result.phase === 'drill' && result.error_kind !== 'drill_assertion') {
+      delete result.total;
+      delete result.expected_total;
+    }
+    result.observed={auth:!!state.auth,availability:!!state.availability,catalog:!!state.catalog,static_count:state.staticCount,route_error:!!state.routeError};
     secret='';
   }
   process.stdout.write(JSON.stringify(result));

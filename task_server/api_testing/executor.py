@@ -1141,42 +1141,43 @@ class HttpExecutor:
         headers = dict(headers)
         self._validate_request_headers(headers)
         authorized_base = authorized_base or urlunsplit((*urlsplit(initial_url)[:2], "/", "", ""))
+        write_attempted = False
         for redirect_count in range(self.limits.max_redirects + 1):
             self._authorize_destination(url, authorized_base)
             parsed = urlsplit(url)
             for name, value in headers.items():
                 if name.lower() == "host" and str(value).lower() != parsed.netloc.lower():
                     raise HostPolicyError("Host header must match the configured service")
-            self._remaining(deadline)
-            parsed, port, addresses = self.host_policy.resolve(
-                url,
-                allow_private_network=allow_private_network,
-            )
-            self._remaining(deadline)
-            connection_class = _PinnedHttpsConnection if parsed.scheme == "https" else _PinnedHttpConnection
             connection = None
-            connection_error = None
-            for address in addresses:
-                candidate = connection_class(
-                    parsed.hostname, port, address, self._remaining(deadline)
-                )
-                try:
-                    candidate.connect()
-                    self._remaining(deadline)
-                    connection = candidate
-                    break
-                except OSError as exc:
-                    connection_error = exc
-                    candidate.close()
-            if connection is None:
-                raise connection_error or ConnectionError("无法连接服务主机")
-            transport_socket = connection.sock
-            path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
-            request_headers = {name: value for name, value in headers.items() if name.lower() != "host"}
-            request_headers["Host"] = parsed.netloc
-            started = time.monotonic()
             try:
+                self._remaining(deadline)
+                parsed, port, addresses = self.host_policy.resolve(
+                    url,
+                    allow_private_network=allow_private_network,
+                )
+                self._remaining(deadline)
+                connection_class = _PinnedHttpsConnection if parsed.scheme == "https" else _PinnedHttpConnection
+                connection_error = None
+                for address in addresses:
+                    candidate = connection_class(
+                        parsed.hostname, port, address, self._remaining(deadline)
+                    )
+                    try:
+                        candidate.connect()
+                        self._remaining(deadline)
+                        connection = candidate
+                        break
+                    except OSError as exc:
+                        connection_error = exc
+                        candidate.close()
+                if connection is None:
+                    raise connection_error or ConnectionError("无法连接服务主机")
+                transport_socket = connection.sock
+                path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+                request_headers = {name: value for name, value in headers.items() if name.lower() != "host"}
+                request_headers["Host"] = parsed.netloc
                 transport_socket.settimeout(self._remaining(deadline))
+                write_attempted = write_attempted or method in {"POST", "PUT", "PATCH", "DELETE"}
                 connection.request(method, path, body=body, headers=request_headers)
                 self._remaining(deadline)
                 transport_socket.settimeout(self._remaining(deadline))
@@ -1210,6 +1211,9 @@ class HttpExecutor:
                     if size > self.limits.max_response_bytes:
                         raise ResponseLimitError("响应体大小超过配置限制")
                     chunks.append(chunk)
+                # read1() returns EOF even when a declared Content-Length is still outstanding.
+                if raw.length:
+                    raise http.client.HTTPException("连接提前关闭，未收到完整响应体")
                 raw_body = b"".join(chunks)
                 encoding = "utf-8"
                 text = raw_body.decode(encoding, errors="replace")
@@ -1239,8 +1243,16 @@ class HttpExecutor:
                     ),
                     url=url,
                 )
+            except (OSError, http.client.HTTPException) as exc:
+                if not write_attempted:
+                    raise
+                detail = "无法确认服务端是否已处理本次写请求。请核对本次操作记录后再决定是否重试"
+                if isinstance(exc, (socket.timeout, TimeoutError)):
+                    raise RequestTimeoutError(f"请求超时，{detail}") from exc
+                raise ConnectionError(f"未收到完整 HTTP 响应，{detail}") from exc
             finally:
-                connection.close()
+                if connection is not None:
+                    connection.close()
         raise RedirectLimitError("重定向次数超过限制")
 
     @classmethod

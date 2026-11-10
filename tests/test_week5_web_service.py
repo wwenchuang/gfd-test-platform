@@ -28,6 +28,49 @@ PNG = b'\x89PNG\r\n\x1a\n' + b'test-pixels'
 
 
 class ServiceTest(unittest.TestCase):
+    def test_workflows_require_their_own_asset_and_actual_device_or_app_detail(self):
+        asset = {'app_id':'a','case_id':'one','revision':'e'*64}
+        base = dict(version=1,phase='workflow',status='passed',error_kind=None,total=1,asset=asset)
+        def parse(scenario, **extra):
+            payload = dict(base,scenario=scenario,**extra)
+            command = [sys.executable,'-c','print(' + repr(json.dumps(payload)) + ')']
+            return service._bounded_process(command,{'PATH':'/usr/bin:/bin'},TOKEN,'user1',scenario=scenario)
+        self.assertEqual(parse('ui_start_unready',device_count=2)['device_count'],2)
+        self.assertEqual(parse('ui_start_switch',switched_app_id='b')['switched_app_id'],'b')
+        for key,extra in (('ui_start_unready',{}),('ui_start_switch',{'switched_app_id':'a'}),
+                          ('ui_case_revision',{'asset':None}),('ui_case_selection',{'device_count':9})):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                parse(key,**extra)
+
+    def test_drill_requires_a_real_mismatch_and_cannot_label_normal_scenarios(self):
+        scenario = 'ui_catalog_failure_drill'
+        failed = dict(scenario=scenario, version=1, phase='drill', status='failed',
+                      error_kind='drill_assertion', total=3, expected_total=0)
+
+        def result(**changes):
+            payload = dict(failed, **changes)
+            command = [sys.executable, '-c', 'print(' + repr(json.dumps(payload)) + ')']
+            return service._bounded_process(command, {'PATH':'/usr/bin:/bin'}, TOKEN, 'user1', scenario=payload['scenario'])
+
+        self.assertEqual(result(), failed)
+        for changes in (dict(scenario='ui_catalog_count'), dict(expected_total=3), dict(expected_total=False),
+                        dict(status='passed'), dict(phase='initial'), dict(error_kind='business')):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                result(**changes)
+        self.assertEqual(result(total=0, expected_total=1)['expected_total'], 1)
+
+    def test_drill_does_not_publish_evidence_from_an_unverified_browser_identity(self):
+        scenario = 'ui_catalog_failure_drill'
+        result = dict(scenario=scenario, version=1, phase='initial', status='blocked', error_kind='authentication')
+        with tempfile.TemporaryDirectory() as tmp, patch.object(service, '_profile', return_value=PROFILE), \
+             patch.object(service, '_execute', return_value=(result, PNG, trace_bytes())):
+            db, root = Path(tmp)/'runs.db', Path(tmp)/'evidence'
+            saved = service.run('user1','user',TOKEN,scenario=scenario,db_path=db,root=root)
+            self.assertEqual(saved['error_kind'], 'authentication')
+            self.assertNotIn('id', saved)
+            self.assertEqual(service.list_results('user1','user',TOKEN,db_path=db), [])
+            self.assertFalse(root.exists() and any(root.iterdir()))
+
     def test_initial_page_failure_before_filter_target_is_not_discarded(self):
         worker={'scenario':'ui_catalog_filter','version':1,'phase':'initial','status':'failed','error_kind':'business'}
         command=[sys.executable,'-c','import json; print(json.dumps('+repr(worker)+'))']

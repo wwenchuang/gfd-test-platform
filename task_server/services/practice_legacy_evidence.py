@@ -10,6 +10,14 @@ from task_server.services import week2_real
 # must still exist and pass current project/environment authorization before any
 # entry (including its identifier) is returned.
 _RECORDS = (
+    {'key': 'failure', 'execution_id': '8f0e8488-9986-4ea3-98a9-879d552baf35', 'cases': 30,
+     'summary': '11 月 10 日，家用只读接口第 3 轮，29/30 通过。10 条正向、10 条分页边界均通过。10 条权限及状态检查中，已删除模型详情返回 60102001，历史用例期望 1001。'},
+    {'key': 'baseline', 'execution_id': '41340fc3-c91f-4935-9e7b-7858ea74b26b', 'cases': 30,
+     'summary': '家用只读接口第 2 轮，同版本 29/30 通过。失败项为已删除模型详情。'},
+    {'key': 'baseline', 'execution_id': '9f3f0d49-a75e-4170-abb7-93df706fcdff', 'cases': 30,
+     'summary': '家用只读接口第 1 轮，同版本 29/30 通过。接口来源 v13，执行环境 v31。'},
+    {'key': 'failure', 'execution_id': 'ab9b004b-ed90-4f5d-b0a8-2d245a6e3fd7', 'cases': 30,
+     'summary': '修订前首次执行，23/30 通过。6 个鉴权响应返回 4009 并省略 data，原断言要求显式 null。另有 1 个已删除模型的错误码与历史预期不同。'},
     {'key':'cleanup', 'execution_id':'0157b386-1475-4946-aae8-1664498ecc69', 'cases':1,
      'summary':'2026-11-06 生产环境单次创建会话后按本次返回的编号标记删除，随后接口查询不可见。关联资源、物理删除与异常恢复未证实。'},
     {'key':'baseline', 'execution_id':'1eb0c640-d78a-41f9-b441-02785fd87e1c', 'cases':1,

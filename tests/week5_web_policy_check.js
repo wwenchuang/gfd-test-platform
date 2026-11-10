@@ -89,3 +89,13 @@ test('response gate detects the token and standard encoded variants before brows
   }
   assert.equal(responseContainsSecret(Buffer.from('{"ok":true}'), secret), false);
 });
+
+test('device GET requires an exact separately admitted application query',()=>{
+  const origin='http://127.0.0.1:8088', path=origin+'/api/ui-executions/devices';
+  const apps=new Set(['?app_id=com.example.app']);
+  assert.equal(allowRequest(origin,'GET',path+'?app_id=com.example.app',new Set(),apps),'api');
+  for(const [method,suffix] of [['POST','?app_id=com.example.app'],['GET',''],['GET','?app_id=com.example.app&all=true'],['GET','?app_id=com.other']]){
+    assert.equal(allowRequest(origin,method,path+suffix,new Set(),apps),false);
+  }
+  assert.equal(allowRequest(origin,'GET',path+'?app_id=com.example.app',apps),false);
+});
