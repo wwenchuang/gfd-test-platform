@@ -10,6 +10,14 @@ from task_server.services import week2_real
 # must still exist and pass current project/environment authorization before any
 # entry (including its identifier) is returned.
 _RECORDS = (
+    {'key': 'cleanup', 'execution_id': 'e3aa31ed-214b-4a34-84ee-1a6321aeffec', 'cases': 1,
+     'summary': '11 月 10 日创作会话清理后回查，HTTP 200，业务码 1001，data 为 null。本次单独授权的标记删除返回 deletedCount=1。'},
+    {'key': 'cleanup', 'execution_id': '466f038e-fc41-4dcd-8e84-bdf929515d88', 'cases': 1,
+     'summary': '清理前按两次创建共同返回的会话编号回查，同一环境下核实了会话、自由创作主题及创建时间。'},
+    {'key': 'cleanup', 'execution_id': 'bf25ed6b-9880-4dc5-a5db-4b8253f92241', 'cases': 1,
+     'summary': '第二次串行提交同请求号、同主题，返回与第一次相同的会话编号及创建时间。'},
+    {'key': 'cleanup', 'execution_id': '5daee3c6-15ba-438e-a19e-7c071e374fa9', 'cases': 1,
+     'summary': '第一次提交自由创作会话，使用本轮新生成的请求号，HTTP 200，业务码 0，返回一个有效会话编号。'},
     {'key': 'failure', 'execution_id': '8f0e8488-9986-4ea3-98a9-879d552baf35', 'cases': 30,
      'summary': '11 月 10 日，家用只读接口第 3 轮，29/30 通过。10 条正向、10 条分页边界均通过。10 条权限及状态检查中，已删除模型详情返回 60102001，历史用例期望 1001。'},
     {'key': 'baseline', 'execution_id': '41340fc3-c91f-4935-9e7b-7858ea74b26b', 'cases': 30,
