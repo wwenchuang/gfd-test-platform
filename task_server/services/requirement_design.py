@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import tempfile
 import threading
 import time
@@ -180,6 +181,55 @@ def _reconcile(db):
                (time.time(),'服务重启中断本次生成，可重新生成'))
 
 
+def _published_run_ids():
+    path = _root() / 'requirement-design-materials' / 'published-runs.json'
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return []
+            raw = stream.read(2049)
+        if len(raw) > 2048:
+            return []
+        ids = json.loads(raw)
+    except (OSError, ValueError, RecursionError):
+        return []
+    if not isinstance(ids, list) or len(ids) > 20:
+        return []
+    if any(not isinstance(rid, str) or not re.fullmatch('[0-9a-f]{32}', rid) for rid in ids):
+        return []
+    return list(dict.fromkeys(ids))
+
+
+def _published_runs(db, source_owner, source):
+    if source_owner != CATALOG or source.get('source_type') != 'curated':
+        return []
+    sid = source['id']
+    if _source_id({k: v for k, v in source.items() if k != 'id'}) != sid:
+        return []
+    ids = _published_run_ids()
+    if not ids:
+        return []
+    # A run resolves its author's private source before the catalog. Exclude any ambiguity.
+    slots = ','.join('?' for _ in ids)
+    rows = db.execute(f"""
+        SELECT d.* FROM designs AS d
+        WHERE d.source=? AND d.id IN ({slots}) AND d.status='completed'
+          AND d.finished IS NOT NULL AND d.error IS NULL AND d.result IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM sources AS s
+                          WHERE s.id=d.source AND s.owner=d.owner AND s.owner!=?)
+        """, (sid, *ids, CATALOG))
+    published = []
+    for row in rows:
+        try:
+            run = _run(row)
+        except (ValueError, TypeError, RecursionError):
+            continue
+        if run['review'] == 'pending' and isinstance(run.get('result'), dict):
+            published.append(dict(run, published=True))
+    return published
+
+
 def overview(owner, sid=None):
     example = _sample_id()
     with _db() as db:
@@ -195,9 +245,12 @@ def overview(owner, sid=None):
         selected=sid or example or (sources[0]['id'] if sources else None)
         if not selected:
             return dict(source=None,sources=[],runs=[])
-        _,source=_source(db,owner,selected)
+        source_owner,source=_source(db,owner,selected)
         rows=db.execute('SELECT * FROM designs WHERE owner=? AND source=? ORDER BY created DESC LIMIT 20',(owner,selected))
-        return dict(source=source,sources=sources,runs=[_run(row) for row in rows])
+        runs = {row['id']: _run(row) for row in rows}
+        for published in _published_runs(db, source_owner, source):
+            runs[published['id']] = published
+        return dict(source=source,sources=sources,runs=sorted(runs.values(), key=lambda run: run['created'], reverse=True))
 
 
 def prototype(owner, sid, vid):

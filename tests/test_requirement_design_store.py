@@ -75,7 +75,7 @@ class DesignStoreTests(unittest.TestCase):
             store.import_source('owner', dict(self.body, image_base64=base64.b64encode(b'fake').decode()))
         self.assertEqual(len(store.overview('owner')['sources']), 1)
 
-    def test_shared_sample_visible_but_other_owners_runs_are_private(self):
+    def sample_source(self):
         directory = self.root / 'requirement-design-materials'
         directory.mkdir()
         raw = FIXTURE.read_bytes()
@@ -84,13 +84,94 @@ class DesignStoreTests(unittest.TestCase):
                     clauses=[dict(id='P1', text='显示入口')],
                     prototypes=[dict(id='V1', file='demo.png', caption='原型', sha256=hashlib.sha256(raw).hexdigest())])
         (directory / 'source.json').write_text(json.dumps(meta))
-        sid = store.overview('owner')['source']['id']
-        self.assertEqual(store.prototype('outsider', sid, 'V1'), raw)
+        return store.overview('owner')['source']['id']
+
+    def test_shared_sample_visible_but_other_owners_runs_are_private(self):
+        sid = self.sample_source()
+        self.assertEqual(store.prototype('outsider', sid, 'V1'), FIXTURE.read_bytes())
         self.bind(model, 'generate', return_value={'points': [], 'cases': [], 'questions': ['入口？']})
         self.sid = sid
         self.start()
         self.assertEqual(self.wait_worker()['status'], 'completed')
         self.assertEqual(store.overview('outsider', sid)['runs'], [])
+
+    def insert_run(self, owner, sid, number, status='completed'):
+        rid = f'{number:032x}'
+        with store._db() as db:
+            db.execute('INSERT INTO designs (id,owner,source,request,status,created,finished,result) VALUES (?,?,?,?,?,?,?,?)',
+                       (rid, owner, sid, rid, status, number, number + 1, '{"questions":["待核对"]}'))
+        return rid
+
+    def test_published_sample_combines_owned_and_only_allowlisted_completed_catalog_runs(self):
+        sid = self.sample_source()
+        public = self.insert_run('owner', sid, 1)
+        other = self.insert_run('owner', sid, 2)
+        failed = self.insert_run('owner', sid, 3, 'failed')
+        private = self.insert_run('owner', self.sid, 4)
+        mine = self.insert_run('coworker', sid, 5)
+        path = self.root / 'requirement-design-materials/published-runs.json'
+        path.write_text(json.dumps([public, failed, private, public]))
+        rows = store.overview('coworker', sid)['runs']
+        self.assertEqual([r['id'] for r in rows], [mine, public])
+        self.assertTrue(rows[1]['published'])
+        self.assertEqual(rows[1]['review'], 'pending')
+        self.assertFalse({'owner', 'request'} & rows[1].keys())
+        self.assertEqual([r['id'] for r in store.overview('owner', sid)['runs']], [failed, other, public])
+        self.assertEqual(store.overview('outsider', sid)['runs'], [rows[1]])
+        with self.assertRaises(store.Missing):
+            store.overview('coworker', self.sid)
+        path.unlink()
+        self.assertEqual([r['id'] for r in store.overview('coworker', sid)['runs']], [mine])
+
+    def test_invalid_manifest_shares_nothing_and_leaves_owner_history_readable(self):
+        sid = self.sample_source()
+        public = self.insert_run('owner', sid, 1)
+        path = self.root / 'requirement-design-materials/published-runs.json'
+        for invalid in ('bad', '{}', json.dumps([public, {}]), json.dumps([public] * 21),
+                        json.dumps([public, 'ABC']), ' ' * 5000 + json.dumps([public])):
+            with self.subTest(invalid=invalid[:40]):
+                path.write_text(invalid)
+                self.assertEqual(store.overview('other', sid)['runs'], [])
+                self.assertEqual(store.overview('owner', sid)['runs'][0]['id'], public)
+        path.unlink()
+        target = self.root / 'outside.json'
+        target.write_text(json.dumps([public]))
+        path.symlink_to(target)
+        self.assertEqual(store.overview('other', sid)['runs'], [])
+
+    def test_allowlist_cannot_share_private_run_even_if_source_id_collides(self):
+        sid = self.sample_source()
+        with store._db() as db:
+            meta = db.execute('SELECT meta FROM sources WHERE id=? AND owner=?', (self.sid, 'owner')).fetchone()[0]
+            db.execute('INSERT INTO sources VALUES (?,?,?,?)', ('owner', sid, meta, time.time()))
+        rid = self.insert_run('owner', sid, 1)
+        (self.root / 'requirement-design-materials/published-runs.json').write_text(json.dumps([rid]))
+        self.assertEqual(store.overview('coworker', sid)['runs'], [])
+        self.assertEqual([r['id'] for r in store.overview('owner', sid)['runs']], [rid])
+
+    def test_damaged_result_or_catalog_metadata_does_not_publish(self):
+        sid = self.sample_source()
+        good = self.insert_run('author', sid, 1)
+        damaged = self.insert_run('author', sid, 2)
+        (self.root / 'requirement-design-materials/published-runs.json').write_text(json.dumps([good, damaged]))
+        with store._db() as db:
+            db.execute('UPDATE designs SET result=? WHERE id=?', ('INVALID', damaged))
+        self.assertEqual([r['id'] for r in store.overview('coworker', sid)['runs']], [good])
+        with store._db() as db:
+            raw = db.execute('SELECT meta FROM sources WHERE owner=? AND id=?', (store.CATALOG, sid)).fetchone()[0]
+            renamed = dict(json.loads(raw), title='不同资料')
+            db.execute('UPDATE sources SET meta=? WHERE owner=? AND id=?', (json.dumps(renamed), store.CATALOG, sid))
+        self.assertEqual(store.overview('coworker', sid)['runs'], [])
+
+    def test_older_published_example_stays_accessible_with_twenty_newer_private_runs(self):
+        sid = self.sample_source()
+        rid = self.insert_run('author', sid, 1)
+        for n in range(2, 23):
+            self.insert_run('coworker', sid, n)
+        (self.root / 'requirement-design-materials/published-runs.json').write_text(json.dumps([rid]))
+        ids = [r['id'] for r in store.overview('coworker', sid)['runs']]
+        self.assertEqual(len(ids), 21)
+        self.assertEqual(ids[-1], rid)
 
     def test_permission_profile_requires_active_identity_full_scope_and_permissions(self):
         self.assertTrue(store.authorized('owner', 'username'))
