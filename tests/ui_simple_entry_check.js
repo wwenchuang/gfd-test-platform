@@ -9,7 +9,7 @@ test('workspace submits each named catalog and start workflow and exposes its ev
  const {w}=fixture(t),posts=[];w.canAccessWorkflow=()=>true;
  w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(options.method==='POST'){posts.push(options.body);return {ok:true,result:{id:'a'.repeat(32),scenario:options.body.scenario,status:'passed',total:0,artifacts:['trace']}};}return {ok:true,results:[]};};
  mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');
- for(const scenario of ['ui_catalog_filter','ui_catalog_empty','ui_case_selection','ui_case_revision','ui_start_handoff','ui_start_switch','ui_start_unready']){const button=panel.querySelector(`[data-catalog-scenario="${scenario}"]`);assert.ok(button);button.click();await wait();await wait();assert.equal(posts.at(-1).scenario,scenario);assert.ok(panel.querySelector('[data-catalog-artifact="trace"]'));}
+ for(const scenario of ['ui_catalog_filter','ui_catalog_empty','ui_case_selection','ui_case_revision','ui_start_handoff','ui_start_switch','ui_start_unready','ui_catalog_paging','ui_catalog_module','ui_case_hidden_selection','ui_start_empty_guard']){const button=panel.querySelector(`[data-catalog-scenario="${scenario}"]`);assert.ok(button);button.click();await wait();await wait();assert.equal(posts.at(-1).scenario,scenario);assert.ok(panel.querySelector('[data-catalog-artifact="trace"]'));}
  assert.match(panel.textContent,/空.*搜索/);assert.match(panel.textContent,/不代表.*业务/);
 });
 test('workspace starts a fixed failure drill and shows its mismatched counts and evidence',async t=>{

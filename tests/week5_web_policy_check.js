@@ -99,3 +99,15 @@ test('device GET requires an exact separately admitted application query',()=>{
   }
   assert.equal(allowRequest(origin,'GET',path+'?app_id=com.example.app',apps),false);
 });
+
+test('paging exposes only a cursor bound to the last returned case and never changes W05 projection', () => {
+  const {browserData}=require('../task_server/fixtures/week5_web/workflows');
+  const api='/api/ui-executions/catalog';
+  const data={ok:true,items:[{case_id:'one'}],apps:[],groups:[]};
+  const cursor=Buffer.from('["0123456789abcdef",-1712345678901234567,"one"]').toString('base64url');
+  assert.equal(browserData(api,{...data,next_cursor:cursor},'app','ui_catalog_paging').next_cursor,cursor);
+  assert.equal(browserData(api,{...data,next_cursor:cursor},'app','ui_case_selection').next_cursor,undefined);
+  for (const raw of ['private', '["0123456789abcdef",-1,"another"]','["0123456789abcdef",-1,"one","private"]']){
+    assert.throws(()=>browserData(api,{...data,next_cursor:Buffer.from(raw).toString('base64url')},'app','ui_catalog_paging'),/invalid_cursor|JSON|Unexpected/);
+  }
+});

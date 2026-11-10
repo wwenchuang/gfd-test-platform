@@ -29,7 +29,8 @@ _FREE_RESERVE = 1024 * 1024 * 1024
 _SHM_FREE_RESERVE = 512 * 1024 * 1024
 _SHM_RUN_LIMIT = 128 * 1024 * 1024
 _SINGLE_FILE_LIMIT = 32 * 1024 * 1024
-WORKFLOW_SCENARIOS = ('ui_case_selection', 'ui_case_revision', 'ui_start_handoff', 'ui_start_switch', 'ui_start_unready')
+WORKFLOW_SCENARIOS = ('ui_case_selection', 'ui_case_revision', 'ui_start_handoff', 'ui_start_switch', 'ui_start_unready',
+                      'ui_catalog_paging', 'ui_catalog_module', 'ui_case_hidden_selection', 'ui_start_empty_guard')
 SCENARIOS = ('ui_catalog_count', 'ui_catalog_filter', 'ui_catalog_empty', 'ui_catalog_failure_drill') + WORKFLOW_SCENARIOS
 
 
@@ -151,7 +152,8 @@ def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_cata
     workflow = scenario in WORKFLOW_SCENARIOS
     if result['error_kind'] == 'precondition':
         if not workflow or result['status'] != 'blocked' or result.get('detail') not in (
-                'execute_permission_required','no_published_case','no_second_app','case_version_changed','no_devices','ready_device_present'):
+                'execute_permission_required','no_published_case','no_second_app','case_version_changed','no_devices','ready_device_present',
+                'no_case_module','catalog_changed'):
             raise ValueError('invalid_browser_result')
     elif 'detail' in result:
         raise ValueError('invalid_browser_result')
@@ -171,6 +173,11 @@ def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_cata
                 or any(char not in '0123456789abcdef' for char in asset['revision'])):
             raise ValueError('invalid_browser_result')
     passed = result['status'] == 'passed'
+    if ('pages_checked' in result) != (scenario == 'ui_catalog_paging' and passed):
+        raise ValueError('invalid_browser_result')
+    if 'pages_checked' in result and (type(result['pages_checked']) is not int
+            or result['pages_checked'] != (2 if result['total'] > 20 else 1)):
+        raise ValueError('invalid_browser_result')
     if ('device_count' in result) != (scenario == 'ui_start_unready' and passed):
         raise ValueError('invalid_browser_result')
     if 'device_count' in result and (type(result['device_count']) is not int or result['device_count'] <= 0):
@@ -181,7 +188,7 @@ def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_cata
         other = result['switched_app_id']
         if not isinstance(other, str) or not 0 < len(other) <= 128 or other == asset['app_id']:
             raise ValueError('invalid_browser_result')
-    return {key: result[key] for key in ('scenario','version','phase','status','error_kind','total','expected_total','asset','detail','device_count','switched_app_id') if key in result}
+    return {key: result[key] for key in ('scenario','version','phase','status','error_kind','total','expected_total','asset','detail','device_count','switched_app_id','pages_checked') if key in result}
 
 
 def _load_private(path, limit):

@@ -1,7 +1,9 @@
 'use strict';
+const crypto = require('node:crypto');
 const {catalogTarget} = require('./policy');
 
-const scenarios = new Set(['ui_case_selection', 'ui_case_revision', 'ui_start_handoff', 'ui_start_switch', 'ui_start_unready']);
+const scenarios = new Set(['ui_case_selection', 'ui_case_revision', 'ui_start_handoff', 'ui_start_switch', 'ui_start_unready',
+  'ui_catalog_paging', 'ui_catalog_module', 'ui_case_hidden_selection', 'ui_start_empty_guard']);
 const statuses = new Set(['ready','offline','not_ready','mapping_missing','upgrade_required']);
 const booleanFields=new Set(['ok','enabled','evidence_available','must_change_password','is_superuser','execution_eligible','has_more']);
 function pick(obj,keys){
@@ -19,7 +21,7 @@ function pick(obj,keys){
 
 // Keep private identity, notification settings, serials and phone images out of browser traces.
 // The host makes each GET with the actual session and verifies its owner separately.
-function browserData(path, data, app) {
+function browserData(path, data, app, scenario) {
   if (data?.ok!==true) return {ok:false};
   if (path.endsWith('/auth/me')) {
     const profile = data.profile || {};
@@ -39,7 +41,19 @@ function browserData(path, data, app) {
   if (path.endsWith('/catalog')) {
     const row = item => pick(item,['case_id','app_id','revision','task_name','module','execution_eligible','block_code']);
     if (!Array.isArray(data.groups)||!Array.isArray(data.items)||!Array.isArray(data.apps)) throw Error('invalid_catalog');
-    return {...pick(data,['ok','total','modules']),items:data.items.map(row),apps:data.apps.map(app=>pick(app,['app_id','name'])),
+    // Paging uses the catalog's own cursor, bound to the final visible case.
+    // Check its narrow public payload before allowing it into browser evidence.
+    const paging={};
+    if (scenario==='ui_catalog_paging' && data.next_cursor!=null) {
+      const cursor=data.next_cursor;
+      if (typeof cursor!=='string' || cursor.length>1024 || !/^[A-Za-z0-9_-]+={0,2}$/.test(cursor)) throw Error('invalid_cursor');
+      const decoded=Buffer.from(cursor,'base64url').toString('utf8');
+      const fields=JSON.parse(decoded);
+      if (!/^\["[a-f0-9]{16}",-?[0-9]{1,20},"/.test(decoded) || !Array.isArray(fields) || fields.length!==3 ||
+          fields[2]!==data.items.at(-1)?.case_id || !decoded.endsWith('"]')) throw Error('invalid_cursor');
+      paging.next_cursor=cursor;
+    }
+    return {...pick(data,['ok','total','modules']),...paging,items:data.items.map(row),apps:data.apps.map(app=>pick(app,['app_id','name'])),
       groups:data.groups.map(group=>({...pick(group,['app_id','name','total','has_more']),items:group.items.map(row)}))};
   }
   throw Error('unexpected_api');
@@ -48,8 +62,14 @@ function browserData(path, data, app) {
 async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries}) {
   const blocked = detail => ({status:'blocked',error_kind:'precondition',detail});
   const profile=state.auth.profile;
-  if (!profile.is_superuser && !profile.permissions?.includes('ui.execute')) return blocked('execute_permission_required');
-  const initial=state.catalog, target=catalogTarget(initial);
+  const catalogOnly=['ui_catalog_paging','ui_catalog_module'].includes(scenario);
+  if (!catalogOnly && !profile.is_superuser && !profile.permissions?.includes('ui.execute')) return blocked('execute_permission_required');
+  const initial=state.catalog;
+  // Prefer an app with a second page over an earlier, smaller app.
+  const groups=scenario==='ui_catalog_paging'
+    ? [...initial.groups].sort((left,right)=>Number(right.total>20)-Number(left.total>20))
+    : initial.groups;
+  const target=catalogTarget({...initial,groups});
   if (!target) return blocked('no_published_case');
   const other=initial.apps.find(a=>typeof a.app_id==='string' && a.app_id!==target.app && a.app_id.length>0 && a.app_id.length<=128 && !/[\x00-\x1f\x7f]/.test(a.app_id));
   if (scenario==='ui_start_switch' && !other) return blocked('no_second_app');
@@ -61,10 +81,14 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
   const checkbox=page.locator('[data-ui-cases] input[data-case-id='+caseKey+']');
   const go=page.locator('[data-ui-go-start]'), start=page.locator('[data-ui-start]');
   const chips=page.locator('[data-ui-selected] button');
-  const queryFor=app=>'?'+new URLSearchParams({app_id:app,module:'',query:'',scope:'published',limit:'20'});
+  function queryFor(app,{module='',query='',cursor=''}={}) {
+    const params=new URLSearchParams({app_id:app,module,query,scope:'published',limit:'20'});
+    if (cursor) params.set('cursor',cursor);
+    return '?'+params;
+  }
   const deviceQuery=app=>'?'+new URLSearchParams({app_id:app});
-  async function catalogAfter(app,action) {
-    const query=queryFor(app);catalogQueries.add(query);
+  async function catalogAfter(app,action,filters) {
+    const query=queryFor(app,filters);catalogQueries.add(query);
     // The same URL and count can recur on a refresh or handoff. The catalog
     // replaces its rows on every render, including an unchanged revision.
     const host=page.locator('[data-ui-cases]');
@@ -94,6 +118,46 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
   }
   let catalog=await catalogAfter(target.app,()=>appSelect.selectOption(target.app));
   if (!matchesAsset(catalog)) return blocked('case_version_changed');
+  const passed=()=>({status:'passed',error_kind:null,phase:'workflow',asset,total:catalog.total,...evidence});
+  const ids=data=>data.items.map(item=>item.case_id);
+  const sameIds=(left,right)=>JSON.stringify(left)===JSON.stringify(right);
+  async function rowsMatch(data) {
+    const shown=await page.locator('[data-ui-cases] [data-case-id]').evaluateAll(nodes=>nodes.map(node=>node.dataset.caseId));
+    return await appSelect.inputValue()===target.app && data.items.every(item=>item.app_id===target.app) &&
+      sameIds(shown,ids(data)) && await page.locator('[data-ui-case-count]').innerText()===data.total+' 条匹配基线';
+  }
+  if (scenario==='ui_catalog_paging') {
+    const next=page.locator('[data-ui-next]'), prev=page.locator('[data-ui-prev]');
+    const first=ids(catalog), total=catalog.total;
+    if (!await rowsMatch(catalog) || !await prev.isDisabled() || first.length!==Math.min(total,20) ||
+        new Set(first).size!==first.length || !!catalog.next_cursor!==(total>20) || await next.isEnabled()!==(total>20)) return failed;
+    evidence.pages_checked=1;
+    if (total>20) {
+      catalog=await catalogAfter(target.app,()=>next.click(),{cursor:catalog.next_cursor});
+      if (catalog.total!==total) return blocked('catalog_changed');
+      const second=ids(catalog);
+      if (!await rowsMatch(catalog) || !await prev.isEnabled() || second.length!==Math.min(total-20,20) ||
+          new Set([...first,...second]).size!==first.length+second.length || !!catalog.next_cursor!==(total>40) ||
+          await next.isEnabled()!==(total>40)) return failed;
+      catalog=await catalogAfter(target.app,()=>prev.click());
+      if (catalog.total!==total || !sameIds(first,ids(catalog)) || !matchesAsset(catalog)) return blocked('catalog_changed');
+      if (!await rowsMatch(catalog) || !await next.isEnabled() || !await prev.isDisabled()) return failed;
+      evidence.pages_checked=2;
+    }
+    return passed();
+  }
+  if (scenario==='ui_catalog_module') {
+    const module=catalog.items.find(item=>item.case_id===target.caseId)?.module;
+    if (typeof module!=='string'||!module.trim()||module.length>128||/[\x00-\x1f\x7f]/.test(module)||!catalog.modules?.includes(module)) return blocked('no_case_module');
+    const select=page.locator('[name="ui-module"]');
+    catalog=await catalogAfter(target.app,()=>select.selectOption(module),{module});
+    if (!matchesAsset(catalog)) return blocked('case_version_changed');
+    if (await select.inputValue()!==module || !await rowsMatch(catalog) || !catalog.items.every(item=>item.module===module)) return failed;
+    catalog=await catalogAfter(target.app,()=>select.selectOption(''));
+    if (!matchesAsset(catalog)) return blocked('case_version_changed');
+    if (await select.inputValue()!=='' || !await rowsMatch(catalog)) return failed;
+    return passed();
+  }
   if (await checkbox.count()!==1 || !await checkbox.isEnabled()) return failed;
   await checkbox.check();
   if (!await selectedVersion('library') || !await go.isEnabled()) return failed;
@@ -101,6 +165,20 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
     await chips.first().click();
     if (await checkbox.isChecked() || await chips.count() || !await go.isDisabled() ||
         await page.locator('[data-ui-selection-count]').innerText()!=='已选 0 条基线') return failed;
+  } else if (scenario==='ui_case_hidden_selection') {
+    const search=page.locator('[name="ui-query"]');
+    const missing='__web_check_missing_'+crypto.randomBytes(16).toString('hex');
+    catalog=await catalogAfter(target.app,async()=>{
+      await search.fill(missing);
+      await search.press('Enter');
+    },{query:missing});
+    if (catalog.total!==0) return blocked('catalog_changed');
+    if (!await rowsMatch(catalog) || await checkbox.count() || await chips.count()!==1 ||
+        await chips.first().innerText()!==target.name+' ×' || !await go.isEnabled() ||
+        await page.locator('[data-ui-selection-count]').innerText()!=='已选 1 条基线') return failed;
+    catalog=await catalogAfter(target.app,()=>search.fill(''));
+    if (!matchesAsset(catalog)) return blocked('case_version_changed');
+    if (!await rowsMatch(catalog) || !await selectedVersion('library')) return failed;
   } else if (scenario==='ui_case_revision') {
     catalog=await catalogAfter(target.app,()=>page.locator('[data-ui-refresh]').click());
     if (!matchesAsset(catalog)) return blocked('case_version_changed');
@@ -111,7 +189,12 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
     if (!matchesAsset(catalog)) return blocked('case_version_changed');
     if (await page.locator('[data-ui-mode="start"] h1').innerText()!=='开始测试' || await appSelect.inputValue()!==target.app ||
         !await selectedVersion('start') || !await start.isDisabled()) return failed;
-    if (scenario==='ui_start_switch') {
+    if (scenario==='ui_start_empty_guard') {
+      await chips.first().click();
+      if (await checkbox.isChecked() || await chips.count() || !await start.isDisabled() ||
+          await page.locator('[data-ui-selection-count]').innerText()!=='已选 0 条用例' ||
+          await page.locator('[data-ui-start-hint]').innerText()!=='勾选至少一条已发布基线。') return failed;
+    } else if (scenario==='ui_start_switch') {
       deviceQueries.add(deviceQuery(other.app_id));
       catalog=await catalogAfter(other.app_id,()=>appSelect.selectOption(other.app_id));
       evidence.switched_app_id=other.app_id;
@@ -134,6 +217,6 @@ async function checkWorkflow({scenario,page,state,catalogQueries,deviceQueries})
           await page.locator('[data-ui-start-hint]').innerText()!=='请选择一台连接就绪的手机。') return failed;
     }
   }
-  return {status:'passed',error_kind:null,phase:'workflow',asset,total:catalog.total,...evidence};
+  return passed();
 }
 module.exports={scenarios,browserData,checkWorkflow};

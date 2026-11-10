@@ -37,7 +37,10 @@ class ServiceTest(unittest.TestCase):
             return service._bounded_process(command,{'PATH':'/usr/bin:/bin'},TOKEN,'user1',scenario=scenario)
         self.assertEqual(parse('ui_start_unready',device_count=2)['device_count'],2)
         self.assertEqual(parse('ui_start_switch',switched_app_id='b')['switched_app_id'],'b')
-        for key,extra in (('ui_start_unready',{}),('ui_start_switch',{'switched_app_id':'a'}),
+        self.assertEqual(parse('ui_catalog_paging',pages_checked=1)['pages_checked'],1)
+        for key,extra in (('ui_catalog_paging',{}),('ui_catalog_paging',{'pages_checked':2}),
+                          ('ui_catalog_paging',{'pages_checked':True}),('ui_case_revision',{'pages_checked':1}),
+                          ('ui_start_unready',{}),('ui_start_switch',{'switched_app_id':'a'}),
                           ('ui_case_revision',{'asset':None}),('ui_case_selection',{'device_count':9})):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 parse(key,**extra)

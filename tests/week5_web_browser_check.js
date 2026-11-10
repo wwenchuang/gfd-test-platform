@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const {spawn, spawnSync} = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 
-test('browser exercises eight read-only workflows and isolates deliberate failures and missing prerequisites', {timeout: 120000}, async () => {
+test('browser exercises read-only workflows and isolates deliberate failures and missing prerequisites', {timeout: 120000}, async () => {
   const secret = 'EXAMPLE_TOKEN_0123456789abcdefghijklmnopqrs';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'week5-browser-test-'));
   let html=fs.readFileSync(path.join(root,'task-manager.html'),'utf8');const aliases=new Map();
@@ -17,7 +17,7 @@ test('browser exercises eight read-only workflows and isolates deliberate failur
     const source=path.join(root,'js',name+'.js'),digest=crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex').slice(0,16);
     const hashed=`/js/${name}.${digest}.js`;aliases.set(hashed,source);html=html.replace(`js/${name}.js?`,hashed.slice(1)+'?');
   }
-  const flows=['ui_case_selection','ui_start_handoff','ui_start_switch','ui_start_unready','ui_case_revision'];
+  const flows=['ui_case_selection','ui_start_handoff','ui_start_switch','ui_start_unready','ui_case_revision','ui_catalog_paging','ui_catalog_module','ui_case_hidden_selection','ui_start_empty_guard'];
   const observed=[];
   let fault = null,versionReads=0;
   const server = http.createServer((req, res) => {
@@ -37,7 +37,14 @@ test('browser exercises eight read-only workflows and isolates deliberate failur
         const app='com.example.app', item={case_id:'fixture-1',task_name:'浏览作品',private_notes:'PRIVATE-W05-CASE-NOTES',app_id:app,module:'作品',execution_eligible:true,revision:'a'.repeat(64)};
         const query=u.searchParams.get('query')||'', selected=u.searchParams.get('app_id')||'', empty=query.startsWith('__web_check_missing_');
         if(fault==='revised'&&selected&&++versionReads>1)item.revision='b'.repeat(64);
-        const items=empty||selected==='com.example.second'?[]:[item];res.end(JSON.stringify({ok:true,total:items.length,groups:selected?[]:[{app_id:app,name:'示例应用',items}],items:selected?items:[],apps:[{app_id:app,name:'示例应用',notification_channel:{target_label:'PRIVATE-W05-CHANNEL'}},{app_id:'com.example.second',name:'另一应用'}],modules:['作品'],next_cursor:null}));
+        let all=[item];
+        if(fault==='two_pages')all=Array.from({length:23},(_,i)=>({...item,case_id:'fixture-'+(i+1),task_name:'作品 '+(i+1)}));
+        if(empty||selected==='com.example.second')all=[];
+        const cursor=Buffer.from(JSON.stringify(['0123456789abcdef',-100,'fixture-20'])).toString('base64url');
+        const after=u.searchParams.get('cursor');
+        if(after)assert.equal(after,cursor);
+        const items=after?all.slice(20):all.slice(0,20);
+        res.end(JSON.stringify({ok:true,total:all.length,groups:selected?[]:[{app_id:app,name:'示例应用',total:all.length,items:all.slice(0,3)}],items:selected?items:[],apps:[{app_id:app,name:'示例应用',notification_channel:{target_label:'PRIVATE-W05-CHANNEL'}},{app_id:'com.example.second',name:'另一应用'}],modules:['作品'],next_cursor:selected&&!after&&all.length>20?cursor:null}));
       }
       else {res.statusCode=404; res.end('{}');}
       return;
@@ -56,12 +63,15 @@ test('browser exercises eight read-only workflows and isolates deliberate failur
     if(fault==='changed_count'&&file.endsWith('/ui-test-home.js')){
       res.end(fs.readFileSync(file,'utf8').replace('data.total||0','999'));return;
     }
+    if(fault==='broken_required_case'&&file.endsWith('/ui-test-home.js')){
+      res.end(fs.readFileSync(file,'utf8').replace('勾选至少一条已发布基线。','已准备好'));return;
+    }
     fs.createReadStream(file).pipe(res);
   });
   await new Promise((resolve, reject) => server.once('error', reject).listen(8088, '127.0.0.1', resolve));
   try {
     const drill='ui_catalog_failure_drill';
-    for(const [scenario,fixtureFault] of [['ui_catalog_count'],['ui_catalog_filter'],['ui_catalog_empty'],[drill],[drill,'changed_count'],[drill,'wrong_owner'],...flows.map(key=>[key]),['ui_case_selection','view_only'],['ui_start_unready','ready'],['ui_case_selection','broken_remove'],['ui_case_revision','revised'],['ui_case_revision','stale_render'],['ui_catalog_count','api_error']]){
+    for(const [scenario,fixtureFault] of [['ui_catalog_count'],['ui_catalog_filter'],['ui_catalog_empty'],[drill],[drill,'changed_count'],[drill,'wrong_owner'],...flows.map(key=>[key]),['ui_catalog_paging','two_pages'],['ui_start_empty_guard','broken_required_case'],['ui_case_selection','view_only'],['ui_start_unready','ready'],['ui_case_selection','broken_remove'],['ui_case_revision','revised'],['ui_case_revision','stale_render'],['ui_catalog_count','api_error']]){
     fault=fixtureFault;versionReads=0;
     const startIndex=observed.length;
     for (const name of ['screenshot.png','trace.zip']) fs.rmSync(path.join(dir,name),{force:true});
@@ -82,14 +92,22 @@ test('browser exercises eight read-only workflows and isolates deliberate failur
       assert.equal(result.detail,({ready:'ready_device_present',view_only:'execute_permission_required',revised:'case_version_changed'})[fault]);
       continue;
     }
-    if(flows.includes(scenario)&&!fault){
+    if(scenario==='ui_catalog_paging'&&(!fault||fault==='two_pages')){
+      assert.equal(result.pages_checked,fault==='two_pages'?2:1,stdout);
+      if(fault==='two_pages'){
+        const reads=observed.slice(startIndex).filter(([,p,q])=>p.endsWith('/catalog')&&q.includes('app_id=com.example.app'));
+        assert.equal(reads.length,3);
+        assert.ok(reads[1][2].includes('&cursor='));
+      }
+    }
+    if(flows.includes(scenario)&&(!fault||fault==='two_pages')){
       assert.equal(result.status,'passed',stdout);
       if(scenario==='ui_start_unready')assert.equal(result.device_count,1);
       if(scenario==='ui_start_switch')assert.equal(result.switched_app_id,'com.example.second');
       if(scenario==='ui_case_revision')assert.equal(observed.slice(startIndex).filter(([,p,q])=>p==='/api/ui-executions/catalog'&&q.includes('app_id=com.example.app')).length,2);
       assert.deepEqual(result.asset,{app_id:'com.example.app',case_id:'fixture-1',revision:'a'.repeat(64)});
     }
-    if(fault){
+    if(fault&&fault!=='two_pages'){
       assert.equal(result.status,fault==='wrong_owner'?'blocked':'failed',stdout);
       assert.equal(result.error_kind,fault==='wrong_owner'?'authentication':'business',stdout);
       assert.equal(result.expected_total,undefined);

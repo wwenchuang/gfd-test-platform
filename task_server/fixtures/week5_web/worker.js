@@ -56,7 +56,7 @@ async function main() {
           else if (response.status !== 200) recordRouteError(state, 'environment');
           else {
             const data = JSON.parse(response.body.toString('utf8'));
-            exposed=workflows.browserData(url.pathname,data,url.searchParams.get('app_id'));
+            exposed=workflows.browserData(url.pathname,data,url.searchParams.get('app_id'),scenario);
             if (url.pathname === '/api/ui-executions/devices') state.devices.set(url.search,exposed.devices);
             if (url.pathname === '/api/auth/me') {
               state.auth=data;
@@ -175,6 +175,7 @@ async function main() {
       delete result.total;
       delete result.switched_app_id;
       delete result.device_count;
+      delete result.pages_checked;
     }
     if (result.phase === 'drill' && result.error_kind !== 'drill_assertion') {
       delete result.total;
