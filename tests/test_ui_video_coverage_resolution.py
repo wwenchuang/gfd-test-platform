@@ -1214,3 +1214,54 @@ def test_audit_redaction_preserves_structural_identifiers_for_short_inputs():
     assert result['action']=='aiTap' and result['before_frame']=='frame-001'
     assert result['examined_frame_refs']==value['examined_frame_refs']
     assert '1' not in result['observation'] and '1' not in result['target']
+
+@pytest.mark.parametrize('blind',['motion','delayed','return_only'])
+@pytest.mark.parametrize('outcome',['corrected','still_invalid','no_shared_frame','missing','missing_unmapped','duplicate_dropped','budget_exhausted'])
+def test_nonshared_frame_blind_retry_remains_bounded_and_preserves_coverage(monkeypatch,tmp_path,blind,outcome):
+    from task_server.services import ui_video_reconcile as vr,ui_video_windows as windows,ai_skill_service as ai,ui_video_delayed_response as delayed
+    frames,old,new,claim=fixture()
+    old[0].update(action='aiTap',target='私人旧目标',value='',frame_refs=['f1','f3'],end_ms=300,observation='敏感旧观察假设XYZ',evidence_kind='inferred')
+    old[1].update(target='私人旧目标',value='',frame_refs=['f2','f3','f4'],end_ms=400,observation='敏感旧观察假设XYZ',evidence_kind='inferred')
+    if outcome=='no_shared_frame':old[0].update(frame_refs=['f1'],end_ms=100)
+    new[0].update(target='确认',value='',frame_refs=['f1','f2','f4'],end_ms=400,observation='点击确认',evidence_kind='inferred')
+    claim.update(resolution='same_interaction',source_anchor_ids=['first_pass:0','first_pass:1','independent_review:0','independent_review:1'])
+    claim['evidence'].update(interaction_frame='f2',after_frame='f4',examined_frame_refs=['f1','f2','f3','f4'])
+    monkeypatch.setattr(windows,'load_assets',lambda *a,**kw:[])
+    if blind=='delayed':monkeypatch.setattr(delayed,'review_refs',lambda *a:{'f2'})
+    calls=[]
+    def model(skill,payload,**kwargs):
+        calls.append(copy.deepcopy(payload))
+        if len(calls)==2 and blind!='return_only':
+            assert all('action' not in a for rows in payload['coverage_checks'].values() for a in rows)
+            assert payload['gesture_hypotheses']==[]
+            assert 'resolution_diagnostics' not in payload
+            assert '私人旧目标' not in repr(payload) and '敏感旧观察假设XYZ' not in repr(payload)
+        event={k:v for k,v in new[0].items() if k not in {'start_ms','end_ms','evidence_kind'}}
+        c=copy.deepcopy(claim)
+        if len(calls)==2 and outcome in ('corrected','no_shared_frame','missing_unmapped','duplicate_dropped'):
+            c['evidence']['interaction_frame']='f3'
+            event['frame_refs']=['f1','f2','f3','f4']
+        events=[] if len(calls)==2 and outcome=='missing' else [event]
+        if outcome=='duplicate_dropped' and len(calls)==1:events.append(copy.deepcopy(event))
+        if outcome=='missing_unmapped' and len(calls)==1:
+            events.append({'action':'aiTap','target':'另一个按钮','value':'','frame_refs':['f4'],'observation':'额外观察到点击','uncertainties':[]})
+        claims=[] if not events else [c]
+        if outcome=='missing_unmapped' and len(calls)==1:
+            claims.append({**copy.deepcopy(c),'reviewed_event_index':1})
+        return {'events':events,'coverage_resolutions':claims,'uncertainties':['首答仍须人工核对'] if len(calls)==1 else [],'multiple_scenarios':len(calls)==1}
+    monkeypatch.setattr(ai,'run_ai_skill',model)
+    checked={'events':copy.deepcopy(old),'uncertainties':[],'multiple_scenarios':False}
+    options={'motion_review_refs':{'f2'}} if blind=='motion' else {}
+    args=(old,checked,frames,1000,tmp_path,lambda:False,[],{'f1','f2','f3','f4'})
+    if outcome=='corrected':
+        result=vr._repair_window(*args,attempt_limit=2,retry_return_gesture_only=True,**options)
+        assert result['reconciliation_audit']['model_attempts']==2
+        assert '首答仍须人工核对' in result['uncertainties']
+        assert result['multiple_scenarios'] is True
+        assert result['events'][0]['frame_refs']==['f1','f2','f3','f4']
+    else:
+        with pytest.raises(ValueError) as caught:
+            vr._repair_window(*args,attempt_limit=1 if outcome=='budget_exhausted' else 2,retry_return_gesture_only=True,**options)
+        if outcome in ('missing_unmapped','duplicate_dropped'):assert str(caught.value)=='video_required_action_missing'
+        if outcome=='no_shared_frame':assert getattr(caught.value,'coverage_reason',None)=='interaction_frame_not_shared'
+    assert len(calls)==(1 if outcome=='budget_exhausted' else 2)

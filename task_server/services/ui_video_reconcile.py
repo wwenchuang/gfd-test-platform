@@ -879,6 +879,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     resolutions=[];redundant_claims=[];redundant_tap_claims=[]
     sticky_questions=[];sticky_multiple_scenarios=False
     retry_hypotheses=[]
+    retry_frame_hypotheses=[]
     for attempt in range(attempt_limit):
         if cancelled():raise ValueError('video_cancelled')
         try:
@@ -936,6 +937,13 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         for event in retry_hypotheses:
             if event not in unmatched:raise ValueError('video_required_action_missing')
             unmatched.remove(event)
+        unmatched=list(repaired['events'])
+        for event in retry_frame_hypotheses:
+            match=next((i for i,candidate in enumerate(unmatched)
+                if all(candidate.get(k)==event.get(k) for k in ('action','target','value')) and
+                set(event['frame_refs'])<=set(candidate['frame_refs'])),None)
+            if match is None:raise ValueError('video_required_action_missing')
+            unmatched.pop(match)
         # A later mapping, boundary, or coverage rejection cannot authorize a
         # subsequent model response to erase already validated uncertainty.
         from .ui_video_business_inputs import _MANUAL
@@ -978,6 +986,17 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 raise error
         except ValueError as error:
             reason=getattr(error,'coverage_reason',None)
+            if ((motion_review or delayed_review or retry_return_gesture_only) and
+                attempt+1<attempt_limit and str(error)=='video_coverage_resolution_invalid' and
+                reason=='interaction_frame_not_shared'):
+                # The rejected claim's indexes are untrusted. Preserve every
+                # validated hypothesis, including the mapped event, one-to-one
+                # with its original frames; a retry may add evidence, not erase.
+                retry_frame_hypotheses.extend(copy.deepcopy(repaired['events']))
+                # Schema-only feedback is safe for blind motion/delayed review:
+                # do not expose old action labels, rejected claims or model prose.
+                payload['validation_feedback']+=' 上次映射结构未通过：普通映射的interaction_frame须同时出现在声明的每条旧锚点frame_refs和结果事件中。重新独立核对原图；共同帧只有确实显示同一次交互才可用于映射，否则保留真实独立动作及疑问，不得为通过检查编造触点或删改动作。'
+                continue
             if ((motion_review or delayed_review) and not retry_return_gesture_only and
                 attempt+1<attempt_limit and str(error)=='video_coverage_resolution_invalid' and
                 reason=='merge_requires_same_source_duplicates'):
