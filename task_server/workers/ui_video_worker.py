@@ -106,6 +106,29 @@ def _private_target_failure(error,code,document):
             type(evidence['reason']) is str and evidence['reason'] in {'selection','template','unsupported'}):
             return dict(evidence)
         return {}
+    evidence=getattr(error,'touch_binding_evidence',None)
+    keys={'reason','frame_id','match_count','event_question_counts','phase','window_index','window_count','attempt'}
+    if code=='video_model_invalid' and type(evidence) is dict and set(evidence)==keys:
+        from task_server.services.ui_video_windows import observation_windows
+        frames=document.get('media',{}).get('frames',[])
+        try:
+            windows=observation_windows(frames)
+            reason=evidence['reason'];count=evidence['match_count'];counts=evidence['event_question_counts']
+            index=evidence['window_index'];total=evidence['window_count'];frame=evidence['frame_id']
+            if (type(reason) is str and reason in {'no_match','multiple_matches','question_capacity'} and
+                type(count) is int and 0<=count<=50 and type(counts) is list and len(counts)==count and
+                all(type(n) is int and 0<=n<=10 for n in counts) and
+                ((reason=='no_match' and count==0) or (reason=='multiple_matches' and count>=2) or
+                 (reason=='question_capacity' and count==1 and counts==[10])) and
+                type(evidence['phase']) is str and evidence['phase'] in {'observe','review'} and
+                type(index) is int and type(total) is int and total==len(windows) and 1<=index<=total and
+                type(evidence['attempt']) is int and evidence['attempt'] in (1,2) and
+                type(frame) is str and re.fullmatch(r'frame-(?:[0-9]{3,6}|end)',frame) and
+                frame in {item['frame_id'] for item in windows[index-1]}):
+                return {'touch_binding_evidence':dict(evidence)}
+        except (KeyError,TypeError,ValueError):
+            pass
+        return {}
     evidence=getattr(error,'dialog_guard_evidence',None)
     if code=='video_model_invalid' and type(evidence) is dict:
         reason=evidence.get('reason')

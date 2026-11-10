@@ -208,7 +208,13 @@ def bind_uncertain_hints(events,hints,analysis=None):
         if not hint.get('requires_review'):continue
         root_questions.extend(hint.get('questions',[]))
         matches=[e for e in events if e.get('action')=='aiTap' and hint['frame_id'] in e.get('frame_refs',[])]
-        if len(matches)!=1 or len(matches[0].get('uncertainties',[]))>=10:raise ValueError('video_model_invalid')
+        reason=('no_match' if not matches else 'multiple_matches' if len(matches)>1 else
+                'question_capacity' if len(matches[0].get('uncertainties',[]))>=10 else '')
+        if reason:
+            error=ValueError('video_model_invalid')
+            error.touch_binding_evidence={'reason':reason,'frame_id':hint.get('frame_id'),
+                'match_count':len(matches),'event_question_counts':[len(event.get('uncertainties',[])) for event in matches]}
+            raise error
         if question not in matches[0]['uncertainties']:matches[0]['uncertainties'].append(question)
         if not hint.get('questions'):
             root_questions.append(question)
