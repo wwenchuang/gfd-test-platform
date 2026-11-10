@@ -170,7 +170,12 @@ def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=
             distance=value.get('distance')
             if isinstance(distance,(int,float)) and not math.isfinite(distance):raise ValueError('video_action_invalid')
             if validate_midscene_action_parameters('aiScroll',{'aiScroll':event['target'],**value}):raise ValueError('video_action_invalid')
-        elif event['value']!='': raise ValueError('video_action_invalid')
+        elif event['value']!='':
+            error=ValueError('video_action_invalid')
+            error.action_reason='unexpected_value'
+            error.action_failure_evidence={'reason':'unexpected_value','action':event['action'],
+                                           'frame_refs':list(dict.fromkeys((refs[0],refs[-1])))}
+            raise error
         last=start
         clean.append(event)
     secrets=list(prior_secrets)+[e['value'] for e in events if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value']]

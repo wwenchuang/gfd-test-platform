@@ -30,6 +30,17 @@ def _failure_code(error):
 
 def _private_target_failure(error,code,document):
     """Bounded evidence saved under the existing owner/app source permissions."""
+    if code=='video_action_invalid':
+        evidence=getattr(error,'action_failure_evidence',None)
+        known={f.get('frame_id') for f in document.get('media',{}).get('frames',[])}
+        if (type(evidence) is dict and set(evidence)=={'reason','action','frame_refs'} and
+            evidence['reason']=='unexpected_value' and type(evidence['action']) is str and
+            evidence['action'] in {'aiTap','aiAssert','aiWaitFor'} and
+            type(evidence['frame_refs']) is list and 1<=len(evidence['frame_refs'])<=2 and
+            all(type(ref) is str and re.fullmatch(r'frame-(?:[0-9]{3,6}|end)',ref) and ref in known for ref in evidence['frame_refs']) and
+            len(set(evidence['frame_refs']))==len(evidence['frame_refs'])):
+            return {'action_failure_evidence':dict(evidence)}
+        return {}
     if code=='video_reference_invalid' and getattr(error,'reference_reason',None)=='boundary_overlap':
         evidence=getattr(error,'boundary_failure_evidence',None)
         known={f.get('frame_id') for f in document.get('media',{}).get('frames',[])}
@@ -131,6 +142,8 @@ def _log_failure(identifier,stage,error,code):
             detail['reference_reason']=reason
         if reason=='count' and type(shape) is str and shape in {'not_array','empty','too_many'}:
             detail['reference_shape']=shape
+    if code=='video_action_invalid' and getattr(error,'action_reason',None)=='unexpected_value':
+        detail['action_reason']='unexpected_value'
     if code=='video_coverage_resolution_invalid':
         reason=getattr(error,'coverage_reason',None)
         if type(reason) is str and reason in {
