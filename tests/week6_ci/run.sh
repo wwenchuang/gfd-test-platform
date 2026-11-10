@@ -37,6 +37,11 @@ export PLAYWRIGHT_BROWSERS_PATH="$scratch/browsers"
 pw="$scratch/node_modules/playwright/cli.js"
 node "$pw" --version
 node "$pw" install --only-shell chromium
+if [[ "$profile" == nightly ]]; then
+    stage=static-checks
+    "$python" tests/backend_static_checks.py
+    "$python" tests/frontend_static_checks.py
+fi
 stage=smoke
 mkdir "$scratch/state"
 env -i PATH="$PATH" HOME="$scratch/state" TMPDIR="$scratch/state" \

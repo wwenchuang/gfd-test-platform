@@ -1,3 +1,4 @@
+alembic==1.20.1
 amqp==5.4.2
 argon2-cffi==25.1.0
 argon2-cffi-bindings==26.1.0
@@ -16,9 +17,13 @@ greenlet==3.5.6 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or 
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 kombu==5.6.2
+mako==1.4.3
+markupsafe==3.0.4
 packaging==26.3
 pillow==12.3.0
 prompt-toolkit==3.0.53
+psycopg==3.2.13
+psycopg-binary==3.2.13 ; implementation_name != 'pypy'
 pycparser==3.11 ; python_full_version < '3.11' and implementation_name != 'PyPy'
 pycparser==3.12 ; python_full_version >= '3.11' and implementation_name != 'PyPy'
 pyjwt==2.15.1
@@ -31,6 +36,7 @@ rpds-py==0.30.0 ; python_full_version < '3.11'
 rpds-py==2026.9.1 ; python_full_version >= '3.11'
 six==1.17.0 ; python_full_version < '3.11'
 sqlalchemy==2.0.57
+tomli==2.5.0 ; python_full_version < '3.11'
 typing-extensions==4.16.0
 tzdata==2026.6
 tzlocal==5.4.5

@@ -8,9 +8,6 @@ import sys
 from threading import Thread
 from zipfile import ZipFile
 
-from PIL import Image
-from task_server.app import TaskHTTPHandler, ThreadingHTTPServer
-
 
 def get_json(port, path):
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
@@ -45,6 +42,8 @@ def api_smoke(port, out):
 
 
 def ui_smoke(script, port, out, mode):
+    from PIL import Image
+
     env = dict(os.environ, W01_UI_URL=f"http://127.0.0.1:{port}/task-manager.html", W01_UI_ARTIFACTS=str(out))
     result = subprocess.run(["node", script, mode], env=env, capture_output=True, text=True, timeout=60)
     print(result.stdout, result.stderr, flush=True)
@@ -60,6 +59,8 @@ def ui_smoke(script, port, out, mode):
 
 
 def main(script, profile, destination):
+    from task_server.app import TaskHTTPHandler, ThreadingHTTPServer
+
     mode = "intentional-failure" if profile == "wrong-title" else "positive"
     with ThreadingHTTPServer(("127.0.0.1", 0), TaskHTTPHandler) as server:
         thread = Thread(target=server.serve_forever, daemon=True)

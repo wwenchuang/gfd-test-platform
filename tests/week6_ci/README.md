@@ -1,6 +1,6 @@
 # 平台 API 与浏览器冒烟
 
-PR 执行一次。夜间任务在 UTC 18:15（北京时间次日 02:15）对默认分支连续执行三次，每次新建 Chromium 进程与上下文，任何一轮失败即阻断该 job。手动选择 `wrong-title` 可复现单一错误断言，预期工作流显示失败。PR 合并拦截需仓库管理员将 Platform smoke / smoke 加入受保护分支的必需检查。
+PR 执行一次。夜间任务在 UTC 18:15（北京时间次日 02:15）对默认分支先运行前后端静态检查，再连续执行三次冒烟，每次新建 Chromium 进程与上下文，任何一轮失败即阻断该 job。手动选择 `wrong-title` 可复现单一错误断言，预期工作流显示失败。PR 合并拦截需仓库管理员将 Platform smoke / smoke 加入受保护分支的必需检查。
 
 每次从 checkout 的 revision 安装 `requirements.lock` 内锁定的 Python 包、根 `package-lock.json` 的 Playwright 及配套 Chromium headless shell。真实 TaskHTTPHandler 仅绑定回环随机端口，身份和操作存储指向临时目录。API 检查健康响应状态、ok 与本轮 revision，以及未登录访问 /api/auth/me 被拒绝的状态和业务码。浏览器通过同一个 HTTP 服务访问仓库登录页，读取可见标题并记录截图与 trace。服务没有运行调度器、设备、业务数据、真实账号或模型调用。
 

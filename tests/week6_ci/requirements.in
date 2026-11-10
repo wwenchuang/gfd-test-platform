@@ -1,9 +1,11 @@
 -c ../../requirements-api-testing.txt
+alembic
 argon2-cffi
 celery
 cryptography
 jsonschema
 Pillow
+psycopg[binary]
 PyYAML
 redis
 SQLAlchemy
