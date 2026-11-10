@@ -76,7 +76,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
       this.errorSource = ''
       return task
     },
-    async restore(projectId: string, client: Pick<ApiClient, 'get'> = apiClient): Promise<ApiTestTask | null> {
+    async restore(projectId: string, client: Pick<ApiClient, 'get'> = apiClient, options: { isCurrent?: () => boolean } = {}): Promise<ApiTestTask | null> {
       const generation = ++this.restoreGeneration
       this.restoreLoading = true
       this.loading = true
@@ -86,7 +86,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
         const response = await client.get<{ task: ApiTestTask | null }>(
           `/api/api-testing/v1/tasks/active?project_id=${encodeURIComponent(projectId)}`,
         )
-        if (generation !== this.restoreGeneration) return null
+        if (generation !== this.restoreGeneration || options.isCurrent?.() === false) return null
         this.readErrors.restore = ''
         this.task = response.data.task
         if (this.task && !this.tasks.some(item => item.id === this.task?.id)) {
@@ -94,7 +94,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
         }
         return this.task
       } catch (error) {
-        if (generation !== this.restoreGeneration) return null
+        if (generation !== this.restoreGeneration || options.isCurrent?.() === false) return null
         this.error = error instanceof Error ? error.message : '无法恢复当前测试任务'
         this.errorSource = 'restore'
         this.readErrors.restore = this.error

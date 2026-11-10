@@ -2399,3 +2399,94 @@ function generatedPreview(id: string, endpointId: string, name: string): Generat
     },
   }
 }
+
+describe('AI generation scope and submission guard', () => {
+  beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks(); sessionStorage.setItem('sessionToken', 'account-a') })
+
+  async function setupDelayedSave() {
+    const context = useContextStore()
+    Object.assign(context, { projectId: 'p', sourceRevisionId: 's', environmentRevisionId: 'e' })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(context, 'loadEnvironmentVariableNames').mockResolvedValue()
+    let finishSave!: () => void
+    vi.spyOn(context, 'saveContext').mockImplementation(() => new Promise<void>(resolve => { finishSave = resolve }))
+    const assets = useAssetsStore(); assets.endpoints = [ENDPOINT]; assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore(); vi.spyOn(cases, 'loadSavedCases').mockResolvedValue(); vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const generate = vi.spyOn(cases, 'generate').mockResolvedValue()
+    const tasks = useTasksStore(); vi.spyOn(tasks, 'list').mockResolvedValue([]); vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id:'task-1', project_id:'p', source_revision_id:'s', environment_revision_id:'e', selected_endpoint_ids:[ENDPOINT.id] } as ApiTestTask)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name:'workbench', component: WorkbenchView }] })
+    await router.push('/'); await router.isReady()
+    const wrapper = mount(WorkbenchView, { global: { plugins: [router], stubs: {
+      ContextBar: true, TaskStatusStrip: true, EndpointDetail: true, CaseEditor: true, DebugDrawer: true,
+      EndpointTree: { emits: ['selection-change'], template: '<button data-testid="select" @click="$emit(\'selection-change\', [\'endpoint-1\'])">选择</button>' },
+    } } })
+    await flushPromises(); await wrapper.get('[data-testid="select"]').trigger('click'); await flushPromises()
+    return { wrapper, generate, finishSave: () => finishSave(), context, tasks }
+  }
+
+  it('blocks duplicate submissions and changing mode while the task is being saved', async () => {
+    const { wrapper, generate, finishSave } = await setupDelayedSave()
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.get('[data-testid="generate-ai"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="ai-thinking-mode"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('正在准备任务')
+    expect(wrapper.text()).not.toContain('生成会在后台继续')
+    const assistant = wrapper.findComponent({ name: 'AiAssistant' })
+    assistant.vm.$emit('generate', 'second click', 'off')
+    finishSave(); await flushPromises()
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(generate.mock.calls[0][4]).toBe('off')
+    wrapper.unmount(); sessionStorage.removeItem('sessionToken')
+  })
+
+  it('does not submit the saved mode after the signed-in user changes during task saving', async () => {
+    const { wrapper, generate, finishSave, tasks } = await setupDelayedSave()
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    sessionStorage.setItem('sessionToken', 'account-b')
+    finishSave(); await flushPromises()
+    expect(generate).not.toHaveBeenCalled()
+    expect(tasks.saveSelection).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('登录状态或测试范围已变化')
+    wrapper.unmount(); sessionStorage.removeItem('sessionToken')
+  })
+
+  it('shows the submitted mode while a newly created task is generating, then resets it', async () => {
+    const { wrapper, generate, finishSave, tasks } = await setupDelayedSave()
+    let finishGenerate!: () => void
+    generate.mockImplementation(() => new Promise<void>(resolve => { finishGenerate = resolve }))
+    vi.mocked(tasks.saveSelection).mockImplementation(async () => {
+      const task = { id:'task-new', project_id:'p', source_revision_id:'s', environment_revision_id:'e', selected_endpoint_ids:[ENDPOINT.id] } as ApiTestTask
+      tasks.task = task
+      return task
+    })
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    finishSave(); await flushPromises()
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect((wrapper.get('[data-testid="ai-thinking-mode"]').element as HTMLSelectElement).value).toBe('off')
+    expect(wrapper.get('[data-testid="ai-thinking-mode"]').attributes('disabled')).toBeDefined()
+    finishGenerate(); await flushPromises()
+    expect((wrapper.get('[data-testid="ai-thinking-mode"]').element as HTMLSelectElement).value).toBe('default')
+    wrapper.unmount(); sessionStorage.removeItem('sessionToken')
+  })
+
+  it('does not restore a different account or task after generation finishes', async () => {
+    const { wrapper, generate, finishSave, tasks } = await setupDelayedSave()
+    let finishGenerate!: () => void
+    generate.mockImplementation(() => new Promise<void>(resolve => { finishGenerate = resolve }))
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    finishSave(); await flushPromises()
+    const restoreCalls = vi.mocked(tasks.restore).mock.calls.length
+    sessionStorage.setItem('sessionToken', 'account-b')
+    finishGenerate(); await flushPromises()
+    expect(vi.mocked(tasks.restore).mock.calls.length).toBe(restoreCalls)
+    wrapper.unmount(); sessionStorage.removeItem('sessionToken')
+  })
+
+})

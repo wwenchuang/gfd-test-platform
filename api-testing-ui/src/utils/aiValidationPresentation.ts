@@ -48,6 +48,20 @@ export function presentAiValidationIssue(
 
   const originalMessage = stringValue(issue, 'original_message') || stringValue(issue, 'message')
   // The platform contract takes precedence over cached AI advice for known rules.
+  const businessCodeIssue = issue.code === 'candidate_validation_error' && originalMessage.match(
+    /^deterministic case validation failed: business_assertion_imprecise:assertions\[(\d+)\]\.operator$/,
+  )
+  if (businessCodeIssue) {
+    return {
+      title: `第 ${Number(businessCodeIssue[1]) + 1} 条断言的业务码比较不够精确`,
+      reason: '业务码需要与明确的预期值比较；仅判断存在或不等于某个值，无法证明返回了预期结果。',
+      actions: [
+        '依据接口合同和业务预期确认业务码，使用“等于”或有限集合“属于”，不要猜测预期值。',
+        '未通过校验的候选未保存。已有草稿可从结果列表打开，并在使用前核对业务规则和断言。',
+      ],
+      originalMessage, model: '', needsAiDiagnosis: false, issueIndex,
+    }
+  }
   const operatorIssue = originalMessage.match(/assertions\[(\d+)\](?:\.operator is not supported| operator \S+ is not supported for \S+)$/)
   if (operatorIssue) {
     return {

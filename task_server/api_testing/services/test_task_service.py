@@ -255,12 +255,14 @@ class TestTaskService:
             repository.flush()
             return self._view(repository, task)
 
-    def refresh_for_ai_job(self, ai_job_id):
+    def refresh_for_ai_job(self, ai_job_id, *, expected_designing_only=False):
         with self._session_factory.begin() as session:
             repository = TestTaskRepository(session)
             task = repository.get_by_ai_job(ai_job_id, for_update=True)
             if task is None:
                 return None
+            if expected_designing_only and task.state != "designing":
+                return self._view(repository, task)
             job = repository.get_ai_job(ai_job_id)
             if job is None:
                 return None

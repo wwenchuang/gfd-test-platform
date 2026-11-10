@@ -3,7 +3,7 @@
 import copy
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -28,6 +28,7 @@ from .. import access
 from ..contracts.case import CasePayloadError, CaseVersionView, parse_case_payload
 from ..executor import redact
 from ..repositories.ai_job_repository import AiJobRepository
+from ..repositories.test_task_repository import TestTaskRepository
 from .case_service import CaseService
 from .response_assertion_policy import ResponseAssertionPolicy
 from .workflow_policy import is_print_dispatch_endpoint
@@ -44,6 +45,8 @@ AI_GATEWAY_MAX_RESPONSE_BYTES = max(
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_PROVIDER_ID = ""
 DEFAULT_MODEL = ""
+THINKING_CONTRACT = "thinking-v1"
+THINKING_QUEUE_TIMEOUT_SECONDS = 300
 TERMINAL_JOB_STATES = frozenset(
     {"completed", "partial", "failed_validation", "failed_gateway"}
 )
@@ -171,7 +174,7 @@ class AiGatewayClient:
         if correlation_id is not None:
             payload['correlationId'] = correlation_id
         request = urllib.request.Request(
-            self.base_url + "/ai/api-case-generation",
+            self.base_url + ("/ai/api-case-generation/thinking-v1" if thinking_mode != 'default' else "/ai/api-case-generation"),
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json; charset=utf-8"},
             method="POST",
@@ -328,6 +331,7 @@ class AiCaseService:
         model_config=None,
         intent="",
         thinking_mode="default",
+        generation_contract=None,
     ):
         access.require_permission(actor_id, "api.edit")
         identifiers = self._endpoint_ids(endpoint_ids)
@@ -335,6 +339,8 @@ class AiCaseService:
         intent_text = self._text(intent, "intent", 10_000, allow_empty=True)
         provider_id, model = self._model_config(model_config)
         thinking_mode = self._thinking_mode(thinking_mode)
+        if (thinking_mode == "default" and generation_contract is not None) or (thinking_mode != "default" and generation_contract != THINKING_CONTRACT):
+            raise AiJobInputError("explicit thinking mode requires the versioned contract")
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)
             endpoints = repository.get_endpoints(identifiers)
@@ -373,7 +379,7 @@ class AiCaseService:
                 intent=intent_text,
                 actor_id=actor,
             )
-            job.summary = {**job.summary, "thinking_mode": thinking_mode}
+            job.summary = {**job.summary, "thinking_mode": thinking_mode, **({"generation_contract": generation_contract} if generation_contract else {})}
             for sequence, offset in enumerate(range(0, len(identifiers), self.batch_size), 1):
                 repository.create_batch(
                     job_id=job.id,
@@ -391,7 +397,7 @@ class AiCaseService:
             raise AiJobInputError("invalid AI thinking mode")
         return value
 
-    def process(self, job_id):
+    def process(self, job_id, *, generation_contract=None):
         lock_session = self.session_factory()
         lock_key = self._advisory_lock_key(job_id)
         acquired = False
@@ -405,22 +411,29 @@ class AiCaseService:
                 if job is None:
                     raise AiJobNotFoundError("AI case generation job was not found")
                 return self._job_view(repository, job)
-            return self._process_with_lock(job_id)
+            return self._process_with_lock(job_id, generation_contract=generation_contract)
         finally:
             if acquired:
                 lock_session.scalar(select(func.pg_advisory_unlock(lock_key)))
             lock_session.close()
 
-    def _process_with_lock(self, job_id):
+    def _process_with_lock(self, job_id, *, generation_contract=None):
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)
             job = repository.get_job_for_update(job_id)
             if job is None:
                 raise AiJobNotFoundError("AI case generation job was not found")
+            summary = copy.deepcopy(job.summary or {})
+            stored_contract = summary.get("generation_contract")
+            if stored_contract != generation_contract or (summary.get("thinking_mode", "default") != "default" and stored_contract != THINKING_CONTRACT):
+                raise AiJobInputError("AI generation worker contract mismatch")
             if job.state in TERMINAL_JOB_STATES:
                 return self._job_view(repository, job)
             access.require_resource(session, job, job.created_by, "api.edit")
-            summary = copy.deepcopy(job.summary)
+            if stored_contract == THINKING_CONTRACT and job.state == "queued" and self._thinking_queue_expired(job):
+                return self._fail_unstarted_thinking_job(repository, job, "compatible_worker_timeout")
+            if stored_contract == THINKING_CONTRACT and job.state == "running":
+                return self._fail_unstarted_thinking_job(repository, job, "generation_uncertain")
             if job.state == "running":
                 for batch in repository.list_batches(job.id):
                     if batch.state == "running":
@@ -454,6 +467,32 @@ class AiCaseService:
                     actor_id,
                 )
         return self._finalize(job_id, actor_id)
+
+    @staticmethod
+    def _thinking_queue_expired(job):
+        created = job.created_at
+        return not isinstance(created, datetime) or created.tzinfo is None or datetime.now(timezone.utc) >= created + timedelta(seconds=THINKING_QUEUE_TIMEOUT_SECONDS)
+
+    def _fail_unstarted_thinking_job(self, repository, job, code):
+        for batch in repository.list_batches(job.id):
+            if batch.state not in TERMINAL_BATCH_STATES:
+                repository.update_batch(batch, state="failed_gateway", actual_model=batch.actual_model,
+                    result=batch.result, error={"code": code}, actor_id=job.created_by)
+        repository.update_job(job, state="failed_gateway", actual_model=job.actual_model,
+            summary=job.summary, actor_id=job.created_by)
+        self._sync_failed_thinking_task(repository, job)
+        return self._job_view(repository, job)
+
+    @staticmethod
+    def _sync_failed_thinking_task(repository, job):
+        tasks = TestTaskRepository(repository.session)
+        task = tasks.get_by_ai_job(job.id, for_update=True)
+        if task is not None:
+            repository.session.refresh(task)
+        if task is not None and task.latest_ai_job_id == job.id and task.state == "designing":
+            task.state = "failed"
+            task.summary = {"ai_state": job.state, "ai": copy.deepcopy(dict(job.summary or {}))}
+            task.updated_by = "worker"
 
     def list_generated_drafts(self, job_id):
         with self.session_factory() as session:
@@ -617,6 +656,8 @@ class AiCaseService:
                 summary=summary,
                 actor_id=actor_id,
             )
+            if (job.summary or {}).get("generation_contract") == THINKING_CONTRACT:
+                self._sync_failed_thinking_task(repository, job)
             return self._job_view(repository, job)
 
     def _process_batch(self, job_id, batch_id, actor_id):
@@ -1722,7 +1763,7 @@ class AiCaseService:
             generated_draft_ids=list(result.get("draft_version_ids", [])),
             validation_errors=tuple(result.get("validation_errors", [])),
             error_code=(batch.error["code"] if batch.state == "failed_gateway" and isinstance(batch.error, dict)
-                        and batch.error.get("code") in {"gateway_timeout", "enqueue_failed", "thinking_route_unsupported", "thinking_mode_unconfirmed"}
+                        and batch.error.get("code") in {"gateway_timeout", "enqueue_failed", "thinking_route_unsupported", "thinking_mode_unconfirmed", "compatible_worker_timeout", "generation_uncertain"}
                         else "gateway_error" if batch.state == "failed_gateway" else ""),
             correlation_id=(result.get("generation_attempt_ids") or [""])[-1],
         )

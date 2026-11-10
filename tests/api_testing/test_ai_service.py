@@ -2029,12 +2029,120 @@ def test_generation_persists_attempt_before_gateway_and_uses_scoped_mode(session
             assert kwargs['thinking_mode'] == 'off'
             raise TimeoutError('synthetic')
     service = _service(session_factory, InspectingGateway())
-    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off')
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off', generation_contract='thinking-v1')
     batch_id = job.batches[0].id
-    result = service.process(job.id)
+    result = service.process(job.id, generation_contract='thinking-v1')
     assert result.state == 'failed_gateway'
     assert result.summary['thinking_mode'] == 'off'
     assert UUID(result.batches[0].correlation_id).version == 4
+
+
+def test_thinking_job_rejects_legacy_worker_without_call(session_factory, ai_context):
+    endpoint = ai_context['endpoints']['favoriteList']
+    gateway = FakeGateway()
+    service = _service(session_factory, gateway)
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off', generation_contract='thinking-v1')
+    with pytest.raises(ValueError):
+        service.process(job.id)
+    assert gateway.calls == []
+
+
+def test_thinking_redelivery_after_started_fails_closed(session_factory, ai_context):
+    endpoint = ai_context['endpoints']['favoriteList']
+    gateway = FakeGateway()
+    service = _service(session_factory, gateway)
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off', generation_contract='thinking-v1')
+    with session_factory.begin() as session:
+        session.get(ApiAiJob, job.id).state = 'running'
+        batch = session.scalar(select(ApiAiJobBatch).where(ApiAiJobBatch.job_id == job.id))
+        batch.state = 'running'
+    result = service.process(job.id, generation_contract='thinking-v1')
+    assert result.state == 'failed_gateway'
+    assert result.batches[0].error_code == 'generation_uncertain'
+    assert gateway.calls == []
+
+
+def test_thinking_expired_queue_does_not_call_when_worker_arrives_late(session_factory, ai_context):
+    from datetime import datetime, timedelta, timezone
+    endpoint = ai_context['endpoints']['favoriteList']
+    gateway = FakeGateway()
+    service = _service(session_factory, gateway)
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off', generation_contract='thinking-v1')
+    with session_factory.begin() as session:
+        session.get(ApiAiJob, job.id).created_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    result = service.process(job.id, generation_contract='thinking-v1')
+    assert result.state == 'failed_gateway'
+    assert result.batches[0].error_code == 'compatible_worker_timeout'
+    assert gateway.calls == []
+
+
+def test_thinking_expired_queue_get_is_read_only_and_late_worker_refuses(session_factory, ai_context):
+    from datetime import datetime, timedelta, timezone
+    from task_server.api_testing.services.test_task_service import TestTaskService
+    endpoint = ai_context['endpoints']['favoriteList']
+    gateway = FakeGateway()
+    service = _service(session_factory, gateway)
+    tasks = TestTaskService(session_factory)
+    task = tasks.create_context('admin', {'project_id': ai_context['project'].id, 'source_revision_id': ai_context['source_revision'].id,
+        'environment_revision_id': ai_context['environment'].revision_id, 'name': 'thinking-expiry',
+        'selected_endpoint_ids': [endpoint.id]}, 'admin')
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off', generation_contract='thinking-v1')
+    tasks.attach_ai_job(task.id, job.id, 'admin')
+    with session_factory.begin() as session:
+        session.get(ApiAiJob, job.id).created_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    assert service.get_job(job.id).state == 'queued'  # GET and prefetch are read-only
+    assert service.get_latest_job(ai_context['project'].id, actor_id='admin').state == 'queued'
+    assert tasks.get(task.id, 'admin').state == 'designing'
+    assert service.process(job.id, generation_contract='thinking-v1').state == 'failed_gateway'
+    assert service.get_job(job.id).batches[0].error_code == 'compatible_worker_timeout'
+    assert tasks.get(task.id, 'admin').state == 'failed'
+    assert gateway.calls == []
+
+
+@pytest.mark.parametrize('failure', ['expiry', 'enqueue'])
+@pytest.mark.parametrize('task_state', ['designing', 'running'])
+def test_thinking_failure_preserves_unrelated_task_execution(session_factory, ai_context, failure, task_state):
+    from datetime import datetime, timedelta, timezone
+    from task_server.api_testing.models.test_task import ApiTestTask
+    from task_server.api_testing.services.test_task_service import TestTaskService
+    endpoint = ai_context['endpoints']['favoriteList']
+    gateway = FakeGateway()
+    service = _service(session_factory, gateway)
+    tasks = TestTaskService(session_factory)
+    task = tasks.create_context('admin', {'project_id': ai_context['project'].id, 'source_revision_id': ai_context['source_revision'].id,
+        'environment_revision_id': ai_context['environment'].revision_id, 'name': 'thinking-failure',
+        'selected_endpoint_ids': [endpoint.id]}, 'admin')
+    job = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off', generation_contract='thinking-v1')
+    tasks.attach_ai_job(task.id, job.id, 'admin')
+    with session_factory.begin() as session:
+        session.get(ApiTestTask, task.id).state = task_state
+        if failure == 'expiry':
+            session.get(ApiAiJob, job.id).created_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    if failure == 'expiry':
+        result = service.process(job.id, generation_contract='thinking-v1')
+    else:
+        result = service.mark_enqueue_failure(job.id, 'admin')
+    assert result.state == 'failed_gateway'
+    assert tasks.get(task.id, 'admin').state == ('failed' if task_state == 'designing' else 'running')
+    assert gateway.calls == []
+
+
+def test_thinking_old_job_failure_does_not_change_new_job_task(session_factory, ai_context):
+    from task_server.api_testing.services.test_task_service import TestTaskService
+    endpoint = ai_context['endpoints']['favoriteList']
+    service = _service(session_factory, FakeGateway())
+    tasks = TestTaskService(session_factory)
+    task = tasks.create_context('admin', {'project_id': ai_context['project'].id, 'source_revision_id': ai_context['source_revision'].id,
+        'environment_revision_id': ai_context['environment'].revision_id, 'name': 'thinking-newer-job',
+        'selected_endpoint_ids': [endpoint.id]}, 'admin')
+    old = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off', generation_contract='thinking-v1')
+    new = service.submit([endpoint.id], ai_context['environment'].revision_id, 'admin', thinking_mode='off', generation_contract='thinking-v1')
+    tasks.attach_ai_job(task.id, old.id, 'admin')
+    tasks.attach_ai_job(task.id, new.id, 'admin')
+    service.mark_enqueue_failure(old.id, 'admin')
+    current = tasks.get(task.id, 'admin')
+    assert current.state == 'designing'
+    assert current.latest_ai_job_id == new.id
 
 
 def test_generation_retry_has_new_attempt_id_and_retains_previous(session_factory, ai_context):

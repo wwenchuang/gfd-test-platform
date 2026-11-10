@@ -398,6 +398,14 @@ def test_ai_worker_refreshes_linked_task_after_generation(monkeypatch):
     assert calls == [("process", "job-1"), ("refresh", "job-1")]
 
 
+def test_thinking_worker_cannot_publish_normal_worker_heartbeat_or_recover_monitoring(monkeypatch):
+    monkeypatch.setenv('API_TESTING_WORKER_ROLE', 'thinking-v1')
+    monkeypatch.setattr(tasks, '_heartbeat_redis', lambda: (_ for _ in ()).throw(AssertionError('normal heartbeat')))
+    monkeypatch.setattr(tasks, '_resume_load_monitoring', lambda: (_ for _ in ()).throw(AssertionError('normal monitoring')))
+    tasks.publish_worker_heartbeat()
+    assert tasks.generate_api_cases_thinking_v1.reject_on_worker_lost is True
+
+
 def test_monitoring_worker_schedules_followup_and_releases_owned_lock(monkeypatch):
     fake_redis = Mock()
     fake_redis.set.return_value = True

@@ -557,3 +557,19 @@ name, list position or the recording's old number is never an identity substitut
 Screens without those identifiers need a separately verified identity/status
 source before this workflow can be accepted on physical hardware. Do not claim
 real printing acceptance from simulated state-machine checks or generated YAML.
+
+# API 显式思考模式专用 worker
+
+`midscene-api-thinking-worker.service` 只消费 `api-testing-thinking-v1` 队列，与原
+`midscene-api-worker` 并行运行；它不会发布普通 worker 的健康心跳，也不会恢复普通队列的监控。
+部署时先确认网页、主服务、专用 worker 和 AI Gateway 均包含同一版本的 thinking-v1
+协议，再依据本机的标准发布流程安装并启用该 unit；现有安装脚本不会自动启用它。
+主服务和 Gateway 版本均须完成健康检查，不能只安装 worker 就声称端到端可用。
+新服务使用独立 Celery 节点名；原 worker 继续仅订阅 `api-testing` 队列。
+
+读取任务详情保持只读，未被消费的任务会保持排队状态，需要检查专用 worker 和队列；
+worker 若收到超过 300 秒的任务会拒绝调用模型并标记为兼容 worker 超时。
+broker 可能丢弃已过期消息，此时任务不会自动终结。
+已开始的任务若被重新投递，将标记结果不确定并阻止重复调用。
+若 broker 或 worker 永久故障导致没有重投，运行中任务仍可能停留在运行状态，需排障，
+不得把该机制当作所有故障均自动恢复或严格只收费一次的保证。

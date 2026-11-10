@@ -89,6 +89,18 @@ def test_generation_client_sends_scoped_thinking_and_random_correlation(monkeypa
     assert captured['correlationId'] == '1db47cfa-0d88-48e4-b2cc-35500085dd16'
 
 
+def test_explicit_mode_uses_versioned_gateway_path_before_any_provider_call(monkeypatch):
+    observed = []
+    def old_gateway(request, timeout):
+        observed.append(request.full_url)
+        raise http_error(b'not found', 404)
+    monkeypatch.setattr('urllib.request.urlopen', old_gateway)
+    with pytest.raises(AiGatewayError):
+        AiGatewayClient('http://127.0.0.1:8090').chat(messages=[{'role':'user','content':'x'}],
+            provider_id='', model='', timeout_seconds=20, thinking_mode='off')
+    assert observed == ['http://127.0.0.1:8090/ai/api-case-generation/thinking-v1']
+
+
 @pytest.mark.parametrize('mode', ['off', 'on', 'default'])
 def test_generation_thinking_mode_allowed(mode):
     assert AiCaseService._thinking_mode(mode) == mode

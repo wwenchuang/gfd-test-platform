@@ -60,6 +60,29 @@ describe('AiAssistant', () => {
     expect(wrapper.find('[data-testid="diagnose-validation-batch-1"]').exists()).toBe(false)
   })
 
+  it.each([0, 1])('explains an imprecise business-code assertion at index %s without calling AI', (index) => {
+    const original = `deterministic case validation failed: business_assertion_imprecise:assertions[${index}].operator`
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job, state: 'partial', batches: [{ ...job.batches[0], state: 'partial', validation_errors: [{
+        code: 'candidate_validation_error', message: original,
+        diagnosis: { model: 'qwen-plus', analysis: {
+          summary: '旧的错误建议', root_cause: '随便填写 code 值', recommendations: ['使用 200'],
+        } },
+      }] }],
+    } } })
+    expect(wrapper.text()).toContain(`第 ${index + 1} 条断言`)
+    expect(wrapper.text()).toContain('业务码')
+    expect(wrapper.text()).toContain('等于')
+    expect(wrapper.text()).toContain('属于')
+    expect(wrapper.text()).toContain('接口合同')
+    expect(wrapper.text()).toContain('未保存')
+    expect(wrapper.text()).toContain('草稿')
+    expect(wrapper.find('[data-testid="validation-original-message"]').text()).toBe(original)
+    expect(wrapper.find('[data-testid="diagnose-validation-batch-1"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('旧的错误建议')
+    expect(wrapper.emitted('diagnose-validation')).toBeUndefined()
+  })
+
   it('defaults to business and parameter cases instead of runtime header cases', () => {
     const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null } })
     const textarea = wrapper.get('textarea').element as HTMLTextAreaElement
@@ -207,5 +230,105 @@ describe('AiAssistant', () => {
 
     await wrapper.get('[data-testid="manage-historical-ai-cases"]').trigger('click')
     expect(wrapper.emitted('manage-generated')).toEqual([[]])
+  })
+})
+
+describe('AI generation advanced options', () => {
+  it('keeps default requests unchanged and displays the cost notice', async () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null, scopeKey: 'task-a' } })
+    expect(wrapper.text()).toContain('可能产生费用')
+    expect(wrapper.get('details[data-testid="ai-advanced"]').attributes('open')).toBeUndefined()
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.emitted('generate')?.[0]).toHaveLength(1)
+  })
+
+  it('transmits only explicit no-thinking selection and resets on scope changes without losing intent', async () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null, scopeKey: 'task-a' } })
+    await wrapper.get('textarea').setValue('用户的测试意图')
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.emitted('generate')?.[0]).toEqual(['用户的测试意图', 'off'])
+    await wrapper.setProps({ scopeKey: 'task-b' })
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('用户的测试意图')
+    expect((wrapper.get('[data-testid="ai-thinking-mode"]').element as HTMLSelectElement).value).toBe('default')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.emitted('generate')?.[1]).toEqual(['用户的测试意图'])
+  })
+
+  it('uses the selected mode only for an explicit retry', async () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: { ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway' }] } } })
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    const retry = wrapper.findAll('button').find(button => button.text().includes('重新生成当前范围'))!
+    await retry.trigger('click')
+    expect(wrapper.emitted('retry')?.[0]?.[1]).toBe('off')
+    wrapper.unmount()
+  })
+
+  it('does not carry advanced mode to a different signed-in user', async () => {
+    sessionStorage.setItem('sessionToken', 'account-a')
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null, scopeKey: 'same-task' } })
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    sessionStorage.setItem('sessionToken', 'account-b')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.emitted('generate')).toBeUndefined()
+    expect(wrapper.text()).toContain('登录状态已变化')
+    sessionStorage.removeItem('sessionToken')
+    wrapper.unmount()
+  })
+
+  it('explains unsupported routes and unconfirmed modes without promising no charge', () => {
+    for (const [code, expected] of [['thinking_route_unsupported','不支持关闭思考'], ['thinking_mode_unconfirmed','无法确认']]) {
+      const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+        ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway', error_code: code }],
+      } } })
+      expect(wrapper.text()).toContain(expected)
+      if (code === 'thinking_route_unsupported') expect(wrapper.text()).not.toContain('模型调用失败')
+      wrapper.unmount()
+    }
+  })
+})
+
+describe('version-protected generation diagnostics', () => {
+  it('explains compatible worker timeout without calling it a model failure', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway', error_code: 'compatible_worker_timeout' }],
+    } } })
+    expect(wrapper.text()).toContain('等待兼容执行器超时')
+    expect(wrapper.text()).toContain('未发起模型调用')
+    expect(wrapper.text()).not.toContain('模型调用失败')
+  })
+  it('warns that an interrupted generation result is uncertain and may have cost money', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+      ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway', error_code: 'generation_uncertain' }],
+    } } })
+    expect(wrapper.text()).toContain('结果不确定')
+    expect(wrapper.text()).toContain('可能产生费用')
+    expect(wrapper.text()).toContain('先核对')
+    expect(wrapper.text()).not.toContain('本次模型调用没有生成新草稿')
+  })
+  it('does not describe fallback for explicit no-thinking mode', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null } })
+    expect(wrapper.text()).toContain('不使用备用模型')
+    expect(wrapper.text()).not.toContain('兼容的备用渠道')
+  })
+})
+
+describe('truthful AI queue progress', () => {
+  it('shows queued as waiting for a worker, not model generation', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, polling: true, job: { ...job, state: 'queued', batches: [] } } })
+    expect(wrapper.text()).toContain('尚未确认执行器接收')
+    expect(wrapper.text()).toContain('可能持续排队')
+    expect(wrapper.text()).not.toContain('AI 正在生成')
+    expect(wrapper.text()).not.toContain('生成会在后台继续')
+  })
+  it('does not label an unknown task status as generating', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, polling: true, job: null } })
+    expect(wrapper.text()).toContain('正在查询任务状态')
+    expect(wrapper.text()).not.toContain('AI 正在生成')
+  })
+  it('disables another generation while a pending job can be resumed', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, canResume: true, job: { ...job, state: 'queued', batches: [] } } })
+    expect(wrapper.get('[data-testid="generate-ai"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('继续查看')
   })
 })
