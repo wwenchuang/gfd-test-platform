@@ -8,6 +8,7 @@ const staticPaths = new Set([
   '/js/ui-simple-entry.5544fabaad139990.js', '/js/ui-test-home.c7eaa641cdc4556b.js',
   '/js/ui-simple-entry.c102fcaa6d0c5610.js', '/js/ui-simple-entry.6f02212d46c421f4.js',
   '/js/ui-simple-entry.bf1f935375e4b048.js',
+  '/js/ui-simple-entry.4066b05157b7ed35.js',
   '/css/ui-case-draft.98c46b5734c85379.css',
   ...['operation-history','app','round5','ui-simple','platform-workbench','ui-workbench','ui-case-draft'].map(name=>`/css/${name}.css`),
   ...['utils','error-handler','empty-states','loading-manager','form-steps','state','auth','identity-management','operation-history','navigation','agent-workbench','agent-status','device-recorder','cases','execution','reports','ai-repair','model-config','yaml-editor','pending-actions','ui-execution-replay','ui-batch-view','ui-batch-report','ui-test-home','ui-case-draft','ui-simple-entry','app'].map(name=>`/js/${name}.js`),

@@ -12,6 +12,7 @@ let uiSimplePictureElementSequence=0;
 const uiSimplePictureRequests=new Set();
 const uiSimpleDownloads=new Set();
 let uiCatalogCleanup=null;
+let uiRequirementCleanup=null;
 function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].includes(key);}
 function isUiSimpleAvailable(key){return key==='ui_reports'?uiSimpleEvidenceAvailable:uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
@@ -21,6 +22,7 @@ function confirmUiCaseDraftLeave(){
 }
 function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
   uiCatalogCleanup?.();uiCatalogCleanup=null;
+  uiRequirementCleanup?.();uiRequirementCleanup=null;
   uiCaseCreationEpoch++;uiCaseDraftHandle?.dispose();uiCaseDraftHandle=null;
   if(discardReportIntent)clearUiSimpleReportIntent();
   for(const progress of document.querySelectorAll('[data-week2-progress]'))progress.textContent='本人分析结果待核验。';
@@ -174,6 +176,7 @@ function attachTaskWorkbench(page){
   if(hasPermission('api.view'))attachPracticeAiResults(page,current);
   if(hasPermission('ui.view'))attachCatalogWebCheck(page,current);
   if(!hasPermission('platform.configure')||(currentAccessProfile?.is_superuser!==true&&currentAccessProfile?.scope?.ui_apps!=='*'))return;
+  attachRequirementDesign(page,current);
   attachUiFirstWeekGuide(page);
   const previousEnvironment=page.querySelector('[data-ui-week-one]');
   const environment=document.createElement('details');environment.dataset.uiWeekOne='';environment.className='ui-case-source-picker ui-practice-panel';environment.innerHTML='<summary>环境与模型检查</summary><p>检查服务与模型的已有结果；真实模型调用可能产生费用。</p>';
@@ -471,6 +474,256 @@ function attachCatalogWebCheck(page,current){
   panel.addEventListener('toggle',async()=>{if(!panel.open||loaded||busy||!valid())return;setBusy(true);try{await load();}catch(error){if(valid())notice.textContent=errorText(error);}finally{if(valid())setBusy(false);}});
   panel.querySelector('[data-catalog-refresh]').onclick=async()=>{if(!valid()||busy)return;setBusy(true);try{await load();}catch(error){if(valid()){clear();notice.textContent=errorText(error);}}finally{if(valid())setBusy(false);}};
   for(const button of panel.querySelectorAll('[data-catalog-scenario]'))button.onclick=async()=>{const scenario=button.dataset.catalogScenario;if(!valid()||busy||!Object.hasOwn(labels,scenario))return;setBusy(true);notice.textContent='服务器正在只读检查页面，请勿重复点击。';let complete=false;try{const data=await request('POST',65000,null,scenario);if(!valid())return;if(data?.ok!==true||!data.result||data.result.scenario!==scenario)throw Error('invalid result');render([data.result]);complete=true;if(data.result.id)await load(data.result);else notice.textContent='检查未生成保存记录，请查看阻塞原因。';}catch(error){if(valid()){if(error?.status===401||error?.status===403){clear();notice.textContent=errorText(error);}else notice.textContent=complete?'本次结果已返回，但历史刷新失败，请稍后刷新。':errorText(error);}}finally{if(valid())setBusy(false);}};
+}
+
+function attachRequirementDesign(page,current){
+  const path='/api/platform/requirement-design';
+  const authorized=()=>hasPermission('ui.view')&&hasPermission('platform.configure')&&
+    (currentAccessProfile?.is_superuser===true||currentAccessProfile?.scope?.ui_apps==='*');
+  if(!authorized())return;
+  const profile=()=>JSON.stringify([sessionToken(),currentAccessProfile]);
+  const owner=profile(),panel=document.createElement('details');
+  panel.className='ui-case-source-picker ui-practice-panel ui-requirement-design';
+  panel.dataset.requirementDesign='';
+  panel.innerHTML=`<summary>需求生成测试设计</summary>
+    <div class="ui-design-actions"><label>需求材料 <select data-design-select disabled></select></label>
+      <button type="button" data-design-refresh>刷新</button></div>
+    <div data-design-source></div>
+    <button type="button" data-design-generate disabled>生成测试设计</button>
+    <p role="status" aria-live="polite" data-design-notice></p>
+    <section data-design-runs aria-label="生成记录"></section>
+    <details data-design-custom><summary>使用自己的需求材料</summary>
+      <form><label>需求标题<input name="title" maxlength="160" required></label>
+        <label>应用<input name="app" maxlength="128" required></label><label>版本<input name="version" maxlength="100" required></label>
+        <label>PRD 条款（每行一条，共 1–20 条）<textarea name="clauses" rows="5" required></textarea></label>
+        <label>原型 PNG（单张，最大 2 MiB，最长边 4096 像素，最多 800 万像素）<input type="file" name="prototype" accept="image/png" required></label>
+        <button type="submit">保存并使用材料</button><p>材料仅当前账号可见。</p>
+      </form></details>`;
+  page.append(panel);
+  const q=selector=>panel.querySelector(selector),sourceBox=q('[data-design-source]'),runsBox=q('[data-design-runs]');
+  const select=q('[data-design-select]'),refresh=q('[data-design-refresh]'),generate=q('[data-design-generate]');
+  const notice=q('[data-design-notice]'),form=q('form'),custom=q('[data-design-custom]');
+  const requests=new Set(),previewRequests=new Set(),previewUrls=new Set();
+  let selected='',source=null,busy=false,running=false,poll,serial=0,opened=false,lastRuns='';
+  const hash=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+  function interrupt(){
+    serial++;clearTimeout(poll);
+    for(const controller of requests)controller.abort();
+    requests.clear();
+  }
+  function clearSource(){
+    for(const controller of previewRequests)controller.abort();
+    previewRequests.clear();lastRuns='';
+    for(const url of previewUrls)URL.revokeObjectURL(url);
+    previewUrls.clear();sourceBox.replaceChildren();runsBox.replaceChildren();source=null;running=false;
+  }
+  function dispose(){
+    interrupt();clearSource();panel.remove();
+  }
+  uiRequirementCleanup=dispose;
+  function live(ticket){
+    if(!panel.isConnected)return false;
+    if(!current()||!authorized()||owner!==profile()){dispose();return false;}
+    return panel.open&&ticket===serial;
+  }
+  function controls(){
+    select.disabled=busy||!select.options.length;refresh.disabled=busy;
+    generate.disabled=busy||running||!source;
+    form.querySelector('button').disabled=busy;
+  }
+  function start(){
+    interrupt();busy=true;controls();return serial;
+  }
+  async function request(url,body,asImage=false){
+    const activeRequests=asImage?previewRequests:requests;
+    const controller=new AbortController();activeRequests.add(controller);
+    const timeout=setTimeout(()=>controller.abort(),20000);
+    try{
+      const options={headers:authHeaders(body?{'Content-Type':'application/json'}:{}),cache:'no-store',signal:controller.signal,redirect:'error'};
+      if(body){options.method='POST';options.body=JSON.stringify(body);}
+      const response=await nativeFetch(url,options);
+      if(!response.ok)throw Object.assign(Error('request failed'),{status:response.status});
+      if(asImage){
+        if(response.headers.get('content-type')?.split(';')[0].trim()!=='image/png')throw Error('invalid preview');
+        return await response.blob();
+      }
+      const data=await response.json();if(data?.ok!==true)throw Error('invalid response');
+      return data;
+    }finally{clearTimeout(timeout);activeRequests.delete(controller);}
+  }
+  function failure(error,message){
+    if(error.status===401||error.status===403){
+      interrupt();clearSource();select.replaceChildren();custom.hidden=true;form.reset();busy=false;controls();
+      notice.textContent='登录状态或权限已变化，请刷新后查看。';
+    }else notice.textContent=message;
+  }
+  function write(parent,tag,text){
+    const element=document.createElement(tag);element.textContent=text;parent.append(element);return element;
+  }
+  function details(parent,title){
+    const element=document.createElement('details');write(element,'summary',title);parent.append(element);return element;
+  }
+  function renderSource(data){
+    clearSource();source=data;
+    write(sourceBox,'h3',data.title);
+    write(sourceBox,'p',[data.app,data.version].filter(Boolean).join(' · '));
+    const refs=details(sourceBox,'查看 PRD 条款和原型');
+    if(data.prd_file_sha256)write(refs,'p',(data.source_type==='excerpt'?'条款文本':'PRD 文件')+' SHA256 '+data.prd_file_sha256);
+    const clauses=document.createElement('ul');refs.append(clauses);
+    for(const clause of data.clauses)write(clauses,'li',clause.id+' · '+clause.text);
+    for(const proto of data.prototypes){
+      const group=document.createElement('div');refs.append(group);
+      write(group,'p',proto.id+' · '+proto.caption);
+      write(group,'small','PNG SHA256 '+proto.sha256);
+      const button=write(group,'button','查看原型');button.type='button';button.dataset.designPreview='';
+      button.onclick=async()=>{
+        if(!live(serial))return;
+        button.disabled=true;
+        try{
+          const params=new URLSearchParams({source_id:data.id,id:proto.id});
+          const blob=await request(path+'/prototype?'+params,null,true);
+          if(!live(serial)||!group.isConnected)return;
+          const url=URL.createObjectURL(blob);previewUrls.add(url);
+          const img=document.createElement('img');img.alt=proto.caption;img.src=url;group.append(img);button.hidden=true;
+        }catch(error){if(live(serial)&&group.isConnected)failure(error,'原型读取失败，请重试。');}
+        finally{if(button.isConnected)button.disabled=false;}
+      };
+    }
+  }
+  function renderRuns(runs){
+    const snapshot=JSON.stringify(runs);
+    if(snapshot===lastRuns)return;
+    lastRuns=snapshot;runsBox.replaceChildren();
+    if(!runs.length){write(runsBox,'p','此需求还没有生成记录。');return;}
+    for(const [index,run] of runs.entries()){
+      const state=({completed:run.result?.checks?.partial?'草稿不完整 · 待人工复核':'已生成 · 待人工复核',running:'生成中',failed:'生成失败'})[run.status]||'状态待核验';
+      const row=details(runsBox,state+' · '+uiPracticeTime(run.created*1000));
+      row.open=index===0;
+      write(row,'p','生成编号 '+run.id);
+      if(run.error)write(row,'p','失败原因 '+run.error);
+      if(run.finished)write(row,'p','结束时间 '+uiPracticeTime(run.finished*1000));
+      const result=run.result;
+      if(result){
+        const points=details(row,'测试点（'+result.points.length+'）');
+        for(const point of result.points){
+          write(points,'h4',point.id+' · '+point.title);write(points,'p','预期　'+point.expected);
+          write(points,'p','依据　'+point.refs.join('、'));
+        }
+        const cases=details(row,'测试用例（'+result.cases.length+'）');
+        for(const item of result.cases){
+          write(cases,'h4',item.id+' · '+item.title);write(cases,'p','关联测试点　'+item.point_ids.join('、'));
+          write(cases,'p','前置条件　'+item.precondition);
+          const steps=document.createElement('ol');cases.append(steps);
+          for(const step of item.steps)write(steps,'li',step);
+          write(cases,'p','预期　'+item.expected);
+        }
+        const review=details(row,'人工复核与待确认问题');
+        write(review,'p','测试设计尚未经过人工复核，未执行业务用例。');
+        for(const question of result.questions||[])write(review,'p',question);
+        const checks=result.checks||run.checks;
+        if(checks){
+          write(review,'p','未被引用的材料　'+(checks.unreferenced_source_ids?.join('、')||'无'));
+          write(review,'p','未关联用例的测试点　'+(checks.uncovered_point_ids?.join('、')||'无'));
+        }
+        const metadata=details(row,'模型与生成证据');
+        const evidence=result.evidence||{};
+        write(metadata,'p','模型　'+(evidence.model||'未返回')+' · 请求模型　'+(evidence.requested_model||'未记录'));
+        write(metadata,'p','请求编号　'+(evidence.request_id||'未返回'));
+        if(Number.isFinite(evidence.elapsed_ms))write(metadata,'p','耗时　'+(evidence.elapsed_ms/1000).toFixed(1)+' 秒');
+        if(Number.isInteger(evidence.usage?.total_tokens))write(metadata,'p','Token 总数　'+evidence.usage.total_tokens);
+        write(details(metadata,'查看完整模型记录'),'pre',JSON.stringify(evidence,null,2));
+      }
+      const button=write(row,'button','下载证据 JSON');button.type='button';button.dataset.designExport='';
+      const material=source;
+      button.onclick=()=>{
+        if(!live(serial)||!row.isConnected||material!==source)return;
+        const json=JSON.stringify({source:material,run},null,2)+'\n';
+        const url=URL.createObjectURL(new Blob([json],{type:'application/json;charset=utf-8'}));
+        const link=document.createElement('a');link.href=url;link.download='需求测试设计-'+run.id+'.json';
+        document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      };
+    }
+  }
+  async function load(id,keepSource=false){
+    if(!live(serial))return;
+    const ticket=start();selected=id;if(!keepSource)clearSource();
+    notice.textContent='正在读取需求和生成记录…';
+    try{
+      const data=await request(path+(id?'?source_id='+encodeURIComponent(id):''));
+      if(!live(ticket))return;
+      if(!id&&data.source===null&&data.sources?.length===0&&data.runs?.length===0){
+        clearSource();select.replaceChildren();custom.hidden=false;notice.textContent='尚无需求材料，可展开下方表单添加。';return;
+      }
+      if(!hash(data.source?.id)||(id&&data.source.id!==id)||!Array.isArray(data.source.clauses)||
+        !Array.isArray(data.source.prototypes)||!Array.isArray(data.runs))throw Error('invalid source');
+      selected=data.source.id;
+      const options=data.sources||[];
+      select.replaceChildren();
+      for(const entry of [data.source,...options]){
+        if(!hash(entry.id)||Array.from(select.options).some(option=>option.value===entry.id))continue;
+        const option=write(select,'option',[entry.title,entry.version].filter(Boolean).join(' · '));option.value=entry.id;
+      }
+      select.value=selected;
+      if(!source||source.id!==selected)renderSource(data.source);
+      renderRuns(data.runs);running=data.runs.some(run=>run.status==='running');custom.hidden=false;
+      notice.textContent=running?'正在生成，页面会自动更新。':'';
+      if(running)poll=setTimeout(()=>{if(live(ticket))void load(selected,true);},2500);
+    }catch(error){
+      if(live(ticket)){clearSource();select.replaceChildren();failure(error,'需求或生成记录读取失败，请刷新重试。');}
+    }finally{if(live(ticket)){busy=false;controls();}}
+  }
+  panel.addEventListener('toggle',event=>{
+    if(event.target!==panel||opened===panel.open)return;
+    opened=panel.open;
+    if(opened){void load(selected);return;}
+    interrupt();clearSource();select.replaceChildren();notice.textContent='';busy=false;controls();
+  });
+  select.onchange=()=>{if(hash(select.value))void load(select.value);};
+  refresh.onclick=()=>void load(selected);
+  generate.onclick=async()=>{
+    if(!live(serial)||busy||running||!source)return;
+    const id=source.id,ticket=start();
+    const key='requirement-design-pending:'+uiSimpleIdentity()+':'+id;
+    let requestId=sessionStorage.getItem(key);
+    if(!/^[a-f0-9]{32}$/.test(requestId||'')){
+      requestId=Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');
+      sessionStorage.setItem(key,requestId);
+    }
+    notice.textContent='正在提交生成请求…';
+    try{
+      const data=await request(path,{source_id:id,request_id:requestId});if(!live(ticket))return;
+      if(!data.run?.id)throw Error('missing run');
+      sessionStorage.removeItem(key);await load(id,true);
+    }catch(error){
+      if(live(ticket))failure(error,error.status===429?'生成服务正忙，请稍后重试。':'提交结果待确认。再次点击生成将核对同一次请求。');
+    }
+    finally{if(live(ticket)){busy=false;controls();}}
+  };
+  form.onsubmit=async event=>{
+    event.preventDefault();if(!live(serial)||busy)return;
+    const fields=form.elements,file=fields.prototype.files[0];
+    const clauses=fields.clauses.value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+    const body={title:fields.title.value.trim(),app:fields.app.value.trim(),version:fields.version.value.trim(),clauses};
+    if(!body.title||!body.app||!body.version||!clauses.length||clauses.length>20){
+      notice.textContent='请填写标题、应用、版本和 1–20 条 PRD 条款。';return;
+    }
+    if(clauses.some(line=>Array.from(line).length>900)){notice.textContent='每条 PRD 条款最多 900 字。';return;}
+    if(file?.type!=='image/png'||!file.size||file.size>2*1024*1024){
+      notice.textContent='请选择一张不超过 2 MiB 的 PNG 原型。';return;
+    }
+    const ticket=start();notice.textContent='正在保存需求材料…';
+    try{
+      const dataUrl=await new Promise((resolve,reject)=>{
+        const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error);reader.readAsDataURL(file);
+      });
+      if(!live(ticket))return;
+      body.image_base64=dataUrl.split(',')[1];
+      const data=await request(path+'/source',body);if(!live(ticket))return;
+      if(!hash(data.source_id))throw Error('missing source id');
+      form.reset();custom.open=false;await load(data.source_id);
+    }catch(error){if(live(ticket))failure(error,'保存失败。请检查材料和 PNG 后重试。');}
+    finally{if(live(ticket)){busy=false;controls();if(running)poll=setTimeout(()=>void load(selected,true),2500);}}
+  };
 }
 
 function uiPracticeTime(value){
