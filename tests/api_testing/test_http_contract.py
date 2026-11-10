@@ -2134,18 +2134,40 @@ def test_sse_disconnect_stops_stream(monkeypatch):
 def test_ai_job_scoped_thinking_mode_is_persisted_and_rejects_invalid(http_client, owned_records, monkeypatch):
     queued = []
     monkeypatch.setattr(http, '_enqueue_ai_job', queued.append)
+    thinking_queued = []
+    monkeypatch.setattr(http, '_enqueue_thinking_ai_job', thinking_queued.append)
     payload = {
         'endpoint_ids': [owned_records['endpoint'].id],
         'environment_revision_id': owned_records['environment_revision'].id,
         'thinking_mode': 'off',
     }
-    accepted = http_client.post('/api/api-testing/v1/ai-jobs', payload, _auth())
+    legacy = http_client.post('/api/api-testing/v1/ai-jobs', payload, _auth())
+    assert legacy.status == 422
+    assert queued == []
+    accepted = http_client.post('/api/api-testing/v1/ai-jobs/thinking-v1', payload, _auth())
     assert accepted.status == 200
     assert accepted.body['data']['job']['summary']['thinking_mode'] == 'off'
-    assert len(queued) == 1
-    rejected = http_client.post('/api/api-testing/v1/ai-jobs', {**payload, 'thinking_mode': True}, _auth())
+    assert len(thinking_queued) == 1
+    rejected = http_client.post('/api/api-testing/v1/ai-jobs/thinking-v1', {**payload, 'thinking_mode': True}, _auth())
     assert rejected.status == 422
-    assert len(queued) == 1
-    denied = http_client.post('/api/api-testing/v1/ai-jobs', payload, _auth('owner-b'))
+    assert len(thinking_queued) == 1
+    denied = http_client.post('/api/api-testing/v1/ai-jobs/thinking-v1', payload, _auth('owner-b'))
     assert denied.status in (403, 404)
-    assert len(queued) == 1
+    assert len(thinking_queued) == 1
+
+
+def test_thinking_enqueue_ambiguous_after_worker_start_returns_existing_job(http_client, api_context, owned_records, monkeypatch):
+    def accepted_then_error(job_id):
+        with api_context['factory'].begin() as session:
+            session.get(ApiAiJob, job_id).state = 'running'
+        raise RuntimeError('synthetic broker error after accept')
+    monkeypatch.setattr(http, '_enqueue_thinking_ai_job', accepted_then_error)
+    response = http_client.post('/api/api-testing/v1/ai-jobs/thinking-v1', {
+        'endpoint_ids': [owned_records['endpoint'].id],
+        'environment_revision_id': owned_records['environment_revision'].id,
+        'thinking_mode': 'off',
+    }, _auth())
+    assert response.status == 200
+    assert response.body['data']['job']['state'] == 'running'
+    assert response.body['data']['job']['id']
+    assert response.body['data']['job']['batches'][0]['error_code'] == ''

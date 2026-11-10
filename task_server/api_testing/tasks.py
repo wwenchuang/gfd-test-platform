@@ -2,6 +2,7 @@
 
 import logging
 import copy
+import os
 from datetime import datetime
 import time
 import uuid
@@ -45,6 +46,8 @@ def _heartbeat_redis():
 @heartbeat_sent.connect
 @worker_ready.connect
 def publish_worker_heartbeat(sender=None, **kwargs):
+    if os.getenv("API_TESTING_WORKER_ROLE") == "thinking-v1":
+        return
     try:
         _heartbeat_redis().set(
             settings.worker_heartbeat_key,
@@ -228,6 +231,14 @@ def generate_api_cases(self, job_id):
     factory = _session_factory()
     result = AiCaseService(factory).process(job_id)
     TestTaskService(factory).refresh_for_ai_job(job_id)
+    return result.state
+
+
+@celery_app.task(name="api_testing.generate_cases_thinking_v1", bind=True, acks_late=True, reject_on_worker_lost=True)
+def generate_api_cases_thinking_v1(self, job_id):
+    factory = _session_factory()
+    result = AiCaseService(factory).process(job_id, generation_contract="thinking-v1")
+    TestTaskService(factory).refresh_for_ai_job(job_id, expected_designing_only=True)
     return result.state
 
 

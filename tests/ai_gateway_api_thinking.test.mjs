@@ -14,10 +14,10 @@ function completion(body={},route=official){
  return vm.runInContext('completionOptionsForRoute(route,"test",body)',c);
 }
 function runtime(routes=[official],failure=false,timeoutMs=5000){
- const logs=[];let calls=0;
+ const logs=[];let calls=0, routeOptions;
  class Timeout extends Error{}
  const c=vm.createContext({URL,console,buildUserMessage:()=>'',imagePartsFromBody:()=>[],requestedCompletionTokens:()=>1000,OpenAI:{APIConnectionTimeoutError:Timeout},uuidv4:()=>correlation,
-   validateVideoStage:()=>null, routeCandidatesForCall:async()=>{if(routes instanceof Error)throw routes;return routes;},requestedCallTimeoutMs:()=>timeoutMs,
+   validateVideoStage:()=>null, routeCandidatesForCall:async(_action,_body,options)=>{routeOptions=options;if(routes instanceof Error)throw routes;return routes;},requestedCallTimeoutMs:()=>timeoutMs,
    AI_CALL_FALLBACK_RESERVE_MS:15000,MOCK_ENABLED:false,
    completionOptionsForRoute:()=>({}), clientForRoute:()=>({chat:{completions:{create:async()=>{
     calls++;if(failure==='timeout')throw new Timeout('secret provider timeout');if(failure)throw new Error('secret provider message');
@@ -26,16 +26,16 @@ function runtime(routes=[official],failure=false,timeoutMs=5000){
    sanitizeError:e=>e.message,preview:x=>JSON.stringify(x),isFallbackEligibleAiError:()=>false,appendAiLog:async x=>logs.push(x)});
  vm.runInContext(part('function routeSupportsQwenHybridThinking(', 'async function appendAiLog('),c);
  vm.runInContext(part('async function callAi(', 'function mockAiOutput('),c);
- return {call:(body)=>c.callAi('api_case_generation',body,{promptOverride:'',messages:body.messages}),logs,get calls(){return calls;}};
+ return {call:(body)=>c.callAi('api_case_generation',body,{promptOverride:'',messages:body.messages}),logs,get calls(){return calls;},get routeOptions(){return routeOptions;}};
 }
 function handler(){
- let route;let passed;
- const c=vm.createContext({app:{post:(_path,fn)=>route=fn},asyncRoute:fn=>fn,
+ const routes={};let passed;
+ const c=vm.createContext({app:{post:(path,fn)=>routes[path]=fn},asyncRoute:fn=>fn,
   callAi:async (_action,body)=>{passed=body;return {output:'answer',route:{providerId:'p',model:'m',fallbackUsed:true,fallbackReason:'secret failure'}};},
   completionAuditResponse:()=>({})});
  vm.runInContext(part("function isApiCorrelationId(", "// Stage capabilities"),c);
- vm.runInContext(part("app.post('/ai/api-case-generation'", "app.post('/ai/generate-bug'"),c);
- return {invoke:async body=>{let status=200,data;const res={status:n=>(status=n,res),json:x=>(data=x,res)};await route({body},res);return {status,data,passed};}};
+ vm.runInContext(part("async function handleApiCaseGeneration(", "app.post('/ai/generate-bug'"),c);
+ return {invoke:async (body,path='/ai/api-case-generation/thinking-v1')=>{let status=200,data;const res={status:n=>(status=n,res),json:x=>(data=x,res)};passed=undefined;await routes[path]({body},res);return {status,data,passed};}};
 }
 
 test('API explicit thinking is request-scoped and default unchanged',()=>{
@@ -46,8 +46,13 @@ test('API explicit thinking is request-scoped and default unchanged',()=>{
 });
 test('unsupported and spoofed routes are refused before any provider call',async()=>{
  for(const route of [ {...official,baseUrl:'https://dashscope.aliyuncs.com.evil.test/v1'}, {...official,baseUrl:'https://dashscope.aliyuncs.com@evil.test/v1'}, {...official,baseUrl:'https://evil@dashscope.aliyuncs.com/v1'}, {...official,baseUrl:'http://dashscope.aliyuncs.com/v1'}, {...official,model:'qwen-plus'} ]){
-  const r=runtime([official,route]);await assert.rejects(r.call({messages:[{role:'user',content:'secret prompt'}],thinkingMode:'off',correlationId:correlation}));assert.equal(r.calls,0);assert.equal(r.logs[0].correlationId,correlation);
+  const r=runtime([route,official]);await assert.rejects(r.call({messages:[{role:'user',content:'secret prompt'}],thinkingMode:'off',correlationId:correlation}));assert.equal(r.calls,0);assert.equal(r.logs[0].correlationId,correlation);
  }
+});
+test('explicit mode does not issue a fallback provider call after failure',async()=>{
+ const r=runtime([official,official],'timeout');
+ await assert.rejects(r.call({messages:[{role:'user',content:'x'}],thinkingMode:'off'}));
+ assert.equal(r.calls,1);assert.equal(r.logs.length,1);assert.equal(r.routeOptions.disableFallback,true);
 });
 test('regional official routes support the explicit mode',()=>{
  for (const host of ['dashscope.aliyuncs.com','dashscope-intl.aliyuncs.com','dashscope-us.aliyuncs.com']) {
@@ -85,6 +90,16 @@ test('API handler validates UUID and mode, passes valid values and suppresses fa
  assert.equal(JSON.stringify(ok.data).includes('secret failure'),false);
 });
 
+test('legacy route refuses explicit mode and versioned route refuses missing mode before provider',async()=>{
+ const h=handler();
+ const old=await h.invoke({messages:[{role:'user',content:'x'}],thinkingMode:'off'},'/ai/api-case-generation');
+ assert.equal(old.status,400);assert.equal(old.passed,undefined);
+ const missing=await h.invoke({messages:[{role:'user',content:'x'}]});
+ assert.equal(missing.status,400);assert.equal(missing.passed,undefined);
+ const legacy=await h.invoke({messages:[{role:'user',content:'x'}]},'/ai/api-case-generation');
+ assert.equal(legacy.status,200);assert.equal(legacy.passed.thinkingMode,undefined);
+});
+
 test('API log omits untrusted model and provider metadata',async()=>{
  const r=runtime([{...official,model:'secret-business-model',providerId:'secret-token',providerName:'secret-name'}]);
  await r.call({messages:[{role:'user',content:'hello'}],correlationId:correlation});
@@ -97,7 +112,7 @@ test('API handler returns safe unsupported-route code without provider details',
  const c=vm.createContext({app:{post:(_path,fn)=>route=fn},asyncRoute:fn=>fn,
   callAi:async()=>{const e=new Error('secret provider details');e.code='thinking_route_unsupported';throw e;},completionAuditResponse:()=>({})});
  vm.runInContext(part('function isApiCorrelationId(', '// Stage capabilities'),c);
- vm.runInContext(part("app.post('/ai/api-case-generation'", "app.post('/ai/generate-bug'"),c);
+ vm.runInContext(part("async function handleApiCaseGeneration(", "app.post('/ai/generate-bug'"),c);
  let status=200,data;const res={status:n=>(status=n,res),json:x=>(data=x,res)};
  await route({body:{messages:[{role:'user',content:'x'}],thinkingMode:'off'}},res);
  assert.equal(status,400);assert.equal(data.error_code,'thinking_route_unsupported');assert.equal(JSON.stringify(data).includes('secret'),false);

@@ -89,7 +89,7 @@ test('Bearer is the sole credential source and reaches only the fixed /me endpoi
 
 const READS = ['/ai/providers', '/ai/model-router'];
 const GENERATION = ['validate-yaml', 'generate-yaml', 'generate-case', 'skill', 'analyze-failure',
-  'optimize-yaml', 'chat', 'api-case-generation', 'generate-bug'].map((name) => `/ai/${name}`);
+  'optimize-yaml', 'chat', 'api-case-generation', 'api-case-generation/thinking-v1', 'generate-bug'].map((name) => `/ai/${name}`);
 const EXECUTION = ['/agent/run', '/agent/runs/fixture/confirm', '/agent/runs/fixture/cancel'];
 
 test('route matrix requires exact permissions and defaults unknown routes to superuser only', async () => {

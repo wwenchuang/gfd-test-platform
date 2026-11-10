@@ -2,7 +2,7 @@ import {isIP} from 'node:net';
 
 const GENERATION_ROUTES = new Set([
   '/ai/validate-yaml', '/ai/generate-yaml', '/ai/generate-case', '/ai/skill',
-  '/ai/analyze-failure', '/ai/optimize-yaml', '/ai/chat', '/ai/api-case-generation',
+  '/ai/analyze-failure', '/ai/optimize-yaml', '/ai/chat', '/ai/api-case-generation', '/ai/api-case-generation/thinking-v1',
   '/ai/generate-bug',
 ]);
 const EXTERNAL_HEADERS = new Set([

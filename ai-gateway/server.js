@@ -1182,7 +1182,9 @@ async function callAi(action, body, options = {}) {
   const prompt = options.promptOverride ?? await readPrompt(action);
   let routes;
   try {
-    routes = await routeCandidatesForCall(action, body, options);
+    const explicitThinking = action === 'api_case_generation' && ['on', 'off'].includes(body?.thinkingMode);
+    routes = await routeCandidatesForCall(action, body, explicitThinking ? {...options, disableFallback: true} : options);
+    if (explicitThinking) routes = routes.slice(0, 1);
     if (action === 'api_case_generation' && ['on', 'off'].includes(body?.thinkingMode) &&
         (!routes.length || routes.some(route => !apiThinkingRouteSupported(route)))) {
       const error = new Error('api_thinking_route_unsupported');
@@ -1841,12 +1843,13 @@ app.post('/ai/chat', asyncRoute(async (req, res) => {
   });
 }));
 
-app.post('/ai/api-case-generation', asyncRoute(async (req, res) => {
+async function handleApiCaseGeneration(req, res, versionedThinking) {
   const {messages, temperature, model, providerId, provider} = req.body || {};
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({error: 'messages required'});
   }
-  if (Object.hasOwn(req.body, 'thinkingMode') && !['on', 'off'].includes(req.body.thinkingMode)) {
+  if ((versionedThinking && !['on', 'off'].includes(req.body.thinkingMode)) ||
+      (!versionedThinking && Object.hasOwn(req.body, 'thinkingMode'))) {
     return res.status(400).json({error: 'invalid thinkingMode'});
   }
   if (Object.hasOwn(req.body, 'correlationId') && !isApiCorrelationId(req.body.correlationId)) {
@@ -1884,7 +1887,10 @@ app.post('/ai/api-case-generation', asyncRoute(async (req, res) => {
     ...(!route.mock && ['on', 'off'].includes(body.thinkingMode) ? {thinkingModeSent: body.thinkingMode} : {}),
     ...completionAuditResponse(route),
   });
-}));
+}
+
+app.post('/ai/api-case-generation', asyncRoute((req, res) => handleApiCaseGeneration(req, res, false)));
+app.post('/ai/api-case-generation/thinking-v1', asyncRoute((req, res) => handleApiCaseGeneration(req, res, true)));
 
 app.post('/ai/generate-bug', asyncRoute(async (req, res) => {
   const body = {

@@ -398,6 +398,18 @@ def test_worker_refreshes_task_when_ai_job_finishes(task_factory, task_records):
     assert refreshed.latest_ai_job_id == task_records["ai_job"].id
 
 
+def test_thinking_worker_refresh_preserves_task_execution_in_progress(task_factory, task_records):
+    service = TaskService(task_factory)
+    task = service.save_context("owner-a", _payload(task_records), "owner-a")
+    service.attach_ai_job(task.id, task_records["ai_job"].id, "owner-a")
+    service.attach_execution(task.id, task_records["execution"].id, "owner-a")
+    before = service.get(task.id, "owner-a")
+    refreshed = service.refresh_for_ai_job(task_records["ai_job"].id, expected_designing_only=True)
+    assert refreshed.state == before.state
+    assert refreshed.latest_execution_id == before.latest_execution_id
+    assert refreshed.summary == before.summary
+
+
 def test_ai_summary_does_not_replace_latest_execution_evidence(task_factory, task_records):
     service = TaskService(task_factory)
     task = service.save_context("owner-a", _payload(task_records), "owner-a")

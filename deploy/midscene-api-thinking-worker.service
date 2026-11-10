@@ -1,0 +1,20 @@
+[Unit]
+Description=Midscene API explicit-thinking generation worker v1
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=midscene
+Group=midscene
+WorkingDirectory=/opt/midscene-task-platform
+Environment=MIDSCENE_ENV_FILE=/opt/midscene.env
+Environment=API_TESTING_WORKER_ROLE=thinking-v1
+ExecStart=/opt/midscene-task-platform/.venv/bin/celery -A task_server.api_testing.tasks:celery_app worker --hostname=api-thinking-v1@%%h --loglevel=INFO --queues=api-testing-thinking-v1 --concurrency=1 --max-tasks-per-child=50 --max-memory-per-child=786432
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

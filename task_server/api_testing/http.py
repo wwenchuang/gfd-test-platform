@@ -912,7 +912,11 @@ def _post(segments, payload, actor, settings, *, session_digest=None):
                 notification
             )
         }
-    if segments == ("ai-jobs",):
+    if segments in (("ai-jobs",), ("ai-jobs", "thinking-v1")):
+        explicit_thinking = segments == ("ai-jobs", "thinking-v1")
+        mode = payload.get("thinking_mode", "default")
+        if (explicit_thinking and mode not in ("on", "off")) or (not explicit_thinking and mode != "default"):
+            raise AiJobInputError("explicit thinking mode requires the versioned route")
         endpoint_ids = _uuid_array(payload.get("endpoint_ids"), "endpoint_ids")
         environment_revision_id = _uuid(payload.get("environment_revision_id"))
         task_id = _optional_uuid(payload.get("task_id"))
@@ -928,13 +932,15 @@ def _post(segments, payload, actor, settings, *, session_digest=None):
                 raise TestTaskScopeError("AI request does not match this task")
         service = AiCaseService(factory)
         job = service.submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", ""),
-                             thinking_mode=payload.get("thinking_mode", "default"))
+                             thinking_mode=mode, generation_contract="thinking-v1" if explicit_thinking else None)
         if task_id:
             task_service.attach_ai_job(task_id, job.id, actor)
         try:
-            _enqueue_ai_job(job.id)
+            (_enqueue_thinking_ai_job if explicit_thinking else _enqueue_ai_job)(job.id)
         except Exception:
-            service.mark_enqueue_failure(job.id, actor)
+            current = service.mark_enqueue_failure(job.id, actor)
+            if explicit_thinking:
+                return {"job": _view(current)}
             raise ApiHttpError(
                 503,
                 "ai_enqueue_unavailable",
@@ -1487,6 +1493,11 @@ def _enqueue_execution(execution_id):
 def _enqueue_ai_job(job_id):
     from .tasks import generate_api_cases
     generate_api_cases.delay(job_id)
+
+
+def _enqueue_thinking_ai_job(job_id):
+    from .tasks import generate_api_cases_thinking_v1
+    generate_api_cases_thinking_v1.apply_async(args=[job_id], queue="api-testing-thinking-v1", expires=300)
 
 
 def _is_execution_events(segments):
