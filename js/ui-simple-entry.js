@@ -335,7 +335,49 @@ function attachCatalogWebCheck(page,current){
     if(!live){serial++;clear();notice.textContent='账号或权限已变化，请重新打开此页面。';}
     return live;
   };
-  const changed=()=>{if(panel.isConnected&&valid()){serial++;clear();loaded=false;notice.textContent='返回页面后，请刷新记录以重新核对查看权限。';}};window.addEventListener('focus',changed);document.addEventListener('visibilitychange',changed);
+  const stability=document.createElement('details');
+  stability.className='ui-practice-details';
+  stability.innerHTML='<summary>Web 回归稳定性</summary><p>同一版本下，10 个核心流程各执行 20 次。每个位置只记录首跑。</p><button type="button" data-stability-refresh>查看最新测量</button> <span aria-live="polite" data-stability-state></span><div data-stability-report></div>';
+  page.append(stability);
+  const summary=stability.querySelector('[data-stability-report]'),state=stability.querySelector('[data-stability-state]');
+  const refresh=stability.querySelector('button');
+  let generation=0;
+  const clearMeasurement=()=>{generation++;summary.replaceChildren();state.textContent='';};
+  refresh.onclick=async()=>{
+    if(!valid())return;
+    clearMeasurement();const ticket=generation;
+    const controller=new AbortController();uiSimpleDownloads.add(controller);
+    const timer=setTimeout(()=>controller.abort(),15000);
+    refresh.disabled=true;state.textContent='正在读取…';
+    try{
+      const response=await nativeFetch('/api/ui-executions/web-check?view=stability',{headers:authHeaders(),signal:controller.signal,redirect:'error'});
+      if(!response.ok)throw Error();
+      const data=await response.json();
+      if(!valid()||generation!==ticket)return;
+      if(data.ok!==true)throw Error();
+      if(!data.report){state.textContent='当前账号暂无稳定性测量。';return;}
+      const r=data.report;
+      if(!Array.isArray(r.rows)||r.rows.length!==r.attempted||r.planned!==200||r.attempted>200)throw Error();
+      const percent=n=>r.attempted?(100*n/r.attempted).toFixed(1)+'%':'—';
+      state.textContent=(r.unrun?'进行中':'已结束')+' · '+r.attempted+' / '+r.planned+' · '+uiPracticeTime(r.updated*1000);
+      const line=document.createElement('p');
+      line.textContent='首跑通过 '+r.passed+'（'+percent(r.passed)+'），失败 '+r.failed+'，阻塞 '+r.blocked+'（'+percent(r.blocked)+'），未执行 '+r.unrun+'。';
+      summary.append(line);
+      const slow=Object.entries(r.median_ms||{}).sort((a,b)=>b[1]-a[1]).slice(0,3);
+      if(slow.length){const timing=document.createElement('p');timing.textContent='中位耗时最长的流程：'+slow.map(([id,ms])=>(labels[id]||id)+' '+(ms/1000).toFixed(2)+' 秒').join('、');summary.append(timing);}
+      const exportButton=document.createElement('button');exportButton.textContent='下载首跑明细 CSV';
+      exportButton.onclick=()=>{
+        if(!valid()||generation!==ticket)return;
+        const keys=['round','scenario','status','reason','duration_ms','run_id'];
+        const csv=[keys,...r.rows.map(row=>keys.map(k=>String(row[k]??'').replace(/[^A-Za-z0-9_-]/g,'')))].map(row=>row.join(',')).join('\r\n');
+        const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+        const a=document.createElement('a');a.href=url;a.download='web-stability.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      };
+      summary.append(exportButton);
+    }catch(_){if(valid()&&generation===ticket)state.textContent='读取失败，请核对登录状态后重试。';}
+    finally{clearTimeout(timer);uiSimpleDownloads.delete(controller);refresh.disabled=false;}
+  };
+  const changed=()=>{if(panel.isConnected){clearMeasurement();}if(panel.isConnected&&valid()){serial++;clear();loaded=false;notice.textContent='返回页面后，请刷新记录以重新核对查看权限。';}};window.addEventListener('focus',changed);document.addEventListener('visibilitychange',changed);
   uiCatalogCleanup=()=>{serial++;clear();window.removeEventListener('focus',changed);document.removeEventListener('visibilitychange',changed);};
   const setBusy=value=>{busy=value;panel.querySelectorAll('button').forEach(button=>{button.disabled=value;});};
   const errorText=error=>error?.status===401?'登录已失效，请重新登录。':error?.status===403?'当前账号没有查看权限。':error?.status===429?'已有检查正在运行，请稍后刷新记录。':'检查未完成，请先刷新结果；如仍无记录，请检查服务和浏览器依赖。';

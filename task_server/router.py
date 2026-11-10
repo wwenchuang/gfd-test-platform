@@ -2863,6 +2863,10 @@ def _get_week5_web_check(handler, qs):
     actor = _week5_web_actor(handler)
     if not actor:
         return
+    if qs == {'view':'stability'}:
+        from task_server.services import web_stability
+        handler._json({'ok':True, 'report':web_stability.latest(*actor)})
+        return
     if qs:
         handler._json({'ok':False, 'error':'不接受额外参数'}, 400)
         return

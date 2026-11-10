@@ -304,7 +304,7 @@ def _save_files(root, run_id, image, trace):
         raise
 
 
-def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, root=None):
+def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, root=None, lease_path=None):
     if scenario not in SCENARIOS:
         raise ValueError('invalid_scenario')
     profile = _profile(owner, username, token)
@@ -314,6 +314,8 @@ def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, ro
     scope = _scope(profile)
     shared_lease_db = _db_path(db_path) if db_path is not None else identity.default_db_path().with_name('week1-smoke.sqlite3')
     db_path, root = _db_path(db_path), _root(root)
+    if lease_path is not None:
+        shared_lease_db = lease_path
     lease = week1_smoke._claim(shared_lease_db)
     try:
         if not _check_quota(db_path, owner, 38 * 1024 * 1024, root):
