@@ -349,11 +349,55 @@ body, #app { background: #10171d; color: #eaf1f5; }
 #app .main-content :is(.inline-error, .field-error, .state-error,
   .task-state-failed, .summary-failed strong, .tone-failed .report-status-chip,
   .case-generation-status.failed) { color: #ff9aaa; }
+
+/* Editor notices inherit the dark workbench palette and keep status meanings. */
+#app .main-content .case-editing-context {
+  border-color: #30434d; background: #202e37; color: #dce9eb;
+}
+#app .main-content .partial-notice,
+#app .main-content .endpoint-development-warning {
+  border-color: #b58b50; background: #352d22; color: #ffd095 !important;
+}
+#app .main-content .endpoint-development-warning strong { color: #ffd095; }
+#app .main-content .validation-counts span {
+  background: #30434d; color: #e1ebef;
+}
+#app .main-content .validation-counts b {
+  background: #59313b; color: #ffc0ca;
+}
+#app .main-content .validation-counts i {
+  background: #493b29; color: #ffd095;
+}
+#app .main-content .case-validation-summary:not(.clean) .validation-state,
+#app .main-content .case-validation-summary:not(.clean) > details > summary {
+  color: #ffc0ca;
+}
+#app .main-content .case-validation-summary:not(.clean) > details { border-color: #8e4b5a; }
+#app .main-content .validation-issues button {
+  border-color: #68404b; background: #30242d; color: #ffc0ca;
+}
+#app .main-content .validation-issues button:hover { background: #493039; }
+#app .main-content .validation-issues button strong { color: #ffc0ca; }
+#app .main-content .validation-issues button.warning strong { color: #ffd095; }
+#app .main-content .validation-issues button small { color: #a3f4dc; }
 #app .main-content :is(.workspace-restore-error, .agent-calibration-error,
   .case-generation-status.failed, .case-validation-summary:not(.clean),
   .report-feishu-state.feishu-failed, .cron-feedback.invalid) {
   border-color: #8e4b5a; background: #36232c; color: #ffc0ca;
 }
+#app .main-content .case-validation-summary:has(.validation-issues button.warning):not(:has(.validation-issues button.error)) {
+  border-color: #8a7046; background: #352d22; color: #ffd095;
+}
+#app .main-content .case-validation-summary:has(.validation-issues button.warning):not(:has(.validation-issues button.error)) :is(.validation-state, details > summary) {
+  color: #ffd095;
+}
+#app .main-content .case-validation-summary:has(.validation-issues button.warning):not(:has(.validation-issues button.error)) details {
+  border-color: #8a7046;
+}
+#app .main-content .case-validation-summary:has(.validation-issues button.warning):not(:has(.validation-issues button.error)) .validation-issues button {
+  border-color: #6d5a3d; background: #30291f; color: #ffd095;
+}
+#app .main-content .case-validation-summary:has(.validation-issues button.warning):not(:has(.validation-issues button.error)) .validation-issues button:hover { background: #493a27; }
 #app .main-content :is(.production-environment-warning, .endpoint-status-badge,
   .endpoint-development-warning, .load-warning,
   .baseline-status-pill, .baseline-one-time-pill,
