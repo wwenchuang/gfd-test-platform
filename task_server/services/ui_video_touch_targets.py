@@ -295,9 +295,14 @@ def dialog_target_review(events,hints,frames,diagnostic):
     return event,frame,left,right
 
 
-def _dialog_review_failure():
+def _dialog_review_failure(reason,dialog_frame=None,probe_frame=None,match_count=None):
     error=ValueError('video_model_invalid')
     error.dialog_review_blocked=True
+    evidence={'reason':reason}
+    if dialog_frame is not None:evidence['dialog_frame']=dialog_frame
+    if probe_frame is not None:evidence['probe_frame']=probe_frame
+    if match_count is not None:evidence['match_count']=match_count
+    error.dialog_guard_evidence=evidence
     return error
 
 
@@ -312,24 +317,24 @@ def guard_ambiguous_dialog_hints(events,hints,frames):
             nearby=[event for event in events if event.get('action')=='aiTap' and event.get('frame_refs') and
                     abs(times[event['frame_refs'][0]]-times[frame])<=350]
             if any(isinstance(event.get('target'),str) and _dialog_and_bare_label(event['target'],target) for event in nearby):
-                raise _dialog_review_failure()
+                raise _dialog_review_failure('nearby_dialog',dialog_frame=frame,match_count=len(nearby))
         if not any(isinstance(event.get('target'),str) and _dialog_and_bare_label(event['target'],target) for event in taps):continue
         if len(taps)!=1 or sum(other.get('frame_id')==frame for other in hints)!=1:
-            raise _dialog_review_failure()
+            raise _dialog_review_failure('ambiguous_dialog',dialog_frame=frame,match_count=len(taps))
         others=[other for other in hints if other is not hint]
         used={id(taps[0])}
         for other in others:
             if other.get('kind')=='unresolved_observation' or other.get('action') in ('navigateBack','aiAssert'):continue
             fid=other.get('frame_id')
-            if fid not in times:raise _dialog_review_failure()
+            if fid not in times:raise _dialog_review_failure('probe_frame_unknown',dialog_frame=frame)
             selected=[event for event in events if event.get('action')=='aiTap' and fid in event.get('frame_refs',[])]
             # Another concrete probe requires its own explicit evidence: even
             # the same label nearby could be a separate rapid second tap.
-            if len(selected)!=1:raise _dialog_review_failure()
-            if id(selected[0]) in used:raise _dialog_review_failure()
+            if len(selected)!=1:raise _dialog_review_failure('other_probe_match_count',dialog_frame=frame,probe_frame=fid,match_count=len(selected))
+            if id(selected[0]) in used:raise _dialog_review_failure('probe_event_reused',dialog_frame=frame,probe_frame=fid,match_count=1)
             used.add(id(selected[0]))
         if conflict(events,others,frames):
-            raise _dialog_review_failure()
+            raise _dialog_review_failure('other_probe_conflict',dialog_frame=frame)
 
 
 def conflict(events, hints, frames, diagnostic=None, evidence=None):
