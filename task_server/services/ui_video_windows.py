@@ -240,7 +240,13 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                                 if secret:target_evidence[key]=target_evidence[key].replace(secret,'[输入内容未保存]')
                         error.target_failure_evidence=target_evidence
                         raise error
-                    hint_questions=bind_uncertain_hints(checked['events'],payload['touch_targets'],checked,unbound=pending)
+                    try:
+                        hint_questions=bind_uncertain_hints(checked['events'],payload['touch_targets'],checked,unbound=pending)
+                    except ValueError as error:
+                        if type(getattr(error,'touch_binding_evidence',None)) is dict:
+                            error.touch_binding_evidence.update(phase='review' if review_events is not None else 'observe',
+                                window_index=index+1,window_count=len(windows),attempt=attempt+1)
+                        raise
                     pending=_redact_audit(pending,secrets)
                     candidate_touches=[]
                     if pending:

@@ -212,7 +212,13 @@ def bind_uncertain_hints(events,hints,analysis=None,unbound=None):
             unbound.append({key:hint[key] for key in ('frame_id','target','observation','questions') if key in hint})
             if not hint.get('questions'):root_questions.append(question)
             continue
-        if len(matches)!=1 or len(matches[0].get('uncertainties',[]))>=10:raise ValueError('video_model_invalid')
+        reason=('no_match' if not matches else 'multiple_matches' if len(matches)>1 else
+                'question_capacity' if len(matches[0].get('uncertainties',[]))>=10 else '')
+        if reason:
+            error=ValueError('video_model_invalid')
+            error.touch_binding_evidence={'reason':reason,'frame_id':hint.get('frame_id'),
+                'match_count':len(matches),'event_question_counts':[len(event.get('uncertainties',[])) for event in matches]}
+            raise error
         if question not in matches[0]['uncertainties']:matches[0]['uncertainties'].append(question)
         if not hint.get('questions'):
             root_questions.append(question)
