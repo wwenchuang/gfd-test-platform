@@ -261,7 +261,9 @@ def analyze_video_source(store,identifier):
                 store.transition(identifier,{'analyzing'},'analyzing',expected_version=version,
                     expected_owner=owner,expected_app=app,frame_role_audit=audit)
             progress.frame_role_audit_sink=persist_frame_role_audit
-            result=analyze_whole_frames(document,store.root/identifier,cancelled,progress)
+            from task_server.services.ui_video_ordinary_timing import session as timing_session
+            with timing_session(identifier,version):
+                result=analyze_whole_frames(document,store.root/identifier,cancelled,progress)
             if cancelled():raise ValueError('video_cancelled')
             from task_server.services.ui_video_business_inputs import recover_business_inputs
             stage='input_recovery'
