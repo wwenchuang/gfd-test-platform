@@ -324,6 +324,26 @@ def _repair_interaction_overlap(replacements,preserved):
     return False
 
 
+def _adjacent_tap_boundaries(events):
+    """Find shared state anchors without treating them as shared touches."""
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}]
+    for earlier,later in zip(interactions,interactions[1:]):
+        a,b=earlier['frame_refs'],later['frame_refs']
+        if (earlier['action']==later['action']=='aiTap' and
+            a and b and a[-1]==b[0] and set(a)&set(b)=={a[-1]} and
+            earlier['end_ms']==later['start_ms']):
+            yield earlier,later,a[-1]
+
+
+def _adjacent_tap_overlaps(events):
+    """Find adjacent click hypotheses sharing evidence, not physical touches."""
+    interactions=[e for e in events if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'}]
+    for earlier,later in zip(interactions,interactions[1:]):
+        shared=set(earlier['frame_refs']) & set(later['frame_refs'])
+        if earlier['action']==later['action']=='aiTap' and shared:
+            yield earlier,later,shared
+
+
 def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,missing_refs):
     """Keep distant conflicts separate with at most one targeted sixth call."""
     import copy
@@ -348,7 +368,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     # Include same-action/target overlapping evidence from both passes. A
     # partial duplicate outside the gap competes with its repaired counterpart
     # when the windows are joined, despite each local coverage check passing.
-    bridge_frames=set()
+    bridge_frames=set();shared_tap_boundaries=set()
     while True:
         if cancelled():raise ValueError('video_cancelled')
         expanded=set(selected)
@@ -389,6 +409,17 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
                     interval=set(range(min(indexes),max(indexes)+1))
                     expanded.update(interval)
                     newly_bridged.update(interval-selected)
+        # If a complete selected tap shares its end/start state with an
+        # adjacent tap, review both in the same group. The common
+        # image is context and must not be taken as two physical touches.
+        for source in (original,checked['events']):
+            for earlier,later,shared in _adjacent_tap_boundaries(source):
+                before={positions[r] for r in earlier['frame_refs']}
+                after={positions[r] for r in later['frame_refs']}
+                if positions[shared] in selected and (before<=selected or after<=selected):
+                    pair=set(range(min(before),max(before)+1)) | set(range(min(after),max(after)+1))
+                    shared_tap_boundaries.add(shared)
+                    expanded.update(pair)
         # Once a bridge is present, every concurrent expansion participates
         # in the same closure, including one caused by related observations.
         if bridge_frames or newly_bridged:
@@ -397,6 +428,16 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         if expanded==selected:break
         bridge_frames.update(newly_bridged)
         selected=expanded
+    # More complex overlaps are not automatically expanded. If either click
+    # remains partially outside this repair, fail rather than let a model erase
+    # a boundary interaction. When both are included, preserve a review gate.
+    selected_ids={frames[i]['frame_id'] for i in selected}
+    for source in (original,checked['events']):
+        for earlier,later,shared in _adjacent_tap_overlaps(source):
+            if not shared & selected_ids:continue
+            if not (set(earlier['frame_refs'])<=selected_ids and set(later['frame_refs'])<=selected_ids):
+                raise ValueError('video_required_action_missing')
+            shared_tap_boundaries.update(shared)
     # A shared hold frame can be the last sampled anchor. Supply one later
     # decoded state for visual review; it is not evidence of a merge by itself.
     # Keep the same frame/call budgets and never absorb a neighboring action.
@@ -443,7 +484,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         # Reserve one call for each later gap; extra attempts share the same
         # bounded ceiling; five to eight gaps share one return-specific retry.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
-        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only,preserved_interactions=preserved)
+        repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only,preserved_interactions=preserved,adjacent_boundary_refs=shared_tap_boundaries&ids)
         frame_role_audit.extend(repaired.get('frame_role_audit',[]))
         calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)
         # State observations are not covered by the interaction boundary gate.
@@ -497,6 +538,9 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
                 continue
             used.add(matches[0])
     blockers=[]
+    if shared_tap_boundaries:
+        blockers.append('相邻点击共享画面边界（'+ '、'.join(sorted(shared_tap_boundaries))+
+                        '），请对照完整原视频分别核对触点和目标；共享画面不代表两次触点。')
     if missing_state:
         blockers.append('局部状态证据未完整保留，请对照完整原视频核对所有相关画面后再试跑。')
     if _repair_interaction_overlap(replacements,preserved):
@@ -680,7 +724,7 @@ def _validate_boundary_role_claims(claims,events,preserved,boundary,image_frames
     return result
 
 
-def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=(),retry_return_gesture_only=False,preserved_interactions=()):
+def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=(),retry_return_gesture_only=False,preserved_interactions=(),adjacent_boundary_refs=()):
     """Revisit one bounded gap without accepting omission or copying old semantics."""
     import copy
     from . import ai_skill_service as ai
@@ -713,6 +757,8 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
                 if e['action'] in ('aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard') and set(e['frame_refs'])<=window_ids and set(e['frame_refs'])&missing_refs]
                 for name,source in [('first_pass',original),('independent_review',checked['events'])]},
              'validation_feedback':'coverage_checks分首轮与独立复核两组，每组内部每个交互锚点都需要独立解释；同一解释可同时对应两组中的同一次操作，不要因此重复生成；同来源多个锚点若由一次真实交互重复识别而来，按coverage_resolutions合并并完整列出重复锚点。首轮可能把等待当重复点击，若本段只有自动变化，用aiAssert及完整原帧说明静止事实；不要为一次真实交互额外造aiAssert凑数量。完整性复核发现本段遗漏或合并操作。逐帧区分每一次返回、同页滚动和自动转场；每一次导航独立记录，不将两次返回合成一次。锚点只指示证据位置，不代表预定动作。'}
+    if adjacent_boundary_refs:
+        payload['validation_feedback']+=' 原帧 '+','.join(sorted(adjacent_boundary_refs))+' 是相邻候选共同引用的画面，可能显示前一操作的触点或前后状态；不得将同一触点算作两次独立触点。结合实际原帧分别核对各次操作和目标，无法确认时保留疑问，不得补造未看到的触点。'
     # Keep backend-only hypotheses independent of the model-facing payload,
     # which intentionally removes actions during blind motion review.
     failure_candidates={name:[{'action':e['action'],'frame_refs':list(e['frame_refs'])}
