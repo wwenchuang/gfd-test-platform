@@ -1751,3 +1751,38 @@ describe('version-protected AI failure summary', () => {
     expect(store.aiError).toContain('先核对')
   })
 })
+
+describe('AI polling state is not mistaken for generation', () => {
+  it('leaves an indefinitely queued task resumable without asserting model execution', async () => {
+    setActivePinia(createPinia())
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { job: { id:'j', state:'queued', endpoint_ids:[], batches:[] } } })
+    const store = useCasesStore()
+    await store.pollAiJob('j', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiCanResume).toBe(true)
+    expect(store.aiError).toContain('仍在排队')
+    expect(store.aiError).toContain('尚未确认执行器接收')
+    expect(store.aiError).not.toContain('后台生成')
+  })
+  it('reports a status read failure without assuming the worker state', async () => {
+    setActivePinia(createPinia())
+    vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('offline'))
+    const store = useCasesStore()
+    await store.pollAiJob('j', { maxAttempts: 1, delayMs: 0 })
+    expect(store.aiCanResume).toBe(true)
+    expect(store.aiError).toContain('无法读取任务状态')
+    expect(store.aiError).not.toContain('后台生成')
+  })
+})
+
+describe('restored queued AI task', () => {
+  it('does not describe a restored queued task as generating', async () => {
+    setActivePinia(createPinia())
+    const client = { get: vi.fn().mockResolvedValue({ data: { job: { id:'j', state:'queued', endpoint_ids:[], batches:[] } } }) }
+    const store = useCasesStore()
+    await store.restoreLatestAiJob('p', 's', client as never)
+    expect(store.aiCanResume).toBe(true)
+    expect(store.aiError).toContain('仍在排队')
+    expect(store.aiError).toContain('尚未确认执行器接收')
+    expect(store.aiError).not.toContain('后台生成')
+  })
+})

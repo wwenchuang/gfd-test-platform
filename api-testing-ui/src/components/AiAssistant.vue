@@ -75,6 +75,11 @@ const stateLabel = computed(() => {
   return props.job?.state === 'failed_gateway' && props.job.batches.some(batch => batch.error_code === 'enqueue_failed') ? '任务提交失败' : STATE_LABELS[props.job?.state || ''] || '等待生成'
 })
 const running = computed(() => props.polling || props.preparing)
+const pendingJob = computed(() => props.canResume && ['queued', 'running'].includes(props.job?.state || ''))
+const generateLabel = computed(() => props.preparing ? '正在准备任务'
+  : props.polling && props.job?.state === 'queued' ? '任务排队中'
+    : props.polling && props.job?.state === 'running' ? 'AI 正在生成'
+      : props.polling ? '正在查询任务状态' : '生成测试用例')
 const elapsedLabel = computed(() => elapsedSeconds.value < 60
   ? `${elapsedSeconds.value} 秒`
   : `${Math.floor(elapsedSeconds.value / 60)} 分 ${elapsedSeconds.value % 60} 秒`)
@@ -111,9 +116,11 @@ function validationIssue(batch: AiJob['batches'][number]) {
         </details>
         <p class="ai-progress-note">AI 生成可能产生费用，失败也可能产生费用。</p>
         <p v-if="modeError" class="state-message state-error" role="alert">{{ modeError }}</p>
-        <button data-testid="generate-ai" class="primary-command wide" type="button" :disabled="!selectedCount || running || basicGenerating" @click="generate('generate')"><Sparkles :size="16" />{{ preparing ? '正在准备任务' : running ? 'AI 正在生成' : '生成测试用例' }}</button>
+        <button data-testid="generate-ai" class="primary-command wide" type="button" :disabled="!selectedCount || running || pendingJob || basicGenerating" @click="generate('generate')"><Sparkles :size="16" />{{ generateLabel }}</button>
         <p v-if="preparing" class="ai-progress-note"><Clock3 :size="14" />正在准备并提交任务，请稍候。</p>
-        <p v-else-if="polling" class="ai-progress-note"><Clock3 :size="14" />已等待 {{ elapsedLabel }}，生成会在后台继续，可稍后返回查看。</p>
+        <p v-else-if="polling && job?.state === 'queued'" class="ai-progress-note"><Clock3 :size="14" />最近状态显示任务仍在排队，尚未确认执行器接收；无兼容执行器时可能持续排队，请联系管理员检查。</p>
+        <p v-else-if="polling && job?.state === 'running'" class="ai-progress-note"><Clock3 :size="14" />已等待 {{ elapsedLabel }}，最近状态显示任务生成中，可稍后查看最新进度。</p>
+        <p v-else-if="polling" class="ai-progress-note"><Clock3 :size="14" />正在查询任务状态，请稍候。</p>
         <p v-if="error" class="state-message" :class="{ 'state-error': !canResume }">{{ error }}</p>
         <section v-if="historicalScopeMessage" class="ai-historical-scope" role="status">
           <strong>当前接口范围暂无对应生成结果</strong>

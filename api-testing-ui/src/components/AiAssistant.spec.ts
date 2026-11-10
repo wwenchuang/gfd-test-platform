@@ -289,3 +289,23 @@ describe('version-protected generation diagnostics', () => {
     expect(wrapper.text()).not.toContain('兼容的备用渠道')
   })
 })
+
+describe('truthful AI queue progress', () => {
+  it('shows queued as waiting for a worker, not model generation', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, polling: true, job: { ...job, state: 'queued', batches: [] } } })
+    expect(wrapper.text()).toContain('尚未确认执行器接收')
+    expect(wrapper.text()).toContain('可能持续排队')
+    expect(wrapper.text()).not.toContain('AI 正在生成')
+    expect(wrapper.text()).not.toContain('生成会在后台继续')
+  })
+  it('does not label an unknown task status as generating', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, polling: true, job: null } })
+    expect(wrapper.text()).toContain('正在查询任务状态')
+    expect(wrapper.text()).not.toContain('AI 正在生成')
+  })
+  it('disables another generation while a pending job can be resumed', () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, canResume: true, job: { ...job, state: 'queued', batches: [] } } })
+    expect(wrapper.get('[data-testid="generate-ai"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('继续查看')
+  })
+})

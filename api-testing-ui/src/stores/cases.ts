@@ -678,11 +678,15 @@ export const useCasesStore = defineStore('api-cases', {
         }
         if (!isCurrent()) return
         this.aiCanResume = true
-        this.aiError = 'AI 仍在后台生成，点击“继续查看”即可恢复进度'
-      } catch (error) {
+        this.aiError = this.aiJob?.state === 'queued'
+          ? '最近状态显示任务仍在排队，尚未确认执行器接收；可能持续排队，请继续查看或联系管理员检查执行器。'
+          : this.aiJob?.state === 'running'
+            ? '最近状态显示任务生成中，点击“继续查看”获取最新进度。'
+            : '暂未确认任务最新状态，点击“继续查看”重新读取。'
+      } catch {
         if (!isCurrent()) return
         this.aiCanResume = true
-        this.aiError = error instanceof Error ? `${error.message}，可继续查看任务` : 'AI 进度读取失败，可继续查看任务'
+        this.aiError = '无法读取任务状态，任务可能仍在排队或生成；请点击“继续查看”重新读取。'
       } finally {
         if (isCurrent()) this.aiPolling = false
       }
@@ -754,7 +758,9 @@ export const useCasesStore = defineStore('api-cases', {
           return
         }
         this.aiCanResume = true
-        this.aiError = '发现后台生成任务，点击“继续查看”恢复进度'
+        this.aiError = job.state === 'queued'
+          ? '最近状态显示任务仍在排队，尚未确认执行器接收；可能持续排队，请继续查看或联系管理员检查执行器。'
+          : '发现未完成的 AI 任务，点击“继续查看”获取最新状态。'
       } catch {
         // Workspace startup remains usable when no prior AI job can be restored.
       }
