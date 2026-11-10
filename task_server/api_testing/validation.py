@@ -5,6 +5,7 @@ import re
 from typing import Any, Mapping, Tuple
 from urllib.parse import urlsplit
 
+from .run_id_binding import binding_error, substitute_request
 from .assertions import AssertionDefinitionError, validate_response_schema
 
 from .services.workflow_policy import (
@@ -301,6 +302,13 @@ def validate_case(
     errors = []
     warnings = []
     request = dict(case_version.request)
+    if "run_id_binding" in request:
+        error = binding_error(request, case_version.dependencies, case_version.processing)
+        if error:
+            _issue(errors, "run_id_binding", "request.run_id_binding", error)
+        else:
+            # Syntax checking only. No synthetic ID enters the runnable request.
+            request = substitute_request(request, "run-id")
     operation = endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
 
     if case_version.endpoint_id != endpoint.id:
@@ -420,6 +428,9 @@ def validate_case(
     )
 
     cleanup_available = set(available)
+    for action in case_version.processing.get("pre", ()):
+        if action.get("action") == "bind_cleanup_response_id":
+            cleanup_available.add(action["target"])
     cleanup_available.update(
         _item_value(extraction, "target")
         for extraction in case_version.extractions

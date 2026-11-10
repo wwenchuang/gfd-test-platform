@@ -61,6 +61,19 @@ function workflowDraft(): CaseDraft {
 }
 
 describe('CaseEditor', () => {
+  it('offers response-bound cleanup in the first preprocessing row and preserves its configuration', async () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.processing.pre = [{ action: 'set_variable', name: 'id', value: '' }]
+    draft.processing.post = [{ action: 'set_variable', name: 'other', value: '' }]
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+    const actions = wrapper.findAll('select[aria-label="处理动作"]')
+    expect(actions[1].find('option[value="bind_cleanup_response_id"]').exists()).toBe(false)
+    await actions[0].setValue('bind_cleanup_response_id')
+    await wrapper.get('input[placeholder="响应提取变量名"]').setValue('createdId')
+    await wrapper.get('input[placeholder="详情查询 levelSn 的变量"]').setValue('ownedId')
+    const saved = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(saved.processing.pre[0]).toEqual({ action: 'bind_cleanup_response_id', source: 'main', name: 'createdId', target: 'ownedId' })
+  })
   it('generates a new run identifier and never applies the preview to sensitive variables', async () => {
     const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
     draft.data_rows[0].values = { apiKey: '', accessToken: '', password: '', userId: '', idCard: '', label: '' }

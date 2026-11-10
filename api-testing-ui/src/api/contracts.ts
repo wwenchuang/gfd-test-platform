@@ -372,6 +372,7 @@ export interface ApiEndpoint {
 }
 
 export interface CaseRequest {
+  run_id_binding?: 1
   method: string
   path: string
   service: string

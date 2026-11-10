@@ -12,6 +12,37 @@ const REQUEST: CaseRequest = {
 }
 
 describe('RequestConfigEditor', () => {
+  it('opts a main GET into persisted IDs only when inserted and removes the flag with the last token', async () => {
+    const wrapper = mount(RequestConfigEditor, { props: { modelValue: { ...REQUEST, query: { label: 'run-' } } } })
+    await wrapper.get('[data-testid="query-variable-0"]').trigger('click')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    await wrapper.get('[data-testid="insert-execution-case-id"]').trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toMatchObject({
+      run_id_binding: 1, query: { label: 'run-{{@execution_case_id}}' },
+    })
+    await wrapper.get('[data-testid="query-value"]').setValue('plain')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).not.toHaveProperty('run_id_binding')
+  })
+
+  it('restricts ID insertion to trace headers while leaving ordinary headers editable', () => {
+    const wrapper = mount(RequestConfigEditor, { props: { modelValue: {
+      ...REQUEST, headers: { Cookie:'trace=other', 'X-HTTP-Method-Override':'', 'x-correlation-id':'' },
+    } } })
+    expect(wrapper.find('[data-testid="headers-variable-0"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="headers-variable-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="headers-variable-2"]').exists()).toBe(true)
+  })
+
+  it('only offers persisted ID choices for the main read request', () => {
+    for (const props of [
+      { modelValue: { ...REQUEST, method: 'POST', query: { id: '' } }, prefix: 'request', allowRunIds: true },
+      { modelValue: { ...REQUEST, query: { id: '' } }, prefix: 'request', allowRunIds: false },
+      { modelValue: { ...REQUEST, query: { id: '' } }, prefix: 'processing.setup_steps.0.request', allowRunIds: true },
+    ]) {
+      expect(mount(RequestConfigEditor, { props }).find('[data-testid="query-variable-0"]').exists()).toBe(false)
+    }
+  })
+
   it('does not publish an unfinished placeholder row', async () => {
     const wrapper = mount(RequestConfigEditor, { props: { modelValue: REQUEST } })
     await wrapper.get('[data-testid="query-add"]').trigger('click')

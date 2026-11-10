@@ -24,6 +24,7 @@ from ..contracts.case import (
 )
 from ..repositories.case_repository import CaseRepository
 from ..validation import validate_case
+from ..run_id_binding import resolve_case_version
 
 
 class EndpointNotFoundError(LookupError):
@@ -123,7 +124,7 @@ class CaseService:
             if version is None:
                 raise CaseNotFoundError("API case version was not found")
             case = repository.get_case(version.case_id)
-            return self._version_view(repository, version, case)
+            return resolve_case_version(self._version_view(repository, version, case))
 
     def update_case_version_group(self, version_id, group_name, actor_id):
         access.require_permission(actor_id, "api.edit")

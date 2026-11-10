@@ -319,3 +319,10 @@ def test_copy_rejects_conditional_steps_instead_of_losing_guard(enabled):
     result = LoadScenarioService.copy_from_case_versions(name='条件场景', description='', cases=[case])
     assert not result.accepted
     assert result.issues[0].code == 'conditional_workflow_unsupported'
+
+
+def test_copy_refuses_to_drop_response_bound_cleanup():
+    case = {"id":"v1","name":"回收","request":_request(),"processing":{"pre":[{"action":"bind_cleanup_response_id"}]}}
+    admission = LoadScenarioService.copy_from_case_versions(name="压测",description="",cases=[case])
+    assert not admission.accepted
+    assert admission.issues[0].code == "cleanup_binding_unsupported"

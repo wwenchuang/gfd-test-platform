@@ -25,6 +25,7 @@ from .assertions import (
 )
 from .services.case_service import CaseService
 from .services.environment_service import EnvironmentService
+from . import cleanup_binding
 from .response_time_warning import evaluate_response_time_warning
 
 
@@ -348,7 +349,14 @@ class HttpExecutor:
             variables = copy.deepcopy(dict(overrides or {}))
             variables.update(row_values)
             variables.update(copy.deepcopy(dict(dependency_overrides or {})))
-            self._apply_processing(case.processing.get("pre", []), variables)
+            binding = cleanup_binding.validate_binding(
+                case.processing, case.extractions, getattr(case, "dependencies", ()), case.request)
+            source_context = []
+            if binding:
+                # Environment credentials come only from the selected revision.
+                variables = {}
+            else:
+                self._apply_processing(case.processing.get("pre", []), variables)
             setup_steps = tuple(case.processing.get("setup_steps", []))
             cleanup_steps = tuple(case.processing.get("cleanup_steps", []))
             has_workflow = bool(setup_steps or cleanup_steps)
@@ -405,6 +413,7 @@ class HttpExecutor:
                     callback,
                     trace,
                     record_main_phases=True,
+                    binding_context=source_context if binding else None,
                 )
                 all_secrets.extend(main_outcome.secrets)
                 variables.update(copy.deepcopy(main_outcome.extracted))
@@ -427,6 +436,20 @@ class HttpExecutor:
             for index, step in enumerate(cleanup_steps):
                 if not step.get("enabled", True):
                     continue
+                if binding:
+                    value = cleanup_binding.response_id(main_outcome)
+                    if value is None or not source_context or redact(value, main_outcome.secrets) != value:
+                        cleanup_problem = _HttpStepOutcome("SKIPPED", "cleanup", {}, {}, (), {},
+                            "本次主体响应未确认关卡编号，未发送详情回查", ())
+                        self._emit_workflow_step(callback, trace, "cleanup", index, step, cleanup_problem)
+                        continue
+                    step = copy.deepcopy(step)
+                    step["request"]["query"] = {"levelSn": value}
+                    step["assertions"] = list(step.get("assertions", ())) + [
+                        {"type": "status_code", "operator": "equals", "expected": 200},
+                        {"type": "json_path", "path": "$.code", "operator": "equals", "expected": 0},
+                        {"type": "json_path", "path": cleanup_binding.DETAIL_FIELD, "operator": "equals", "expected": value},
+                    ]
                 if self._skip_conditional_step(callback, trace, "cleanup", index, step, variables):
                     continue
                 missing = self._missing_step_variables(step, variables)
@@ -452,10 +475,11 @@ class HttpExecutor:
                     index,
                     step,
                     environment_revision_id,
-                    variables,
+                    {} if binding else variables,
                     lambda _phase: False,
                     callback,
                     trace,
+                    binding_context=source_context if binding else None,
                 )
                 all_secrets.extend(step_secrets)
                 if outcome.status == "PASSED":
@@ -528,6 +552,8 @@ class HttpExecutor:
                 self._validate_schema_definitions(step.get("assertions", []))
 
         variables = copy.deepcopy(dict(initial_variables or {}))
+        if any(action.get("action") == cleanup_binding.ACTION for action in processing_pre or []):
+            raise ValueError("响应关联用例必须通过完整功能执行进行回查")
         self._apply_processing(processing_pre or [], variables)
         overrides = copy.deepcopy(dict(extraction_overrides or {}))
         trace = []
@@ -605,6 +631,8 @@ class HttpExecutor:
         cancel,
         callback,
         trace,
+        *,
+        binding_context=None,
     ):
         polling = step.get("polling") or {}
         max_attempts = int(polling.get("max_attempts", 1))
@@ -622,6 +650,7 @@ class HttpExecutor:
                 callback,
                 trace,
                 record_main_phases=False,
+                binding_context=binding_context,
             )
             all_secrets.extend(outcome.secrets)
             self._emit_workflow_step(
@@ -669,6 +698,7 @@ class HttpExecutor:
         trace,
         *,
         record_main_phases,
+        binding_context=None,
     ):
         request_view = {}
         response_view = {}
@@ -759,6 +789,14 @@ class HttpExecutor:
                     callback, trace, "request", {"request": request_view}
                 )
             request_options = {}
+            if binding_context is not None:
+                expected_path = cleanup_binding.LIST_PATH if record_main_phases else cleanup_binding.DETAIL_PATH
+                context = cleanup_binding.checked_context(base_url, url, expected_path, headers)
+                if record_main_phases:
+                    binding_context.append(context)
+                elif binding_context != [context]:
+                    raise ValueError("来源与详情的环境凭证不一致")
+                request_options["follow_redirects"] = False
             if "timeout_seconds" in rendered:
                 timeout = rendered["timeout_seconds"]
                 if type(timeout) is not int or not 1 <= timeout <= 60:
@@ -1134,6 +1172,7 @@ class HttpExecutor:
         authorized_base=None,
         allow_private_network=False,
         timeout_seconds=None,
+        follow_redirects=True,
     ):
         network_started = time.monotonic()
         deadline = network_started + (self.limits.timeout_seconds if timeout_seconds is None else timeout_seconds)
@@ -1185,6 +1224,8 @@ class HttpExecutor:
                 transport_socket = self._response_socket(raw, connection)
                 self._remaining(deadline)
                 if raw.status in {301, 302, 303, 307, 308}:
+                    if not follow_redirects:
+                        raise RedirectLimitError("响应关联不允许重定向")
                     location = raw.getheader("Location")
                     raw.read(0)
                     if not location:

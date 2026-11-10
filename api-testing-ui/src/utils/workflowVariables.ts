@@ -32,6 +32,12 @@ export function workflowVariableOptions(
     result.forEach((option, index) => positions.set(option.name, index))
   }
 
+  const binding = draft.processing?.pre?.[0]
+  if (stage === 'cleanup' && binding?.action === 'bind_cleanup_response_id') {
+    add(binding.target, '本次主体响应 ID', 'main')
+    return result
+  }
+
   for (const name of [...new Set(environmentNames)].sort((a, b) => a.localeCompare(b, 'zh-CN'))) {
     add(name, '当前执行环境', 'environment')
   }

@@ -8,6 +8,8 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Tuple
 
+from task_server.api_testing import cleanup_binding
+from ..run_id_binding import binding_error
 from task_server.api_testing.assertions import AssertionDefinitionError, validate_response_schema
 
 from task_server.services.business_line_service import (
@@ -100,7 +102,7 @@ MEANINGFUL_SCHEMA_KEYS = frozenset(
 )
 EXTRACTION_TYPES = frozenset({"json_path", "header", "cookie", "status_code"})
 PROCESSING_ACTIONS = frozenset(
-    {"set_variable", "copy_variable", "remove_variable", "json_encode", "json_decode"}
+    {"set_variable", "copy_variable", "remove_variable", "json_encode", "json_decode", cleanup_binding.ACTION}
 )
 VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 
@@ -150,11 +152,11 @@ def _named_mapping(value, field):
     return _json_value(mapping, field)
 
 
-def _parse_request(value):
+def _parse_request(value, *, main=False):
     value = _require_mapping(value, "request")
     _reject_unknown(
         value,
-        {"method", "path", "service", "path_params", "query", "headers", "cookies", "body", "timeout_seconds"},
+        {"method", "path", "service", "path_params", "query", "headers", "cookies", "body", "timeout_seconds"} | ({"run_id_binding"} if main else set()),
         "request",
     )
     required = {"method", "path", "path_params", "query", "headers", "cookies", "body"}
@@ -174,6 +176,8 @@ def _parse_request(value):
         "cookies": _named_mapping(value["cookies"], "request.cookies"),
         "body": _json_value(value["body"], "request.body"),
     }
+    if "run_id_binding" in value:
+        result["run_id_binding"] = value["run_id_binding"]
     if "timeout_seconds" in value:
         timeout = value["timeout_seconds"]
         if type(timeout) is not int or not 1 <= timeout <= 60:
@@ -406,9 +410,12 @@ def _parse_processing(value):
             item = _require_mapping(item, f"processing.{phase}[{index}]")
             _reject_unknown(item, allowed, f"processing.{phase}[{index}]")
             action = _text(item.get("action"), f"processing.{phase}[{index}].action", maximum=64)
+            if action == cleanup_binding.ACTION and (phase != "pre" or index != 0 or set(item) != {"action","source","name","target"}):
+                raise CasePayloadError("响应 ID 绑定只能配置为第一项前置处理")
             if action not in PROCESSING_ACTIONS:
                 raise CasePayloadError(f"processing.{phase}[{index}].action is not supported")
             required_fields = {
+                cleanup_binding.ACTION: {"source", "name", "target"},
                 "set_variable": {"name", "value"},
                 "copy_variable": {"source", "target"},
                 "remove_variable": {"name"},
@@ -644,20 +651,28 @@ def parse_case_payload(payload, *, allow_disabled_scope=False):
             )
         except ValueError:
             raise CasePayloadError("business is not supported")
-    return {
+    parsed = {
         "name": _text(payload["name"], "name", maximum=300),
         "purpose": _text(payload["purpose"], "purpose", maximum=10_000),
         "priority": priority,
         "app_package": app_package,
         "app_name": app_name,
         "business": business,
-        "request": _parse_request(payload["request"]),
+        "request": _parse_request(payload["request"], main=True),
         "data_rows": _parse_data_rows(payload["data_rows"]),
         "assertions": _parse_assertions(payload["assertions"]),
         "extractions": _parse_extractions(payload["extractions"]),
         "dependencies": _parse_dependencies(payload["dependencies"]),
         "processing": _parse_processing(payload["processing"]),
     }
+    try:
+        cleanup_binding.validate_binding(parsed["processing"], parsed["extractions"], parsed["dependencies"], parsed["request"])
+    except ValueError as exc:
+        raise CasePayloadError(str(exc)) from exc
+    issue = binding_error(parsed["request"], parsed["dependencies"], parsed["processing"])
+    if issue:
+        raise CasePayloadError(issue)
+    return parsed
 
 
 @dataclass(frozen=True)

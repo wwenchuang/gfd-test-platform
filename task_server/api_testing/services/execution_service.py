@@ -15,6 +15,7 @@ from ..models.case import ApiBaseline
 from .. import access
 
 from ..events import EventStream
+from ..run_id_binding import bind_persisted_case_ids
 from ..executor import CaseExecutionResult, HttpExecutor, redact
 from ..repositories.execution_repository import ExecutionRepository
 from ...services.notification_presentation import canonical_test_scope_summary
@@ -694,6 +695,7 @@ class ExecutionService:
         )
         return True
 
+    @bind_persisted_case_ids
     def _execute_child(
         self,
         execution_id,

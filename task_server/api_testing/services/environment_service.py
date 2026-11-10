@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlsplit
 
 from .. import access
+from ..run_id_binding import TOKEN, omit_bound_header_defaults
 
 from ..contracts.environment import (
     EnvironmentAssetView,
@@ -267,6 +268,8 @@ class _PlaceholderResolver:
     def _render_string(self, value, stack):
         matches = list(PLACEHOLDER.finditer(value))
         remainder = PLACEHOLDER.sub("", value)
+        if TOKEN.search(remainder):
+            raise PlaceholderSyntaxError("运行标识仅在已启用的用例开始正式功能执行后提供")
         if "{{" in remainder or "}}" in remainder:
             raise PlaceholderSyntaxError("invalid environment placeholder syntax")
         if not matches:
@@ -841,7 +844,7 @@ class EnvironmentService:
             except UnresolvedVariableError:
                 base_urls[name] = None
                 unresolved_services.append(name)
-        headers = {name: resolver.render(value) for name, value in revision.default_headers.items()}
+        headers = {name: resolver.render(value) for name, value in omit_bound_header_defaults(revision.default_headers).items()}
         if any(not isinstance(value, str) for value in headers.values()):
             raise EnvironmentInputError("resolved default header values must be strings")
         runtime = ResolvedEnvironment(
