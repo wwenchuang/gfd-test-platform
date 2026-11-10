@@ -401,7 +401,7 @@ function normalizeDraft(value: CaseDraft): CaseDraft {
 
       <div class="workflow-main-heading"><span>主体请求</span><small>验证目标接口的真实业务结果，并将响应变量传给清理步骤。</small></div>
 
-      <RequestConfigEditor :model-value="local.request" :errors="displayValidationErrors" :warnings="validationWarnings" :variable-options="mainVariableOptions" @update:model-value="updateRequest" @validity="requestEditorValid = $event" />
+      <RequestConfigEditor :model-value="local.request" :allow-run-ids="!local.dependencies.length && !local.processing.setup_steps?.length && !local.processing.cleanup_steps?.length" :errors="displayValidationErrors" :warnings="validationWarnings" :variable-options="mainVariableOptions" @update:model-value="updateRequest" @validity="requestEditorValid = $event" />
 
       <label>响应耗时预警（毫秒，可选）<input data-testid="response-time-warning" type="number" min="1" max="86400000" step="1" :value="local.processing.response_time_warning_ms ?? ''" placeholder="留空则不预警" @input="updateResponseWarning" /><small>超过阈值仅提示，不改变用例通过结果；只计算主体接口。</small></label>
 

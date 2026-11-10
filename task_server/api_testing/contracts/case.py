@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Any, Mapping, Optional, Tuple
 
 from task_server.api_testing import cleanup_binding
+from ..run_id_binding import binding_error
 from task_server.api_testing.assertions import AssertionDefinitionError, validate_response_schema
 
 from task_server.services.business_line_service import (
@@ -151,11 +152,11 @@ def _named_mapping(value, field):
     return _json_value(mapping, field)
 
 
-def _parse_request(value):
+def _parse_request(value, *, main=False):
     value = _require_mapping(value, "request")
     _reject_unknown(
         value,
-        {"method", "path", "service", "path_params", "query", "headers", "cookies", "body", "timeout_seconds"},
+        {"method", "path", "service", "path_params", "query", "headers", "cookies", "body", "timeout_seconds"} | ({"run_id_binding"} if main else set()),
         "request",
     )
     required = {"method", "path", "path_params", "query", "headers", "cookies", "body"}
@@ -175,6 +176,8 @@ def _parse_request(value):
         "cookies": _named_mapping(value["cookies"], "request.cookies"),
         "body": _json_value(value["body"], "request.body"),
     }
+    if "run_id_binding" in value:
+        result["run_id_binding"] = value["run_id_binding"]
     if "timeout_seconds" in value:
         timeout = value["timeout_seconds"]
         if type(timeout) is not int or not 1 <= timeout <= 60:
@@ -655,7 +658,7 @@ def parse_case_payload(payload, *, allow_disabled_scope=False):
         "app_package": app_package,
         "app_name": app_name,
         "business": business,
-        "request": _parse_request(payload["request"]),
+        "request": _parse_request(payload["request"], main=True),
         "data_rows": _parse_data_rows(payload["data_rows"]),
         "assertions": _parse_assertions(payload["assertions"]),
         "extractions": _parse_extractions(payload["extractions"]),
@@ -666,6 +669,9 @@ def parse_case_payload(payload, *, allow_disabled_scope=False):
         cleanup_binding.validate_binding(parsed["processing"], parsed["extractions"], parsed["dependencies"])
     except ValueError as exc:
         raise CasePayloadError(str(exc)) from exc
+    issue = binding_error(parsed["request"], parsed["dependencies"], parsed["processing"])
+    if issue:
+        raise CasePayloadError(issue)
     return parsed
 
 

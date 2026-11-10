@@ -12,8 +12,9 @@ const props = withDefaults(defineProps<{
   warnings?: Record<string, string>
   prefix?: string
   testIdPrefix?: string
+  allowRunIds?: boolean
   variableOptions?: WorkflowVariableOption[]
-}>(), { errors: () => ({}), warnings: () => ({}), prefix: 'request', testIdPrefix: '', variableOptions: () => [] })
+}>(), { errors: () => ({}), warnings: () => ({}), prefix: 'request', testIdPrefix: '', allowRunIds: true, variableOptions: () => [] })
 
 const emit = defineEmits<{
   'update:modelValue': [request: CaseRequest]
@@ -90,6 +91,9 @@ function publish(): void {
   for (const field of Object.keys(pending) as RequestMapField[]) {
     for (const name of pending[field]) delete request[field][name]
   }
+  if (request.run_id_binding && ![...Object.values(request.headers), ...Object.values(request.query)].some(
+    value => typeof value === 'string' && /\{\{@execution(?:_case)?_id\}\}/.test(value),
+  )) delete request.run_id_binding
   emit('update:modelValue', request)
 }
 
@@ -167,6 +171,15 @@ function updateBody(value: string): void {
   }
 }
 
+function supportsRunIds(field: RequestMapField): boolean {
+  return props.allowRunIds && props.prefix === 'request' && ['GET', 'HEAD'].includes(local.value.method) && ['headers', 'query'].includes(field)
+}
+
+function insertRunId(name: string): void {
+  local.value.run_id_binding = 1
+  insertVariable(name)
+}
+
 function toggleVariableTarget(field: RequestMapField, index: number): void {
   variableTarget.value = variableTarget.value?.field === field && 'index' in variableTarget.value && variableTarget.value.index === index
     ? null
@@ -216,10 +229,15 @@ function renderValue(value: unknown): string {
         <div v-for="([name, value], index) in Object.entries(local[section.field])" :key="`${section.field}-${index}`" class="key-value-row">
           <input :data-testid="testId(`${section.field}-name`)" :value="name" aria-label="参数名" @change="renameEntry(section.field, name, ($event.target as HTMLInputElement).value)" />
           <input :data-testid="testId(`${section.field}-value`)" :value="renderValue(value)" aria-label="参数值" @input="updateValue(section.field, index, ($event.target as HTMLInputElement).value)" />
-          <button v-if="variableOptions.length" :data-testid="testId(`${section.field}-variable-${index}`)" class="mini-icon" type="button" title="插入已有变量" @click="toggleVariableTarget(section.field, index)"><Braces :size="14" /></button>
+          <button v-if="variableOptions.length || supportsRunIds(section.field)" :data-testid="testId(`${section.field}-variable-${index}`)" class="mini-icon" type="button" title="插入已有变量" @click="toggleVariableTarget(section.field, index)"><Braces :size="14" /></button>
           <button class="mini-icon danger" type="button" title="删除参数" @click="removeEntry(section.field, name)"><Trash2 :size="14" /></button>
           <div v-if="variableTarget?.field === section.field && 'index' in variableTarget && variableTarget.index === index" class="variable-insert-menu">
-            <strong>插入已有变量</strong>
+            <strong>插入变量</strong>
+            <template v-if="supportsRunIds(section.field)">
+              <small>由已创建的功能执行记录提供。仅支持无依赖和流程步骤的 GET 或 HEAD。</small>
+              <button type="button" data-testid="insert-execution-id" @click="insertRunId('@execution_id')">本次执行 ID</button>
+              <button type="button" data-testid="insert-execution-case-id" @click="insertRunId('@execution_case_id')">本次用例执行 ID</button>
+            </template>
             <button v-for="option in variableOptions" :key="option.name" :data-testid="`variable-insert-${option.name}`" type="button" :disabled="!option.available" @click="insertVariable(option.name)"><span>{{ option.name }}</span><small>{{ option.source }}</small></button>
           </div>
           <small v-for="([field, message]) in messages(`${section.field}.${name}`, errors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>

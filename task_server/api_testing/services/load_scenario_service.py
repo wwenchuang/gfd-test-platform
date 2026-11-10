@@ -64,6 +64,11 @@ class LoadScenarioService:
     def copy_from_case_versions(cls, *, name, description, cases):
         snapshots = [cls._case_snapshot(item) for item in cases]
         for case in snapshots:
+            if "run_id_binding" in (case.get("request") or {}):
+                return LoadScenarioAdmission(False, None, (LoadScenarioIssue(
+                    "error", "execution_id_unavailable", "request.run_id_binding",
+                    "平台运行标识需要功能执行记录，压测场景无法提供", "请使用功能调试或回归。",
+                ),))
             processing = case.get("processing") or {}
             if any(a.get("action") == "bind_cleanup_response_id" for a in processing.get("pre", [])):
                 return LoadScenarioAdmission(False, None, (LoadScenarioIssue(
