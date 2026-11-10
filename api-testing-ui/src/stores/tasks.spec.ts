@@ -319,3 +319,18 @@ describe('tasks store', () => {
     expect(store.tasks.map(item => item.id)).toEqual(['task-2'])
   })
 })
+
+describe('guarded task restore', () => {
+  it('does not apply a delayed task response after the caller scope expires', async () => {
+    setActivePinia(createPinia())
+    const store = useTasksStore()
+    let finish!: (response: unknown) => void
+    const client = { get: vi.fn(() => new Promise(resolve => { finish = resolve })) }
+    let current = true
+    const restoring = store.restore('p', client as never, { isCurrent: () => current })
+    current = false
+    finish({ data: { task: { id: 'old' } } })
+    await restoring
+    expect(store.task).toBeNull()
+  })
+})

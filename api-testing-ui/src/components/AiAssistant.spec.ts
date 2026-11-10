@@ -209,3 +209,58 @@ describe('AiAssistant', () => {
     expect(wrapper.emitted('manage-generated')).toEqual([[]])
   })
 })
+
+describe('AI generation advanced options', () => {
+  it('keeps default requests unchanged and displays the cost notice', async () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null, scopeKey: 'task-a' } })
+    expect(wrapper.text()).toContain('可能产生费用')
+    expect(wrapper.get('details[data-testid="ai-advanced"]').attributes('open')).toBeUndefined()
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.emitted('generate')?.[0]).toHaveLength(1)
+  })
+
+  it('transmits only explicit no-thinking selection and resets on scope changes without losing intent', async () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null, scopeKey: 'task-a' } })
+    await wrapper.get('textarea').setValue('用户的测试意图')
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.emitted('generate')?.[0]).toEqual(['用户的测试意图', 'off'])
+    await wrapper.setProps({ scopeKey: 'task-b' })
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('用户的测试意图')
+    expect((wrapper.get('[data-testid="ai-thinking-mode"]').element as HTMLSelectElement).value).toBe('default')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.emitted('generate')?.[1]).toEqual(['用户的测试意图'])
+  })
+
+  it('uses the selected mode only for an explicit retry', async () => {
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: { ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway' }] } } })
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    const retry = wrapper.findAll('button').find(button => button.text().includes('重新生成当前范围'))!
+    await retry.trigger('click')
+    expect(wrapper.emitted('retry')?.[0]?.[1]).toBe('off')
+    wrapper.unmount()
+  })
+
+  it('does not carry advanced mode to a different signed-in user', async () => {
+    sessionStorage.setItem('sessionToken', 'account-a')
+    const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: null, scopeKey: 'same-task' } })
+    await wrapper.get('[data-testid="ai-thinking-mode"]').setValue('off')
+    sessionStorage.setItem('sessionToken', 'account-b')
+    await wrapper.get('[data-testid="generate-ai"]').trigger('click')
+    expect(wrapper.emitted('generate')).toBeUndefined()
+    expect(wrapper.text()).toContain('登录状态已变化')
+    sessionStorage.removeItem('sessionToken')
+    wrapper.unmount()
+  })
+
+  it('explains unsupported routes and unconfirmed modes without promising no charge', () => {
+    for (const [code, expected] of [['thinking_route_unsupported','不支持关闭思考'], ['thinking_mode_unconfirmed','无法确认']]) {
+      const wrapper = mount(AiAssistant, { props: { selectedCount: 1, job: {
+        ...job, state: 'failed_gateway', batches: [{ ...job.batches[0], state: 'failed_gateway', error_code: code }],
+      } } })
+      expect(wrapper.text()).toContain(expected)
+      if (code === 'thinking_route_unsupported') expect(wrapper.text()).not.toContain('模型调用失败')
+      wrapper.unmount()
+    }
+  })
+})

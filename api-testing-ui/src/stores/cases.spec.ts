@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-import { apiClient, type ApiClient } from '../api/client'
+import { apiClient, ApiClientError, type ApiClient } from '../api/client'
 import type { AiJob, ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useCasesStore } from './cases'
 
@@ -1694,4 +1694,34 @@ describe('cases store', () => {
     expect(store.debugExecution).toBeNull()
     expect(store.debugResult).toBeNull()
   })
+})
+
+describe('AI scoped thinking mode', () => {
+  it('preserves default payload and includes only an explicit off mode', async () => {
+    setActivePinia(createPinia())
+    const store = useCasesStore()
+    vi.spyOn(store, 'pollAiJob').mockResolvedValue()
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { job: { id: 'job-1', state: 'queued', batches: [] } } })
+    await store.generate(['endpoint-1'], 'environment-1', 'intent', 'task-1')
+    expect(post.mock.calls[0][1]).toEqual({endpoint_ids: ['endpoint-1'], environment_revision_id: 'environment-1', intent: 'intent', task_id: 'task-1'})
+    await store.generate(['endpoint-1'], 'environment-1', 'intent', 'task-1', 'off')
+    expect(post.mock.calls[0][0]).toBe('/api/api-testing/v1/ai-jobs')
+    expect(post.mock.calls[1][0]).toBe('/api/api-testing/v1/ai-jobs/thinking-v1')
+    expect(post.mock.calls[1][1]).toEqual({endpoint_ids: ['endpoint-1'], environment_revision_id: 'environment-1', intent: 'intent', task_id: 'task-1', thinking_mode: 'off'})
+  })
+
+  it('fails closed on an old server without retrying the default endpoint', async () => {
+    setActivePinia(createPinia())
+    const store = useCasesStore()
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue(new ApiClientError(404, 'not found'))
+    const poll = vi.spyOn(store, 'pollAiJob')
+    await store.generate(['endpoint-1'], 'environment-1', 'intent', 'task-1', 'off')
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post.mock.calls[0][0]).toBe('/api/api-testing/v1/ai-jobs/thinking-v1')
+    expect(poll).not.toHaveBeenCalled()
+    expect(store.aiError).toContain('当前后台无法接受该请求')
+    expect(store.aiError).toContain('访问权限')
+    expect(store.aiError).toContain('未自动改用默认模式')
+  })
+
 })

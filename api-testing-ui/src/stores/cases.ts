@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { apiClient, type ApiClient } from '../api/client'
+import { apiClient, ApiClientError, type ApiClient } from '../api/client'
 import type { AiJob, ApiEndpoint, CaseDraft, CaseRequest, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionCaseResult, ExecutionView, GeneratedCasePreview } from '../api/contracts'
 import { aiValidationSummary } from '../utils/aiValidationPresentation'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
@@ -408,15 +408,17 @@ export const useCasesStore = defineStore('api-cases', {
       if (firstError) throw new Error(`请先修正用例校验错误：${firstError}`)
       return version
     },
-    async generate(endpointIds: string[], environmentRevisionId: string, intent: string, taskId?: string): Promise<void> {
+    async generate(endpointIds: string[], environmentRevisionId: string, intent: string, taskId?: string, thinkingMode?: 'off'): Promise<void> {
       this.clearAiJob()
       const scopeGeneration = this.aiScopeGeneration
       const session = sessionIdentity()
       const draftGeneration = this.aiRestoreGeneration
       try {
-        const response = await apiClient.post<{ job: AiJob }>('/api/api-testing/v1/ai-jobs', {
+        const path = thinkingMode === 'off' ? '/api/api-testing/v1/ai-jobs/thinking-v1' : '/api/api-testing/v1/ai-jobs'
+        const response = await apiClient.post<{ job: AiJob }>(path, {
           endpoint_ids: endpointIds, environment_revision_id: environmentRevisionId, intent,
           ...(taskId ? { task_id: taskId } : {}),
+          ...(thinkingMode === 'off' ? { thinking_mode: 'off' } : {}),
         })
         if (scopeGeneration !== this.aiScopeGeneration || session !== sessionIdentity()) return
         this.aiJob = response.data.job
@@ -424,7 +426,9 @@ export const useCasesStore = defineStore('api-cases', {
         await this.pollAiJob(response.data.job.id, { draftGeneration })
       } catch (error) {
         if (scopeGeneration !== this.aiScopeGeneration || session !== sessionIdentity()) return
-        this.aiError = error instanceof Error ? error.message : 'AI 生成失败'
+        this.aiError = thinkingMode === 'off' && error instanceof ApiClientError && error.status === 404
+          ? '当前后台无法接受该请求，请检查版本及当前任务、接口的访问权限；未自动改用默认模式。'
+          : error instanceof Error ? error.message : 'AI 生成失败'
       }
     },
     async generateBasicPositive(endpointIds: string[], environmentRevisionId: string, taskId?: string): Promise<CaseVersion[]> {
