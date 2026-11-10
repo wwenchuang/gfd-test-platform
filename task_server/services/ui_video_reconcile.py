@@ -748,6 +748,26 @@ def _rejected_action_values(observation):
     return values
 
 
+def _retry_frame_unmatched(previous,candidates):
+    """Find an injective match without relying on event ordering."""
+    def compatible(event,candidate):
+        return (all(candidate.get(k)==event.get(k) for k in ('action','target','value')) and
+                set(event['frame_refs'])<=set(candidate['frame_refs']))
+    edges=[[j for j,c in enumerate(candidates) if compatible(e,c)] for e in previous]
+    assigned={}
+    def assign(i,visited):
+        for j in edges[i]:
+            if j in visited:continue
+            visited.add(j)
+            if j not in assigned or assign(assigned[j],visited):
+                assigned[j]=i
+                return True
+        return False
+    for i in range(len(previous)):
+        if not assign(i,set()):return i
+    return None
+
+
 def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=(),retry_return_gesture_only=False,preserved_interactions=(),adjacent_boundary_refs=()):
     """Revisit one bounded gap without accepting omission or copying old semantics."""
     import copy
@@ -937,13 +957,20 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         for event in retry_hypotheses:
             if event not in unmatched:raise ValueError('video_required_action_missing')
             unmatched.remove(event)
-        unmatched=list(repaired['events'])
-        for event in retry_frame_hypotheses:
-            match=next((i for i,candidate in enumerate(unmatched)
-                if all(candidate.get(k)==event.get(k) for k in ('action','target','value')) and
-                set(event['frame_refs'])<=set(candidate['frame_refs'])),None)
-            if match is None:raise ValueError('video_required_action_missing')
-            unmatched.pop(match)
+        missing=_retry_frame_unmatched(retry_frame_hypotheses,repaired['events'])
+        if missing is not None:
+            event=retry_frame_hypotheses[missing]
+            action=[c for c in repaired['events'] if c.get('action')==event.get('action')]
+            target=[c for c in action if c.get('target')==event.get('target')]
+            value=[c for c in target if c.get('value')==event.get('value')]
+            matching=[c for c in value if set(event['frame_refs'])<=set(c['frame_refs'])]
+            error=ValueError('video_required_action_missing')
+            error.missing_frame_refs=set(event['frame_refs'])
+            error.retry_match_evidence={'action':event['action'],'frame_refs':list(event['frame_refs']),
+                'previous_count':len(retry_frame_hypotheses),'candidate_count':len(repaired['events']),
+                'action_candidates':len(action),'target_candidates':len(target),
+                'value_candidates':len(value),'frame_candidates':len(matching)}
+            raise error
         # A later mapping, boundary, or coverage rejection cannot authorize a
         # subsequent model response to erase already validated uncertainty.
         from .ui_video_business_inputs import _MANUAL

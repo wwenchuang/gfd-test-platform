@@ -80,10 +80,25 @@ def _private_target_failure(error,code,document):
     if code=='video_required_action_missing':
         refs=getattr(error,'missing_frame_refs',None)
         known={f.get('frame_id') for f in document.get('media',{}).get('frames',[])}
+        result={}
         if (type(refs) is set and 1<=len(refs)<=32 and
-            all(type(ref) is str and re.fullmatch(r'frame-[0-9]{3,6}',ref) and ref in known for ref in refs)):
-            return {'missing_frame_refs':sorted(refs)}
-        return {}
+            all(type(ref) is str and re.fullmatch(r'frame-(?:[0-9]{3,6}|end)',ref) and ref in known for ref in refs)):
+            result['missing_frame_refs']=sorted(refs)
+        evidence=getattr(error,'retry_match_evidence',None)
+        keys={'action','frame_refs','previous_count','candidate_count','action_candidates',
+              'target_candidates','value_candidates','frame_candidates'}
+        counts=('previous_count','candidate_count','action_candidates','target_candidates','value_candidates','frame_candidates')
+        if (type(evidence) is dict and set(evidence)==keys and
+            type(evidence['action']) is str and evidence['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard','aiAssert','aiWaitFor'} and
+            type(evidence['frame_refs']) is list and 1<=len(evidence['frame_refs'])<=8 and
+            all(type(ref) is str and re.fullmatch(r'frame-(?:[0-9]{3,6}|end)',ref) and ref in known for ref in evidence['frame_refs']) and
+            len(set(evidence['frame_refs']))==len(evidence['frame_refs']) and
+            type(refs) is set and set(evidence['frame_refs'])==refs and
+            all(type(evidence[k]) is int and 0<=evidence[k]<=120 for k in counts) and
+            1<=evidence['previous_count'] and
+            evidence['frame_candidates']<=evidence['value_candidates']<=evidence['target_candidates']<=evidence['action_candidates']<=evidence['candidate_count']):
+            result['retry_match_evidence']=dict(evidence)
+        return result
     if code=='video_expected_missing':
         evidence=getattr(error,'outcome_failure_evidence',None)
         if (type(evidence) is dict and set(evidence)=={'candidate_index','reason'} and
