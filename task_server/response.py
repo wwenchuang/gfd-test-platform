@@ -31,7 +31,7 @@ def request_body_limit(path):
     The legacy raw report endpoint is streamed to disk and may use the larger
     upload limit. JSON and base64 chunk endpoints stay on the normal limit.
     """
-    if path in {"/api/platform/week1-probes", "/api/platform/week1-probes/confirm", "/api/platform/week1-smoke", "/api/platform/week2-real"}:
+    if path in {"/api/platform/week1-probes", "/api/platform/week1-probes/confirm", "/api/platform/week1-smoke", "/api/platform/week2-real", "/api/ui-executions/web-check"}:
         return 1024
     return MAX_UPLOAD_BODY_SIZE if path == "/report" else MAX_BODY_SIZE
 

@@ -9,6 +9,7 @@ let uiStartCreationIntent=null;
 const uiSimplePictures=new Map();
 const uiSimplePictureRequests=new Set();
 const uiSimpleDownloads=new Set();
+let uiCatalogCleanup=null;
 function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].includes(key);}
 function isUiSimpleAvailable(key){return key==='ui_reports'?uiSimpleEvidenceAvailable:uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
@@ -17,6 +18,7 @@ function confirmUiCaseDraftLeave(){
   return window.confirm('当前用例有未保存的修改，离开后这些修改可能丢失。确认离开吗？');
 }
 function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
+  uiCatalogCleanup?.();uiCatalogCleanup=null;
   uiCaseCreationEpoch++;uiCaseDraftHandle?.dispose();uiCaseDraftHandle=null;
   if(discardReportIntent)clearUiSimpleReportIntent();
   for(const progress of document.querySelectorAll('[data-week2-progress]'))progress.textContent='本人分析结果待核验。';
@@ -35,7 +37,7 @@ function resetUiSimpleWorkflow(){
   uiStartCreationIntent=null;
   uiSimpleEpoch++;uiSimpleEnabled=false;uiSimpleEvidenceAvailable=false;
   window.UiSimpleFlow?.reset();leaveUiSimpleWorkflow();
-  document.querySelectorAll('[data-practice-workbench] [data-ui-week-one], [data-practice-workbench] [data-ui-week-two], [data-practice-workbench] [data-practice-ai-results]').forEach(node=>node.remove());
+  document.querySelectorAll('[data-practice-workbench] [data-ui-week-one], [data-practice-workbench] [data-ui-week-two], [data-practice-workbench] [data-practice-ai-results], [data-practice-workbench] [data-catalog-check]').forEach(node=>node.remove());
 }
 
 async function initUiSimpleAvailability({navigate=true}={}){
@@ -161,6 +163,7 @@ function attachTaskWorkbench(page){
   if(hasPermission('api.view')){const link=document.createElement('a');link.dataset.practiceApi='';link.href='/api-test/';link.textContent='打开 API 测试';link.onclick=event=>{if(!current()||!hasPermission('api.view'))event.preventDefault();};apiSlot.append(link);}
   else apiSlot.textContent='需要 API 查看权限，请联系管理员。';
   if(hasPermission('api.view'))attachPracticeAiResults(page,current);
+  if(hasPermission('ui.view'))attachCatalogWebCheck(page,current);
   if(!hasPermission('platform.configure')||(currentAccessProfile?.is_superuser!==true&&currentAccessProfile?.scope?.ui_apps!=='*'))return;
   attachUiFirstWeekGuide(page);
   const previousEnvironment=page.querySelector('[data-ui-week-one]');
@@ -304,6 +307,83 @@ function attachUiWeekTwoGuide(page){
     link.onclick=event=>{if(!current())event.preventDefault();};guide.querySelector('[data-week2-slot="'+key+'"]').append(' ',link);
   }
 
+}
+
+// This fixed check reads the signed-in user's platform catalog; it does not run
+// device tests or prove the correctness of the underlying business data.
+function attachCatalogWebCheck(page,current){
+  const scope=()=>JSON.stringify({token:sessionToken(),user:uiSimpleIdentity(),scope:currentAccessProfile?.scope,permissions:currentAccessProfile?.permissions,superuser:currentAccessProfile?.is_superuser,status:currentAccessProfile?.status});
+  const snapshot=scope();
+  const panel=document.createElement('details');panel.dataset.catalogCheck='';panel.className='ui-case-source-picker ui-practice-panel';
+  panel.innerHTML='<summary>用例库页面检查</summary><p>服务器只读打开本平台用例库，核对页面显示数量与当前账号有权查看的接口返回数量是否一致。不操作手机，不执行用例；显示一致不代表业务数据正确或业务通过。</p><div class="ui-week-probe-actions"><button type="button" data-catalog-run>运行页面检查</button><button type="button" data-catalog-refresh>刷新检查记录</button></div><p data-catalog-notice role="status" aria-live="polite">展开后可查看本人已有的检查记录。</p><div data-catalog-history></div>';
+  page.append(panel);
+  const notice=panel.querySelector('[data-catalog-notice]'),history=panel.querySelector('[data-catalog-history]');
+  let busy=false,loaded=false,serial=0,previewUrl=null;const artifactRequests=new Set();
+  const clear=()=>{history.replaceChildren();if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=null;}};
+  const valid=()=>{
+    const live=current()&&hasPermission('ui.view')&&scope()===snapshot;
+    if(!live){serial++;clear();notice.textContent='账号或权限已变化，请重新打开此页面。';}
+    return live;
+  };
+  const changed=()=>{if(panel.isConnected&&valid()){serial++;clear();loaded=false;notice.textContent='返回页面后，请刷新记录以重新核对查看权限。';}};window.addEventListener('focus',changed);document.addEventListener('visibilitychange',changed);
+  uiCatalogCleanup=()=>{serial++;clear();window.removeEventListener('focus',changed);document.removeEventListener('visibilitychange',changed);};
+  const setBusy=value=>{busy=value;panel.querySelectorAll('button').forEach(button=>{button.disabled=value;});};
+  const errorText=error=>error?.status===401?'登录已失效，请重新登录。':error?.status===403?'当前账号没有查看权限。':error?.status===429?'已有检查正在运行，请稍后刷新记录。':'检查未完成，请先刷新结果；如仍无记录，请检查服务和浏览器依赖。';
+  const request=async(method,timeoutMs,id)=>{
+    if(!valid())throw Error('session changed');
+    if(method==='DELETE'&&!/^[a-f0-9]{32}$/.test(id||''))throw Error('invalid id');
+    const sequence=serial,controller=new AbortController();uiSimpleDownloads.add(controller);const timer=setTimeout(()=>controller.abort(),timeoutMs);
+    try{
+      const body=method==='POST'?'{}':method==='DELETE'?'{"confirm":true}':null;
+      const response=await nativeFetch('/api/ui-executions/web-check'+(method==='DELETE'?'?id='+id:''),{method,headers:authHeaders(body?{'Content-Type':'application/json'}:{}),...(body?{body}:{}),signal:controller.signal,redirect:'error'});
+      if(!valid()||controller.signal.aborted||sequence!==serial)throw Error('session changed');
+      if(!response.ok)throw Object.assign(Error('request failed'),{status:response.status});
+      const data=await response.json();if(!valid()||controller.signal.aborted||sequence!==serial)throw Error('session changed');return data;
+    }finally{clearTimeout(timer);uiSimpleDownloads.delete(controller);}
+  };
+  const openArtifact=async(row,id,item)=>{
+    if(!valid()||busy||!row.isConnected||!/^[a-f0-9]{32}$/.test(id)||!['screenshot','trace'].includes(item))return;
+    setBusy(true);const controller=new AbortController();uiSimpleDownloads.add(controller);artifactRequests.add(controller);const timer=setTimeout(()=>controller.abort(),30000);
+    const image=item==='screenshot',mime=image?'image/png':'application/zip',limit=(image?8:30)*1024*1024;
+    try{
+      const response=await nativeFetch('/api/ui-executions/web-check/artifact?id='+id+'&item='+item,{headers:authHeaders(),signal:controller.signal,redirect:'error'});
+      if(!valid()||controller.signal.aborted||!row.isConnected)return;
+      if(!response.ok)throw Object.assign(Error('unavailable'),{status:response.status});
+      if((response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase()!==mime||Number(response.headers.get('content-length'))>limit)throw Error('invalid evidence');
+      let blob;
+      if(response.body?.getReader){const reader=response.body.getReader(),chunks=[];let size=0;try{while(true){const part=await reader.read();if(!valid()||controller.signal.aborted||!row.isConnected){await reader.cancel();return;}if(part.done)break;size+=part.value.byteLength;if(size>limit)throw Error('too large');chunks.push(part.value);}blob=new Blob(chunks,{type:mime});}catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}}
+      else {const length=response.headers.get('content-length');if(!length||!/^\d+$/.test(length)||Number(length)<1||Number(length)>limit)throw Error('invalid evidence length');blob=await response.blob();}
+      if(!valid()||controller.signal.aborted||!row.isConnected||!blob.size||blob.size>limit)return;
+      const src=URL.createObjectURL(blob);
+      if(image){if(previewUrl)URL.revokeObjectURL(previewUrl);previewUrl=src;panel.querySelector('[data-catalog-preview]')?.remove();const img=document.createElement('img');img.dataset.catalogPreview='';img.alt='用例库页面检查截图';img.style.maxWidth='100%';img.style.maxHeight='320px';img.src=src;row.append(img);notice.textContent='已加载本次页面截图。';}
+      else {const link=document.createElement('a');link.href=src;link.download='用例库页面检查-trace.zip';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(src),60000);notice.textContent='已发起 trace 下载，请查看浏览器下载记录。';}
+    }catch(error){if(valid()&&row.isConnected){if([401,403,404].includes(error?.status))clear();notice.textContent=error?.status===401?'登录已失效，请重新登录。':error?.status===403||error?.status===404?'证据不存在或当前账号无权查看。':'证据读取失败，请稍后重试。';}}
+    finally{clearTimeout(timer);uiSimpleDownloads.delete(controller);artifactRequests.delete(controller);if(valid())setBusy(false);}
+  };
+  const render=items=>{
+    clear();if(!items.length){history.textContent='暂无检查记录。';return;}
+    for(const item of items){if(item?.scenario!=='ui_catalog_count'&&!item?.scope_changed)continue;const row=document.createElement('section');row.className='ui-week-probe-row';
+      const heading=document.createElement('strong');heading.textContent=item.deletion_pending?'删除未完成，可再次尝试':item.scope_changed?'权限范围已变化，历史内容不可查看；该记录仍占用存储，可删除':(({passed:'页面显示一致',failed:'页面检查未通过',blocked:'检查阻塞'})[item.status]||'状态未知');row.append(heading);
+      const meta=document.createElement('p');meta.textContent=(Number.isFinite(item.created)?'时间：'+uiPracticeTime(item.created*1000)+'；':'')+(Number.isSafeInteger(item.total)?'执行时接口返回数量：'+item.total+'。':'')+(({'authentication':'登录状态或权限不可用。','environment':'页面、服务或浏览器依赖不可用。','business':'页面显示与接口返回不一致或页面必要元素缺失。','evidence':'检查证据未能保存。'})[item.error_kind]||'');row.append(meta);
+      if(/^[a-f0-9]{32}$/.test(item.id||'')){
+        if(!item.deletion_pending&&!item.scope_changed&&Array.isArray(item.artifacts)){for(const [key,label] of [['screenshot','查看截图'],['trace','下载 trace']])if(item.artifacts.includes(key)){const button=document.createElement('button');button.type='button';button.dataset.catalogArtifact=key;button.textContent=label;button.onclick=()=>void openArtifact(row,item.id,key);row.append(button);}}
+        const remove=document.createElement('button');remove.type='button';remove.dataset.catalogDelete='';remove.textContent=item.deletion_pending?'重试删除':'删除本条记录';remove.onclick=async()=>{
+          if(!valid()||busy||!row.isConnected)return;
+          if(!window.confirm('将永久删除本条检查记录及其截图和 trace，无法恢复；不会影响其他记录。确认删除吗？'))return;
+          if(!valid()||!row.isConnected)return;for(const controller of artifactRequests)controller.abort();clear();setBusy(true);notice.textContent='正在删除本条检查记录…';
+          let confirmed=false;
+          try{const data=await request('DELETE',30000,item.id);if(!valid())return;if(data?.ok!==true||data.deleted!==true)throw Error('invalid deletion');confirmed=true;clear();await load();if(valid())notice.textContent='本条检查记录和证据已删除。';}
+          catch(error){if(valid()){clear();if(confirmed)notice.textContent='本条记录已删除，但记录刷新失败，请稍后刷新。';else if(error?.status===409){try{await load();}catch(_){}if(valid())notice.textContent='删除未完成，请检查记录并重试。';}else if(error?.status===401||error?.status===403)notice.textContent=errorText(error);else notice.textContent='删除结果尚未确认，请先刷新记录再决定是否重试。';}}
+          finally{if(valid())setBusy(false);}
+        };row.append(remove);
+      }
+      history.append(row);
+    }
+  };
+  const load=async(fresh)=>{const sequence=++serial,data=await request('GET',10000);if(!valid()||sequence!==serial)return;if(data?.ok!==true||!Array.isArray(data.results))throw Error('invalid history');const items=[...data.results];if(fresh?.id&&!items.some(item=>item.id===fresh.id))items.unshift(fresh);render(items);loaded=true;notice.textContent='显示当前账号可查看的检查记录。';};
+  panel.addEventListener('toggle',async()=>{if(!panel.open||loaded||busy||!valid())return;setBusy(true);try{await load();}catch(error){if(valid())notice.textContent=errorText(error);}finally{if(valid())setBusy(false);}});
+  panel.querySelector('[data-catalog-refresh]').onclick=async()=>{if(!valid()||busy)return;setBusy(true);try{await load();}catch(error){if(valid()){clear();notice.textContent=errorText(error);}}finally{if(valid())setBusy(false);}};
+  panel.querySelector('[data-catalog-run]').onclick=async()=>{if(!valid()||busy)return;setBusy(true);notice.textContent='服务器正在只读检查页面，请勿重复点击。';let complete=false;try{const data=await request('POST',65000);if(!valid())return;if(data?.ok!==true||!data.result)throw Error('invalid result');render([data.result]);complete=true;if(data.result.id)await load(data.result);else notice.textContent='检查未生成保存记录，请查看阻塞原因。';}catch(error){if(valid()){if(error?.status===401||error?.status===403){clear();notice.textContent=errorText(error);}else notice.textContent=complete?'本次结果已返回，但历史刷新失败，请稍后刷新。':errorText(error);}}finally{if(valid())setBusy(false);}};
 }
 
 function uiPracticeTime(value){

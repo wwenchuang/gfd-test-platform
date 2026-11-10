@@ -222,6 +222,9 @@ class MainAccess:
         if self._draft_permission(method, path):
             # Private draft services verify the persisted owner and current app scope.
             return
+        if method in {'POST', 'DELETE'} and path == '/api/ui-executions/web-check':
+            # This fixed GET-only browser check verifies its owner and scope again.
+            return
         if ((method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/deliveries/[0-9a-f]{64}/retry", path)) or
                 (method == "POST" and (path in {"/api/ui-executions", "/api/ui-executions/preflight"} or re.fullmatch(r"/api/ui-executions/[^/]+/(cancel|rerun|report|confirm-stop)", path))) or
                 (method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")))):
@@ -337,6 +340,8 @@ class MainAccess:
         draft_permission = self._draft_permission(method, path)
         if draft_permission:
             return draft_permission
+        if method in {'POST', 'DELETE'} and path == '/api/ui-executions/web-check':
+            return 'ui.view'
         if method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/deliveries/[0-9a-f]{64}/retry", path):
             return "platform.notify"
         if method in {"GET", "HEAD"} and (path == "/api/ui-executions" or path.startswith("/api/ui-executions/")):

@@ -2844,6 +2844,100 @@ def _get_week1_smoke(handler, qs):
         handler._json({"ok": True, "results": week1_smoke.list_results(owner)})
 
 
+def _week5_web_actor(handler):
+    from task_server.services import week5_web_service
+    from task_server.services.operation_attribution import current_actor
+    actor = current_actor()
+    token = bearer_token(handler.headers)
+    session = verify_session_token(token)
+    if (actor.get('kind') != 'user' or not session or actor.get('user_id') != session.get('user_id')
+            or not week5_web_service._profile(session.get('user_id'), session.get('user'), token)):
+        handler._json({'ok':False, 'code':'unauthorized', 'error':'登录已失效或缺少 UI 查看权限'}, 403)
+        return None
+    return session['user_id'], session['user'], token
+
+
+@route_get('/api/ui-executions/web-check')
+def _get_week5_web_check(handler, qs):
+    from task_server.services import week5_web_service
+    actor = _week5_web_actor(handler)
+    if not actor:
+        return
+    if qs:
+        handler._json({'ok':False, 'error':'不接受额外参数'}, 400)
+        return
+    handler._json({'ok':True, 'results':week5_web_service.list_results(*actor)})
+
+
+@route_post('/api/ui-executions/web-check')
+def _post_week5_web_check(handler, qs):
+    from task_server.services import week5_web_service, week1_smoke
+    actor = _week5_web_actor(handler)
+    if not actor:
+        return
+    body = handler._body()
+    if qs or not isinstance(body, dict) or body:
+        handler._json({'ok':False, 'error':'固定检查不接受额外参数'}, 400)
+        return
+    if not acquire_heavy_workload_slot('sync', blocking=False):
+        handler._json({'ok':False, 'code':'heavy_workload_busy', 'error':'当前任务较多，请稍后再试'}, 503)
+        return
+    try:
+        result = week5_web_service.run(*actor)
+    except week1_smoke.SmokeBusy:
+        handler._json({'ok':False, 'code':'check_busy', 'error':'检查正在执行，请稍后查看结果'}, 429)
+        return
+    finally:
+        release_heavy_workload_slot('sync')
+    handler._json({'ok':True, 'result':result})
+
+
+@route_get('/api/ui-executions/web-check/artifact')
+def _get_week5_web_artifact(handler, qs):
+    from task_server.services import week5_web_service
+    actor = _week5_web_actor(handler)
+    if not actor:
+        return
+    try:
+        if set(qs) != {'id','item'} or qs['item'] not in ('screenshot','trace'):
+            raise ValueError('not_found')
+        data = week5_web_service.artifact(*actor, qs['id'], qs['item'])
+    except (ValueError, OSError):
+        handler._json({'ok':False, 'error':'证据不存在或无权访问'}, 404)
+        return
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header('Content-Type', 'image/png' if qs['item'] == 'screenshot' else 'application/zip')
+    handler.send_header('Cache-Control', 'private, no-store')
+    handler.send_header('X-Content-Type-Options', 'nosniff')
+    if qs['item'] == 'trace':
+        handler.send_header('Content-Disposition', 'attachment; filename="web-check-trace.zip"')
+    handler.send_header('Content-Length', str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+@route_delete('/api/ui-executions/web-check')
+def _delete_week5_web_check(handler, qs):
+    from task_server.services import week5_web_service
+    actor = _week5_web_actor(handler)
+    if not actor:
+        return
+    body = handler._body()
+    if set(qs) != {'id'} or not isinstance(body, dict) or set(body) != {'confirm'} or body['confirm'] is not True:
+        handler._json({'ok':False, 'error':'请确认删除本人这次检查的截图和 trace'}, 400)
+        return
+    try:
+        complete = week5_web_service.delete(*actor, qs['id'])
+    except (ValueError, OSError):
+        handler._json({'ok':False, 'error':'记录不存在或无权操作'}, 404)
+        return
+    if not complete:
+        handler._json({'ok':False, 'code':'deletion_pending', 'error':'证据清理尚未完成，请稍后再次确认重试'}, 409)
+        return
+    handler._json({'ok':True, 'deleted':True})
+
+
 def _week2_real_actor(handler):
     from task_server.services import week2_real
     from task_server.services.operation_attribution import current_actor

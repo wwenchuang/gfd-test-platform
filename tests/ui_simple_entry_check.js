@@ -4,6 +4,83 @@ const fs=require('node:fs');
 const {JSDOM}=require('../api-testing-ui/node_modules/jsdom');
 const wait=()=>new Promise(setImmediate);
 const mockPracticeFetch=w=>{const handler=w.apiRequest;w.nativeFetch=async(path,options)=>({ok:true,status:200,json:async()=>({ok:true,data:await handler(path.slice(4),options)})});};
+const mockCatalogFetch=(w,artifact)=>{w.nativeFetch=async(path,options={})=>{if(!path.startsWith('/api/ui-executions/web-check')||path.includes('/artifact'))return artifact(path,options);try{const value=await w.apiRequest(path.slice(4),{...options,body:options.body?JSON.parse(options.body):undefined});return {ok:true,status:200,json:async()=>value};}catch(error){return {ok:false,status:error.status||500};}};};
+test('read-only catalog check is explicit and keeps the evidence distinct from business success',async t=>{
+ const {w}=fixture(t),calls=[];w.canAccessWorkflow=()=>true;
+ w.apiRequest=async(path,options={})=>{calls.push([path,options]);if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(path==='/ui-executions/web-check'&&options.method==='POST')return {ok:true,result:{id:'a'.repeat(32),scenario:'ui_catalog_count',status:'passed',total:7,created:1730000000,artifacts:['screenshot','trace']}};return {ok:true,results:[]};};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');assert.ok(panel);assert.match(panel.textContent,/页面.*数量/);assert.match(panel.textContent,/不代表.*业务/);assert.equal(calls.filter(([p])=>p==='/ui-executions/web-check').length,0);
+ panel.querySelector('[data-catalog-run]').click();await wait();await wait();assert.equal(calls.filter(([p,o])=>p==='/ui-executions/web-check'&&o.method==='POST').length,1);assert.match(panel.textContent,/一致/);assert.match(panel.textContent,/7/);assert.ok(panel.querySelector('[data-catalog-artifact="screenshot"]'));
+});
+test('catalog check rejects stale account, token and scope responses and hides earlier evidence',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;let resolve;const id='b'.repeat(32);
+ w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(path==='/ui-executions/web-check'&&options.method==='POST')return new Promise(r=>resolve=r);return {ok:true,results:[]};};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();let panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();w.currentAccessProfile={user_id:'u1',scope:{ui_apps:['other']}};resolve({ok:true,result:{id,scenario:'ui_catalog_count',status:'passed',total:99,artifacts:['screenshot']}});await wait();await wait();assert.doesNotMatch(panel.textContent,/99/);assert.equal(panel.querySelector('[data-catalog-artifact]'),null);
+ w.resetUiSimpleWorkflow();assert.equal(w.document.querySelector('[data-catalog-check]'),null);
+});
+test('catalog screenshot is read with current authentication and rejects a changed session',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='c'.repeat(32);let resolve,request;
+ w.apiRequest=async(path,options={})=>path==='/ui-executions/availability'?{ok:true,enabled:true}:options.method==='POST'?{ok:true,result:{id,scenario:'ui_catalog_count',status:'failed',artifacts:['screenshot']}}:{ok:true,results:[]};
+ mockCatalogFetch(w,(path,options)=>{request={path,options};return new Promise(r=>resolve=r);});await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();await wait();await wait();panel.querySelector('[data-catalog-artifact="screenshot"]').click();assert.equal(request.path,'/api/ui-executions/web-check/artifact?id='+id+'&item=screenshot');assert.ok(request.options.headers.has('Authorization'));w.sessionStorage.setItem('sessionToken','other');resolve({ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['image'],{type:'image/png'})});await wait();await wait();assert.equal(panel.querySelector('[data-catalog-preview]'),null);
+});
+test('catalog check removes a returned result when the server rejects the follow-up history request',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='d'.repeat(32);
+ w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(path==='/ui-executions/web-check'&&options.method==='POST')return {ok:true,result:{id,scenario:'ui_catalog_count',status:'passed',total:11,artifacts:['screenshot']}};throw Object.assign(Error('denied'),{status:403});};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();await wait();await wait();assert.doesNotMatch(panel.textContent,/11|页面显示一致/);assert.equal(panel.querySelector('[data-catalog-artifact]'),null);assert.match(panel.textContent,/权限/);
+});
+test('catalog check clears visible results after evidence authorization is revoked',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='e'.repeat(32);
+ w.apiRequest=async(path,options={})=>path==='/ui-executions/availability'?{ok:true,enabled:true}:options.method==='POST'?{ok:true,result:{id,scenario:'ui_catalog_count',status:'passed',total:13,artifacts:['screenshot']}}:{ok:true,results:[]};
+ mockCatalogFetch(w,async()=>({ok:false,status:403,headers:{get:()=>null}}));await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();await wait();await wait();panel.querySelector('[data-catalog-artifact="screenshot"]').click();await wait();await wait();assert.doesNotMatch(panel.textContent,/13|页面显示一致/);assert.equal(panel.querySelector('[data-catalog-artifact]'),null);assert.match(panel.textContent,/无权/);
+});
+test('catalog request uses a session-bound fetch and stale 401 cannot log out the next user',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;let resolve,loggedOut=false;w.forceLogoutWithMessage=()=>loggedOut=true;
+ w.apiRequest=async path=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};throw Error('must not use global request');};
+ w.nativeFetch=(path,options)=>new Promise(r=>{resolve=()=>r({ok:false,status:401,headers:{get:()=>null},json:async()=>({})});});
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();w.currentAccessProfile={user_id:'u2',scope:{ui_apps:'*'}};w.sessionStorage.setItem('sessionToken','new-session');resolve();await wait();await wait();assert.equal(loggedOut,false);assert.doesNotMatch(panel.textContent,/页面显示一致/);
+});
+test('catalog evidence 404 clears previously shown screenshot and results',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='f'.repeat(32);let deny=false;
+ w.apiRequest=async(path,options={})=>path==='/ui-executions/availability'?{ok:true,enabled:true}:options.method==='POST'?{ok:true,result:{id,scenario:'ui_catalog_count',status:'passed',total:17,artifacts:['screenshot']}}:{ok:true,results:[]};
+ mockCatalogFetch(w,async()=>deny?{ok:false,status:404,headers:{get:()=>null}}:{ok:true,status:200,headers:{get:key=>key==='content-type'?'image/png':key==='content-length'?'5':null},blob:async()=>new w.Blob(['image'],{type:'image/png'})});
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();await wait();await wait();panel.querySelector('[data-catalog-artifact="screenshot"]').click();await wait();await wait();assert.ok(panel.querySelector('[data-catalog-preview]'));deny=true;panel.querySelector('[data-catalog-artifact="screenshot"]').click();await wait();await wait();assert.equal(panel.querySelector('[data-catalog-preview]'),null);assert.doesNotMatch(panel.textContent,/17|页面显示一致/);
+});
+test('catalog evidence without a stream or content length is rejected before reading',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='1'.repeat(32);let read=false;
+ w.apiRequest=async(path,options={})=>path==='/ui-executions/availability'?{ok:true,enabled:true}:options.method==='POST'?{ok:true,result:{id,scenario:'ui_catalog_count',status:'passed',total:3,artifacts:['screenshot']}}:{ok:true,results:[]};
+ mockCatalogFetch(w,async()=>({ok:true,status:200,headers:{get:key=>key==='content-type'?'image/png':null},blob:async()=>{read=true;return new w.Blob(['unsafe']);}}));
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();await wait();await wait();panel.querySelector('[data-catalog-artifact="screenshot"]').click();await wait();await wait();assert.equal(read,false);assert.equal(panel.querySelector('[data-catalog-preview]'),null);
+});
+test('catalog evidence is cleared on returning to the page until authorization is refreshed',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='2'.repeat(32);
+ w.apiRequest=async(path,options={})=>path==='/ui-executions/availability'?{ok:true,enabled:true}:options.method==='POST'?{ok:true,result:{id,scenario:'ui_catalog_count',status:'passed',total:4,artifacts:['screenshot']}}:{ok:true,results:[]};
+ mockCatalogFetch(w,async()=>({ok:true,status:200,headers:{get:key=>key==='content-type'?'image/png':key==='content-length'?'5':null},blob:async()=>new w.Blob(['image'])}));
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();await wait();await wait();panel.querySelector('[data-catalog-artifact="screenshot"]').click();await wait();await wait();assert.ok(panel.querySelector('[data-catalog-preview]'));w.dispatchEvent(new w.Event('focus'));assert.equal(panel.querySelector('[data-catalog-preview]'),null);assert.equal(panel.querySelector('[data-catalog-artifact]'),null);assert.match(panel.textContent,/刷新/);
+});
+test('catalog deletion requires explicit confirmation and removes only the selected record',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='3'.repeat(32),calls=[];let confirmed=false,removed=false;
+ w.confirm=()=>confirmed;w.apiRequest=async(path,options={})=>{calls.push([path,options]);if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(options.method==='DELETE'){removed=true;return {ok:true,deleted:true};}if(options.method==='POST')return {ok:true,result:{id,scenario:'ui_catalog_count',status:'passed',total:8,artifacts:['trace']}};return {ok:true,results:removed?[]:[{id,scenario:'ui_catalog_count',status:'passed',total:8,artifacts:['trace']}]};};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();await wait();await wait();const button=panel.querySelector('[data-catalog-delete]');assert.ok(button);button.click();await wait();assert.equal(removed,false);confirmed=true;button.click();await wait();await wait();const deletion=calls.find(([p,o])=>o.method==='DELETE');assert.equal(deletion[0],'/ui-executions/web-check?id='+id);assert.equal(deletion[1].body.confirm,true);assert.equal(panel.querySelector('[data-catalog-artifact]'),null);
+});
+test('catalog deletion pending hides trace and permits retry',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='4'.repeat(32);w.confirm=()=>true;let pending=false;
+ w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(options.method==='DELETE'){pending=true;throw Object.assign(Error('pending'),{status:409});}return {ok:true,results:[{id,scenario:'ui_catalog_count',status:'passed',total:9,artifacts:pending?[]:['trace'],deletion_pending:pending}]};};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();panel.querySelector('[data-catalog-delete]').click();await wait();await wait();assert.equal(panel.querySelector('[data-catalog-artifact]'),null);assert.ok(panel.querySelector('[data-catalog-delete]'));assert.match(panel.textContent,/清理.*未完成|删除.*未完成/);
+});
+test('late catalog deletion response cannot affect a different signed-in user',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='5'.repeat(32);let resolve,deleteHeaders;w.confirm=()=>true;
+ w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(options.method==='DELETE'){deleteHeaders=options.headers;return new Promise(r=>resolve=r);}return {ok:true,results:[{id,scenario:'ui_catalog_count',status:'passed',total:23,artifacts:['trace']}]};};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();panel.querySelector('[data-catalog-delete]').click();assert.equal(deleteHeaders.get('Authorization'),'Bearer fixture-session-token');w.currentAccessProfile={user_id:'different',scope:{ui_apps:'*'}};w.sessionStorage.setItem('sessionToken','new-session');w.resetUiSimpleWorkflow();resolve({ok:true,deleted:true});await wait();await wait();assert.equal(w.document.querySelector('[data-catalog-check]'),null);assert.doesNotMatch(w.document.body.textContent,/23|本条检查记录和证据已删除/);
+});
+test('scope changed history displays a safe placeholder with delete but no evidence',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='6'.repeat(32);
+ w.apiRequest=async(path)=>path==='/ui-executions/availability'?{ok:true,enabled:true}:{ok:true,results:[{id,created:1730000000,scope_changed:true,artifacts:[]}]};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();assert.match(panel.textContent,/权限范围已变化/);assert.ok(panel.querySelector('[data-catalog-delete]'));assert.equal(panel.querySelector('[data-catalog-artifact]'),null);
+});
+test('confirmed catalog deletion remains confirmed if history refresh fails',async t=>{
+ const {w}=fixture(t);w.canAccessWorkflow=()=>true;const id='7'.repeat(32);let removed=false;w.confirm=()=>true;
+ w.apiRequest=async(path,options={})=>{if(path==='/ui-executions/availability')return {ok:true,enabled:true};if(options.method==='DELETE'){removed=true;return {ok:true,deleted:true};}if(removed)throw Object.assign(Error('offline'),{status:500});return {ok:true,results:[{id,scenario:'ui_catalog_count',status:'passed',total:3,artifacts:['trace']}]};};
+ mockCatalogFetch(w);await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();panel.querySelector('[data-catalog-delete]').click();await wait();await wait();assert.match(panel.textContent,/已删除.*刷新失败/);assert.equal(panel.querySelector('[data-catalog-artifact]'),null);
+});
 test('practice AI result follows the selected authorized task, not project latest',async t=>{
  const {w}=fixture(t),calls=[];w.canAccessWorkflow=()=>true;
  const task={id:'task-1',project_id:'project-1',environment_revision_id:'env-1',name:'反馈任务',selected_endpoint_ids:['ep-1'],latest_ai_job_id:'job-1'};
