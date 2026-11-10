@@ -37,20 +37,23 @@ export PLAYWRIGHT_BROWSERS_PATH="$scratch/browsers"
 pw="$scratch/node_modules/playwright/cli.js"
 node "$pw" --version
 node "$pw" install --only-shell chromium
+mkdir "$scratch/state"
+run_clean() {
+    env -i PATH="$PATH" HOME="$scratch/state" TMPDIR="$scratch/state" \
+      PYTHONPATH="$PWD" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
+      PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
+      MIDSCENE_ENV_FILE="$scratch/state/absent.env" TASK_RELEASE_REVISION="$revision" \
+      TASK_AUTH_DB="$scratch/state/auth.sqlite3" TASK_OPERATION_DB="$scratch/state/operations.sqlite3" \
+      TASK_DIR="$scratch/state/tasks" REPORT_DIR="$scratch/state/reports" LEARNING_DIR="$scratch/state/learning" \
+      ASSET_DIR="$scratch/state/assets" CASE_DIR="$scratch/state/cases" KNOWLEDGE_DIR="$scratch/state/knowledge" \
+      GENERATE_JOB_DIR="$scratch/state/jobs" \
+      "$@"
+}
 if [[ "$profile" == nightly ]]; then
     stage=static-checks
-    "$python" tests/backend_static_checks.py
-    "$python" tests/frontend_static_checks.py
+    run_clean "$python" tests/backend_static_checks.py
+    run_clean "$python" tests/frontend_static_checks.py
 fi
 stage=smoke
-mkdir "$scratch/state"
-env -i PATH="$PATH" HOME="$scratch/state" TMPDIR="$scratch/state" \
-  PYTHONPATH="$PWD" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
-  PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
-  MIDSCENE_ENV_FILE="$scratch/state/absent.env" TASK_RELEASE_REVISION="$revision" \
-  TASK_AUTH_DB="$scratch/state/auth.sqlite3" TASK_OPERATION_DB="$scratch/state/operations.sqlite3" \
-  TASK_DIR="$scratch/state/tasks" REPORT_DIR="$scratch/state/reports" LEARNING_DIR="$scratch/state/learning" \
-  ASSET_DIR="$scratch/state/assets" CASE_DIR="$scratch/state/cases" KNOWLEDGE_DIR="$scratch/state/knowledge" \
-  GENERATE_JOB_DIR="$scratch/state/jobs" \
-  "$python" -u tests/week6_ci/smoke.py "$scratch/ui_smoke.js" "$profile" "$out"
+run_clean "$python" -u tests/week6_ci/smoke.py "$scratch/ui_smoke.js" "$profile" "$out"
 stage=complete
