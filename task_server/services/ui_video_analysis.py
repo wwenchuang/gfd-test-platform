@@ -1061,8 +1061,8 @@ def _business_question_presentation(root_questions, events):
 def _pack_business_review_questions(root_questions, event_issues, snapshot, global_questions, steps):
     """Pack whole literal issues, retaining every event association separately.
 
-    A maximum-length atomic issue uses its unprefixed text; the adjacent derived
-    ledger carries its anchor. No source event/root/audit is edited or resolved.
+    Each issue must fit together with a visible event anchor; the ledger also
+    records the full association. No source event/root/audit is edited or resolved.
     """
     associated={q for issues in event_issues for q in issues}
     questions=[q for q in root_questions if q not in associated]
@@ -1095,7 +1095,9 @@ def _pack_business_review_questions(root_questions, event_issues, snapshot, glob
         if chunk:chunks.append(chunk)
         for members in chunks:
             text=prefix+'\n'.join(members)
-            if len(text)>2000:text=members[0]  # One full issue, anchor in ledger.
+            # The review UI currently cannot display the ledger separately.
+            # Never expose an unanchored blocker whose event cannot be located.
+            if len(text)>2000:raise ValueError('video_question_anchor_unavailable')
             questions.append(text)
             groups.append({'event_index':index,'start_ms':event['start_ms'],'end_ms':event['end_ms'],
                            'original_step_id':original_step_id,'step_id':step_id,'step_ids':list(step_ids),
@@ -1103,6 +1105,25 @@ def _pack_business_review_questions(root_questions, event_issues, snapshot, glob
                            'issues':list(members),'question':text})
     snapshot['review_question_groups']=groups
     return questions+global_questions
+
+
+_REVIEW_NOTICE='同一问题可能涉及视频多处，请核对完整视频中所有相关操作后再解除。'
+
+
+def _question_with_review_notice(question):
+    if _REVIEW_NOTICE in question:return question
+    decorated=question+' '+_REVIEW_NOTICE
+    return decorated if len(decorated)<=2000 else question
+
+
+def _questions_with_review_notice(questions):
+    presented=[];needs_separate_notice=False
+    for question in questions:
+        value=_question_with_review_notice(question)
+        if value==question and _REVIEW_NOTICE not in question:needs_separate_notice=True
+        presented.append(value)
+    if needs_separate_notice:presented.append(_REVIEW_NOTICE)
+    return list(dict.fromkeys(presented))
 
 
 def draft_proposal(document):
@@ -1188,19 +1209,25 @@ def draft_proposal(document):
         from .ui_video_print_recovery import apply_group
         steps=apply_group(steps,document['print_recovery'])
     questions=list(dict.fromkeys(questions))
-    notice='同一问题可能涉及视频多处，请核对完整视频中所有相关操作后再解除。'
-    questions=[q if notice in q else q+' '+notice for q in questions]
     if not business:
-        questions=list(dict.fromkeys(questions))
         _check_question_count(questions,100)
+    long_event_issue=any(
+        len(f'事件 {index+1}（片段 {event["start_ms"]/1000:g}–{event["end_ms"]/1000:g} 秒）：'+issue)+
+        (0 if _REVIEW_NOTICE in issue else 1+len(_REVIEW_NOTICE))>2000
+        for index,(event,issues) in enumerate(zip(snapshot['events'],event_issues)) for issue in issues)
+    needs_groups=(business and len(questions)>100) or any(len(q)>2000 for q in questions) or long_event_issue
+    questions=_questions_with_review_notice(questions)
+    needs_groups=needs_groups or (business and len(questions)>100)
     payload={'title':document.get('title') or '录屏操作验证','preconditions':[],'steps':steps,'questions':questions}
-    needs_groups=business and (len(questions)>100 or any(len(q)>2000 for q in questions))
     normalized=None if needs_groups else normalize_steps(payload,document['app_id'])
-    if not business:
+    if not business and normalized is not None:
         _check_question_count(normalized['questions'],100)
-    if business and (needs_groups or len(normalized['questions'])>100):
+    if needs_groups or (business and len(normalized['questions'])>100):
+        snapshot.setdefault('raw_root_questions',copy.deepcopy(document['uncertainties']))
         payload['questions']=_pack_business_review_questions(document['uncertainties'],event_issues,snapshot,global_questions,steps)
-        payload['questions']=[q if notice in q else q+' '+notice for q in payload['questions']]
+        payload['questions']=_questions_with_review_notice(payload['questions'])
+        for group in snapshot['review_question_groups']:
+            group['question']=_question_with_review_notice(group['question'])
         normalized=normalize_steps(payload,document['app_id'])
         # Normalization can append unresolved step questions. Validate that final
         # presentation too, with the same unchanged normal draft contract.

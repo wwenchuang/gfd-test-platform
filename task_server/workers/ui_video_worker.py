@@ -17,7 +17,7 @@ _FAILURE_CODES=frozenset({
     'video_metadata_invalid','video_frames_invalid','video_decode_timeout','video_memory_limit',
     'video_cancelled','video_vision_limit','video_action_invalid','video_model_invalid',
     'video_model_timeline','video_required_action_missing','video_observation_missing','video_reference_invalid',
-    'video_expected_missing','video_retry_invalid','video_coverage_resolution_invalid',
+    'video_expected_missing','video_retry_invalid','video_coverage_resolution_invalid','video_question_anchor_unavailable',
 })
 
 
@@ -285,6 +285,7 @@ def analyze_video_source(store,identifier):
         messages={'video_coverage_resolution_invalid':'重复操作的前后画面仍有歧义，尚未生成可执行用例；原视频已保留',
                   'video_required_action_missing':'用例整理遗漏必要业务操作，请重试分析',
                   'video_expected_missing':'未能确认点击或滚动后的稳定结果，请保留操作后画面再重试；原视频保留',
+                  'video_question_anchor_unavailable':'核对问题过长，无法同时显示完整内容和对应视频片段；未生成用例，原视频已保留',
                   'video_decoder_missing':'服务器缺少 ffmpeg/ffprobe，请管理员安装并配置 UI_VIDEO_FFMPEG/UI_VIDEO_FFPROBE 后重试',
                   'video_split_required':'视频操作变化过于密集，超出完整证据容量，请缩短连续场景后重试',
                   'video_weak_evidence_limit':'细微画面变化过多，超出证据容量，建议缩短片段后重试；原视频保留',
@@ -390,6 +391,7 @@ def _analyze_runtime_source(store,identifier):
                     expected_owner=owner,expected_app=app,error_code=code,
                     failure_diagnostic=_private_target_failure(error,code,latest),
                     error='账号或应用权限已变化，分析停止' if code=='video_access_changed' else
+                    '核对问题过长，无法同时显示完整内容和对应视频片段；未生成用例，原视频已保留' if code=='video_question_anchor_unavailable' else
                     '分析未能返回可靠步骤，请重试或缩短片段；原视频保留')
             except (KeyError,ValueError):
                 pass
