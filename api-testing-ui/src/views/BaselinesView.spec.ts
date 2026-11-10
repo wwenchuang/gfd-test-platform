@@ -816,4 +816,251 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.findAll('.baseline-row')).toHaveLength(1)
     expect(wrapper.text()).toContain('基础用例 51')
   })
+
+  it('shows bounded evidence without treating recorded assertions as a business pass or discarding inputs', async () => {
+    sessionStorage.setItem('sessionToken', 'evidence-session')
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [{ execution_id: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0', execution_case_id: 'case-run-1', status: 'PASSED', execution_state: 'COMPLETED', response_recorded: true, assertions_recorded: 2, assertions_passed: 2, evidence_state: 'recorded', created_at: '2026-11-10T03:00:00Z' }] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    const input = wrapper.get('input[placeholder^="例如：发版冒烟"]')
+    await input.setValue('未保存的分组名')
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    expect(get).toHaveBeenCalledWith('/api/api-testing/v1/baselines/baseline-1/execution-evidence')
+    expect(wrapper.text()).toContain('最多扫描该用例的 100 条匹配记录')
+    expect(wrapper.text()).toContain('有响应及断言记录')
+    expect(wrapper.text()).toContain('已记录断言 2/2 条通过')
+    expect(wrapper.text()).toContain('不代表业务通过')
+    expect((input.element as HTMLInputElement).value).toBe('未保存的分组名')
+    const link = wrapper.get('[data-testid="baseline-evidence-link"]')
+    expect(link.attributes('target')).toBeUndefined()
+    expect(link.attributes('href')).toContain('executionId=e8fba17f-1871-4ae7-b69b-ab02c6b92dd0')
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it('discards late results after a session or environment change', async () => {
+    sessionStorage.setItem('sessionToken', 'old-session')
+    const pending = deferred<any>()
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? pending.promise : { data: { baselines: [baselineFixture()] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await wrapper.get('[data-testid="switch-environment"]').trigger('click')
+    sessionStorage.setItem('sessionToken', 'new-session')
+    pending.resolve({ data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [{ execution_id: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0', execution_case_id: 'case-run-1', status: 'PASSED', execution_state: 'COMPLETED', response_recorded: true, assertions_recorded: 2, assertions_passed: 2, evidence_state: 'recorded', created_at: '2026-11-10T03:00:00Z' }] } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="baseline-evidence-link"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('有响应及断言记录')
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it('does not leak the old result on authorization failure or malformed response', async () => {
+    sessionStorage.setItem('sessionToken', 'evidence-session')
+    let calls = 0
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => {
+      if (!path.includes('execution-evidence')) return { data: { baselines: [baselineFixture()] } }
+      calls += 1
+      if (calls === 1) return { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [] } }
+      throw new Error('登录失效')
+    })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('扫描范围内未找到匹配记录')
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('无法读取执行证据')
+    expect(wrapper.text()).not.toContain('扫描范围内未找到匹配记录')
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it('hides loaded evidence when the user leaves or the session changes', async () => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('扫描范围内未找到匹配记录')
+    sessionStorage.setItem('sessionToken', 'second')
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('扫描范围内未找到匹配记录')
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    window.dispatchEvent(new Event('blur'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('扫描范围内未找到匹配记录')
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it('does not misrepresent malformed counts or unknown execution status', async () => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [{ execution_id: 'bad-url', status: '<secret>', execution_state: 'DONE', response_recorded: true, assertions_recorded: 1, assertions_passed: 4, evidence_state: 'recorded', created_at: 'not-a-date' }] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('用例状态未知')
+    expect(wrapper.text()).toContain('执行已结束')
+    expect(wrapper.text()).toContain('断言结果不可核实')
+    expect(wrapper.text()).not.toContain('<secret>')
+    expect(wrapper.find('[data-testid="baseline-evidence-link"]').exists()).toBe(false)
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it('marks inconsistent passing records for review while remaining compatible with old records', async () => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [
+        { execution_id: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0', status: 'PASSED', execution_state: 'DONE', response_recorded: true, assertions_recorded: 2, assertions_passed: 1, evidence_state: 'insufficient', inconsistent: true, created_at: '2026-11-10T03:00:00Z' },
+        { execution_id: 'ee7cbb05-9afc-4227-8d0b-4e7a3e3b6220', status: 'PASSED', execution_state: 'DONE', response_recorded: true, assertions_recorded: 1, assertions_passed: 1, evidence_state: 'recorded', created_at: '2026-11-10T02:00:00Z' },
+      ] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    const panel = wrapper.get('[data-testid="baseline-evidence-panel"]')
+    expect(panel.text()).toContain('记录不一致，待核实')
+    expect(panel.text()).toContain('已记录断言 1/2 条通过')
+    expect(panel.text()).toContain('用例通过')
+    expect(panel.text().match(/用例通过/g)).toHaveLength(1)
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it.each([undefined, false])('does not trust a passing status with failed assertion counts when the flag is %s', async flag => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [{ execution_id: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0', status: 'PASSED', execution_state: 'DONE', response_recorded: true, assertions_recorded: 2, assertions_passed: 1, evidence_state: 'insufficient', inconsistent: flag, created_at: '2026-11-10T03:00:00Z' }] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="baseline-evidence-panel"]').text()).toContain('记录不一致，待核实')
+    expect(wrapper.get('[data-testid="baseline-evidence-panel"]').text()).not.toContain('用例通过')
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it.each([
+    ['被移除', null],
+    ['用例版本变化', { case_version_id: 'other-version' }],
+    ['执行环境变化', { environment_revision_id: 'other-environment' }],
+    ['来源版本变化', { source_revision_id: 'other-source' }],
+    ['项目变化', { project_id: 'other-project' }],
+    ['成为历史', { status: 'superseded' }],
+  ])('clears already loaded evidence when the baseline %s on refresh', async (_label, change) => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('扫描范围内未找到匹配记录')
+    useBaselinesStore().items = change ? [baselineFixture(change) as any] : []
+    await flushPromises()
+    useBaselinesStore().items = [baselineFixture() as any]
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('扫描范围内未找到匹配记录')
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it('does not offer execution evidence for historical baselines', async () => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [baselineFixture({ id: 'history', status: 'superseded' })] } })
+    const wrapper = mountWithContext()
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-filter-status"]').setValue('history')
+    expect(wrapper.text()).toContain('历史版本')
+    expect(wrapper.find('[data-testid="baseline-evidence-history"]').exists()).toBe(false)
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it('uses the same tab and confirms before discarding pending inputs', async () => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [{ execution_id: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0', status: 'FAILED', execution_state: 'DONE', response_recorded: true, assertions_recorded: 1, assertions_passed: 0, evidence_state: 'recorded', created_at: '2026-11-10T03:00:00Z' }] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const { wrapper, router } = mountWithContextAndRouter()
+    const push = vi.spyOn(router, 'push')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await flushPromises()
+    const input = wrapper.get('input[placeholder^="例如：发版冒烟"]')
+    await input.setValue('未保存的分组名')
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-link"]').trigger('click')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(push).not.toHaveBeenCalled()
+    expect((input.element as HTMLInputElement).value).toBe('未保存的分组名')
+    confirm.mockReturnValue(true)
+    await wrapper.get('[data-testid="baseline-evidence-link"]').trigger('click')
+    expect(push).toHaveBeenCalledWith({ name: 'runs', query: { executionId: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0' } })
+    expect(JSON.stringify(push.mock.calls)).not.toContain('first')
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it('navigates directly without confirmation when there are no pending inputs', async () => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [{ execution_id: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0', status: 'PASSED', execution_state: 'DONE', response_recorded: true, assertions_recorded: 1, assertions_passed: 1, evidence_state: 'recorded', created_at: '2026-11-10T03:00:00Z' }] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const { wrapper, router } = mountWithContextAndRouter()
+    const push = vi.spyOn(router, 'push')
+    const confirm = vi.spyOn(window, 'confirm')
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-link"]').trigger('click')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(push).toHaveBeenCalledWith({ name: 'runs', query: { executionId: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0' } })
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
+
+  it.each(['已选基线', '归属选择', '归属预览', '目标分组'])('confirms before leaving when %s is pending', async pending => {
+    sessionStorage.setItem('sessionToken', 'first')
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => path.includes('execution-evidence')
+      ? { data: { baseline_id: 'baseline-1', history_complete: false, scan_limit: 100, items: [{ execution_id: 'e8fba17f-1871-4ae7-b69b-ab02c6b92dd0', status: 'PASSED', execution_state: 'DONE', response_recorded: true, assertions_recorded: 1, assertions_passed: 1, evidence_state: 'recorded', created_at: '2026-11-10T03:00:00Z' }] } }
+      : { data: { baselines: [baselineFixture()] } })
+    const { wrapper, router } = mountWithContextAndRouter()
+    const push = vi.spyOn(router, 'push')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await flushPromises()
+    if (pending === '已选基线') await wrapper.get('[data-testid="baseline-select-baseline-1"]').setValue(true)
+    if (pending === '归属选择') await wrapper.get('[data-testid="baseline-scope-application"]').setValue('')
+    if (pending === '目标分组') await wrapper.get('[data-testid="baseline-move-target"]').setValue('我的收藏')
+    if (pending === '归属预览') useBaselinesStore().scopeRepairPreview = { eligible: 0, conflicts: 0, total: 0, unchanged: 0, target: { app_name: 'test', business_name: 'test' } } as any
+    await wrapper.get('[data-testid="baseline-evidence-baseline-1"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="baseline-evidence-link"]').trigger('click')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(push).not.toHaveBeenCalled()
+    if (pending === '已选基线') expect(useBaselinesStore().selectedIds).toEqual(['baseline-1'])
+    if (pending === '归属预览') expect(useBaselinesStore().scopeRepairPreview).not.toBeNull()
+    wrapper.unmount()
+    sessionStorage.removeItem('sessionToken')
+  })
 })

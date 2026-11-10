@@ -42,6 +42,7 @@ from .services.baseline_assertion_audit_service import (
     BaselineAssertionAuditService,
     BaselineAssertionUpgradeError,
 )
+from .services.baseline_execution_evidence_service import BaselineExecutionEvidenceService
 from .services.case_service import (
     BaselineGateError,
     BaselineScopeRepairError,
@@ -506,6 +507,8 @@ def _get(segments, qs, actor, settings):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
         return BaselineAssertionAuditService(factory).list(project_id, actor)
+    if len(segments) == 3 and segments[0] == "baselines" and segments[2] == "execution-evidence":
+        return BaselineExecutionEvidenceService(factory).get(_uuid(segments[1]), actor)
     if segments == ("notifications", "feishu"):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)

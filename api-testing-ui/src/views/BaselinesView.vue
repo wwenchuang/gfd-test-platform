@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Edit3, FilePlus2, ListPlus, Play, RefreshCw, ScanSearch, Search, ShieldCheck, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import ContextBar from '../components/ContextBar.vue'
+import { apiClient } from '../api/client'
 import type { ApiBaselineCase, BaselineAssertionAuditItem, BaselineAssertionAuditStatus } from '../api/contracts'
 import { baselineGroup, useBaselinesStore } from '../stores/baselines'
 import { useContextStore } from '../stores/context'
@@ -37,11 +38,146 @@ const groupName = ref('')
 const moveTargetGroup = ref('')
 const scopeAppPackage = ref('')
 const scopeBusiness = ref('')
+const scopeSelectionTouched = ref(false)
 const localError = ref('')
 const localMessage = ref('')
 const baselinePage = ref(1)
 const initializing = ref(true)
 const BASELINE_PAGE_SIZE = 25
+
+type ExecutionEvidenceItem = {
+  execution_id: string
+  status: unknown
+  execution_state: unknown
+  response_recorded: unknown
+  assertions_recorded: unknown
+  assertions_passed: unknown
+  evidence_state: unknown
+  inconsistent?: unknown
+  created_at: unknown
+}
+type ExecutionEvidence = { baseline_id: string; history_complete: false; scan_limit: 100; items: ExecutionEvidenceItem[] }
+const evidenceBaselineId = ref('')
+const evidenceResult = ref<ExecutionEvidence | null>(null)
+const evidenceLoading = ref(false)
+const evidenceError = ref('')
+let evidenceRequest = 0
+let evidenceSession: string | null = null
+let evidenceIdentity: Pick<ApiBaselineCase, 'id' | 'project_id' | 'case_version_id' | 'environment_revision_id' | 'source_revision_id' | 'status'> | null = null
+
+function currentSession(): string | null {
+  try { return sessionStorage.getItem('sessionToken') } catch { return null }
+}
+function clearEvidence(): void {
+  evidenceRequest += 1
+  evidenceBaselineId.value = ''
+  evidenceResult.value = null
+  evidenceLoading.value = false
+  evidenceError.value = ''
+  evidenceSession = null
+  evidenceIdentity = null
+}
+function matchesEvidenceIdentity(row: ApiBaselineCase, identity: NonNullable<typeof evidenceIdentity>): boolean {
+  return row.id === identity.id && row.status === 'active' && row.project_id === identity.project_id
+    && row.case_version_id === identity.case_version_id && row.environment_revision_id === identity.environment_revision_id
+    && row.source_revision_id === identity.source_revision_id
+}
+function clearEvidenceOnSessionChange(): void {
+  if (evidenceBaselineId.value && currentSession() !== evidenceSession) clearEvidence()
+}
+function hideEvidenceWhenHidden(): void {
+  if (document.visibilityState === 'hidden') clearEvidence()
+  else clearEvidenceOnSessionChange()
+}
+function executionEvidenceLabel(item: ExecutionEvidenceItem): string {
+  if (item.evidence_state === 'recorded' && item.response_recorded === true && validAssertionCounts(item)) return '有响应及断言记录'
+  return '证据不足或状态未知'
+}
+function validAssertionCounts(item: ExecutionEvidenceItem): boolean {
+  return typeof item.assertions_recorded === 'number' && Number.isSafeInteger(item.assertions_recorded) && item.assertions_recorded > 0
+    && typeof item.assertions_passed === 'number' && Number.isSafeInteger(item.assertions_passed) && item.assertions_passed >= 0 && item.assertions_passed <= item.assertions_recorded
+}
+function assertionCountLabel(item: ExecutionEvidenceItem): string {
+  return validAssertionCounts(item) ? `已记录断言 ${item.assertions_passed}/${item.assertions_recorded} 条通过` : '断言结果不可核实'
+}
+function caseEvidenceStatusLabel(item: ExecutionEvidenceItem): string {
+  const contradictory = item.inconsistent === true || (
+    typeof item.status === 'string' && item.status.toUpperCase() === 'PASSED' && validAssertionCounts(item)
+    && (item.assertions_passed as number) < (item.assertions_recorded as number)
+  )
+  if (contradictory) return '用例记录不一致，待核实'
+  if (item.inconsistent !== undefined && typeof item.inconsistent !== 'boolean') return '用例状态未知'
+  return `用例${executionStatusLabel(item.status)}`
+}
+function executionStatusLabel(value: unknown): string {
+  const labels: Record<string, string> = { PASSED: '通过', FAILED: '失败', BROKEN: '异常', ERROR: '异常', DONE: '已结束', CANCELLED: '已取消', SKIPPED: '已跳过', RUNNING: '进行中', QUEUED: '排队中' }
+  return typeof value === 'string' ? labels[value.toUpperCase()] || '状态未知' : '状态未知'
+}
+function executionEvidenceLink(value: unknown): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value)) return ''
+  return router.resolve({ name: 'runs', query: { executionId: value } }).href
+}
+async function openExecutionEvidence(value: unknown): Promise<void> {
+  clearEvidenceOnSessionChange()
+  if (!evidenceBaselineId.value || !evidenceResult.value || !executionEvidenceLink(value)) return
+  const pending = Boolean(groupName.value.trim() || moveTargetGroup.value || scopeSelectionTouched.value
+    || baselines.scopeRepairPreview || baselines.selectedIds.length)
+  if (pending && !window.confirm('当前有未保存的分组输入或批量操作选择，离开后这些内容会丢失。是否继续查看执行记录？')) return
+  await router.push({ name: 'runs', query: { executionId: value as string } })
+}
+function evidenceTime(value: unknown): string {
+  if (typeof value !== 'string') return '时间未知'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN')
+}
+async function toggleEvidence(item: ApiBaselineCase): Promise<void> {
+  clearEvidenceOnSessionChange()
+  if (evidenceBaselineId.value === item.id) { clearEvidence(); return }
+  clearEvidence()
+  if (!context.projectId || item.project_id !== context.projectId || item.status !== 'active') return
+  const session = currentSession()
+  if (!session) { evidenceBaselineId.value = item.id; evidenceError.value = '无法读取执行证据，请重新登录后重试。'; return }
+  const requestId = ++evidenceRequest
+  const projectId = context.projectId
+  evidenceBaselineId.value = item.id
+  evidenceSession = session
+  evidenceIdentity = { id: item.id, project_id: item.project_id, case_version_id: item.case_version_id,
+    environment_revision_id: item.environment_revision_id, source_revision_id: item.source_revision_id, status: item.status }
+  evidenceLoading.value = true
+  try {
+    const response = await apiClient.get<ExecutionEvidence>(`/api/api-testing/v1/baselines/${encodeURIComponent(item.id)}/execution-evidence`)
+    if (requestId !== evidenceRequest || currentSession() !== session || context.projectId !== projectId || !evidenceIdentity || !baselines.items.some(row => matchesEvidenceIdentity(row, evidenceIdentity!))) return
+    const data = response.data
+    if (!data || data.baseline_id !== item.id || data.history_complete !== false || data.scan_limit !== 100 || !Array.isArray(data.items) || data.items.length > 3 || data.items.some(row => !row || typeof row !== 'object')) throw new Error('invalid evidence')
+    evidenceResult.value = data
+  } catch {
+    if (requestId !== evidenceRequest || currentSession() !== session || context.projectId !== projectId) return
+    evidenceResult.value = null
+    evidenceError.value = '无法读取执行证据，请检查登录状态与访问权限后重试。'
+  } finally {
+    if (requestId === evidenceRequest) {
+      if (currentSession() !== session || context.projectId !== projectId) clearEvidence()
+      else evidenceLoading.value = false
+    }
+  }
+}
+watch([() => context.projectId, () => context.sourceRevisionId, () => context.environmentRevisionId], clearEvidence, { flush: 'sync' })
+watch(() => baselines.items, rows => {
+  if (evidenceIdentity && !rows.some(row => matchesEvidenceIdentity(row, evidenceIdentity!))) clearEvidence()
+}, { deep: true, flush: 'sync' })
+onMounted(() => {
+  window.addEventListener('storage', clearEvidenceOnSessionChange)
+  window.addEventListener('focus', clearEvidenceOnSessionChange)
+  window.addEventListener('blur', clearEvidence)
+  document.addEventListener('visibilitychange', hideEvidenceWhenHidden)
+})
+onBeforeUnmount(() => {
+  clearEvidence()
+  window.removeEventListener('storage', clearEvidenceOnSessionChange)
+  window.removeEventListener('focus', clearEvidenceOnSessionChange)
+  window.removeEventListener('blur', clearEvidence)
+  document.removeEventListener('visibilitychange', hideEvidenceWhenHidden)
+})
 
 const projectReady = computed(() => Boolean(context.projectId)
   && !initializing.value && !context.loading && !context.optionsLoading && !baselines.loading)
@@ -458,6 +594,7 @@ async function applyScopeRepair(): Promise<void> {
   }
   try {
     const result = await baselines.applyScopeRepair(scopeAppPackage.value, scopeBusiness.value)
+    scopeSelectionTouched.value = false
     localMessage.value = `已补齐 ${result.updated || 0} 条基线的应用和业务归属`
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '批量归属补齐失败'
@@ -741,14 +878,14 @@ function adoptionReasonLabel(reason: string): string {
           <div class="baseline-group-controls">
             <label>
               <span>平台应用</span>
-              <select v-model="scopeAppPackage" data-testid="baseline-scope-application">
+              <select v-model="scopeAppPackage" data-testid="baseline-scope-application" @change="scopeSelectionTouched = true">
                 <option value="">选择已配置应用</option>
                 <option v-for="item in scopeApplications" :key="item.package" :value="item.package">{{ item.name }}</option>
               </select>
             </label>
             <label>
               <span>所属业务</span>
-              <select v-model="scopeBusiness" data-testid="baseline-scope-business" :disabled="!scopeAppPackage">
+              <select v-model="scopeBusiness" data-testid="baseline-scope-business" :disabled="!scopeAppPackage" @change="scopeSelectionTouched = true">
                 <option value="">选择已配置业务</option>
                 <option v-for="item in scopeBusinessLines" :key="item.id" :value="item.id">{{ item.name }}</option>
               </select>
@@ -787,6 +924,22 @@ function adoptionReasonLabel(reason: string): string {
                 <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
                 <b v-if="!baselineSelection(item).selectable" class="baseline-status-pill">{{ baselineSelection(item).reason }}</b>
                 {{ adoptionReasonLabel(item.adoption_reason) }}
+              </small>
+              <button v-if="item.status === 'active'" class="tiny-command" type="button" :data-testid="`baseline-evidence-${item.id}`" :aria-expanded="evidenceBaselineId === item.id" @click="toggleEvidence(item)">
+                {{ evidenceBaselineId === item.id ? '收起执行证据' : '查看执行证据' }}
+              </button>
+              <small v-if="evidenceBaselineId === item.id" data-testid="baseline-evidence-panel">
+                <span v-if="evidenceLoading" role="status">正在读取执行证据…</span>
+                <span v-else-if="evidenceError" role="alert">{{ evidenceError }}</span>
+                <template v-else-if="evidenceResult">
+                  <span>最多扫描该用例的 100 条匹配记录，展示最多 3 条，不代表完整历史；有响应及断言记录不代表业务通过。</span>
+                  <span v-if="!evidenceResult.items.length">扫描范围内未找到匹配记录，不能据此认为没有历史执行。</span>
+                  <span v-for="(entry, index) in evidenceResult.items" :key="index">
+                    {{ evidenceTime(entry.created_at) }} · {{ caseEvidenceStatusLabel(entry) }} · 执行{{ executionStatusLabel(entry.execution_state) }} · {{ executionEvidenceLabel(entry) }}
+                    · {{ assertionCountLabel(entry) }}
+                    <a v-if="executionEvidenceLink(entry.execution_id)" :href="executionEvidenceLink(entry.execution_id)" data-testid="baseline-evidence-link" @click.prevent="openExecutionEvidence(entry.execution_id)">查看执行记录</a>
+                  </span>
+                </template>
               </small>
               <small v-if="baselines.auditByBaselineId.get(item.id)" class="baseline-audit-result">
                 <b :class="['baseline-audit-status', `status-${baselines.auditByBaselineId.get(item.id)!.status}`]">{{ baselines.auditByBaselineId.get(item.id)!.status_label }}</b>
