@@ -106,6 +106,23 @@ def _private_target_failure(error,code,document):
             type(evidence['reason']) is str and evidence['reason'] in {'selection','template','unsupported'}):
             return dict(evidence)
         return {}
+    evidence=getattr(error,'dialog_guard_evidence',None)
+    if code=='video_model_invalid' and type(evidence) is dict:
+        reason=evidence.get('reason')
+        shapes={'nearby_dialog':{'reason','dialog_frame','match_count'},
+                'ambiguous_dialog':{'reason','dialog_frame','match_count'},
+                'probe_frame_unknown':{'reason','dialog_frame'},
+                'other_probe_match_count':{'reason','dialog_frame','probe_frame','match_count'},
+                'probe_event_reused':{'reason','dialog_frame','probe_frame','match_count'},
+                'other_probe_conflict':{'reason','dialog_frame'}}
+        known={f.get('frame_id') for f in document.get('media',{}).get('frames',[])}
+        if (type(reason) is str and reason in shapes and set(evidence)==shapes[reason] and
+            all(type(evidence[k]) is str and re.fullmatch(r'frame-(?:[0-9]{3,6}|end)',evidence[k]) and evidence[k] in known
+                for k in ('dialog_frame','probe_frame') if k in evidence) and
+            ('match_count' not in evidence or (type(evidence['match_count']) is int and 0<=evidence['match_count']<=50)) and
+            (reason!='other_probe_match_count' or evidence['match_count']!=1) and
+            (reason!='probe_event_reused' or evidence['match_count']==1)):
+            return {'dialog_guard_evidence':dict(evidence)}
     pair=getattr(error,'target_failure_evidence',None)
     if code!='video_model_invalid' or type(pair) is not dict or set(pair)!={'frame_id','observed_target','probe_target'}:return {}
     if type(pair['frame_id']) is not str or pair['frame_id'] not in {f.get('frame_id') for f in document.get('media',{}).get('frames',[])}:return {}

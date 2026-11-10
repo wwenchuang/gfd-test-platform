@@ -2,6 +2,28 @@
 import base64
 
 
+def _retained_dialog_events(previous,current):
+    """Return an injective old-to-new mapping without weakening evidence."""
+    def compatible(old,new):
+        skip={'start_ms','end_ms','frame_refs','uncertainties','observation'}
+        return ({k:v for k,v in old.items() if k not in skip}=={k:v for k,v in new.items() if k not in skip} and
+                new['start_ms']<=old['start_ms'] and new['end_ms']>=old['end_ms'] and
+                set(old['frame_refs'])<=set(new['frame_refs']))
+    edges=[[j for j,e in enumerate(current) if compatible(old,e)] for old in previous]
+    assigned={}
+    def assign(i,seen):
+        for j in edges[i]:
+            if j in seen:continue
+            seen.add(j)
+            if j not in assigned or assign(assigned[j],seen):
+                assigned[j]=i
+                return True
+        return False
+    for i in range(len(previous)):
+        if not assign(i,set()):return None
+    return {i:j for j,i in assigned.items()}
+
+
 def load_assets(frames,root,cancelled):
     assets=[];total=0
     for frame in frames:
@@ -112,12 +134,14 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
         from .ui_video_reconcile import _redact_audit
         payload['touch_targets']=probe(images,payload['detail_frames'],assets,duration,cancelled,
                                        touch_target_timeout_retry_budget)
-        sticky_questions=[];sticky_multiple=False
+        sticky_questions=[];sticky_multiple=False;dialog_retry=None
         for attempt in range(2):
             if cancelled():raise ValueError('video_cancelled')
             attempt_questions=[];attempt_multiple=False
             dialog_reviewed=False
             payload['touch_targets']=_redact_audit(payload['touch_targets'],secrets)
+            if dialog_retry and payload['touch_targets']!=dialog_retry['hints']:
+                raise ValueError('video_model_invalid')
             if 'prior_events' in payload:
                 payload['prior_events']=_redact_audit(payload['prior_events'],secrets)
             if 'validation_feedback' in payload:
@@ -144,11 +168,39 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                 _check_question_count(all_questions,30)
                 checked['uncertainties']=all_questions
                 checked['multiple_scenarios']|=sticky_multiple
+                if dialog_retry:
+                    previous=_redact_audit(dialog_retry['events'],secrets)
+                    mapping=_retained_dialog_events(previous,checked['events'])
+                    if mapping is None:raise ValueError('video_required_action_missing')
+                    matched=set(mapping.values())
+                    for i,j in mapping.items():
+                        old,new=previous[i],checked['events'][j]
+                        for q in old['uncertainties']:
+                            if q not in new['uncertainties']:
+                                if len(new['uncertainties'])>=10:raise ValueError('video_model_invalid')
+                                new['uncertainties'].append(q)
+                        if old['observation']!=new['observation']:
+                            # Preserve the first observation. A changed second
+                            # description is unverified, not an automatic
+                            # replacement or a reason to erase either action.
+                            new['observation']=old['observation']
+                            q='原帧 '+old['frame_refs'][0]+' 的两次画面描述不同，请对照原视频核对实际情况。'
+                            if len(new['uncertainties'])>=10 or len(checked['uncertainties'])>=30:raise ValueError('video_model_invalid')
+                            new['uncertainties'].append(q);checked['uncertainties'].append(q)
+                    for j,event in enumerate(checked['events']):
+                        if j not in matched and (event['action']!='aiTap' or dialog_retry['frame'] not in event['frame_refs']):
+                            raise ValueError('video_required_action_missing')
                 target_diagnostic={};target_evidence={}
                 guard_ambiguous_dialog_hints(checked['events'],payload['touch_targets'],images)
+                if dialog_retry:
+                    candidates=[e for j,e in enumerate(checked['events']) if j not in matched and e['action']=='aiTap' and dialog_retry['frame'] in e['frame_refs']]
+                    if len(candidates)!=1 or len(candidates[0]['uncertainties'])>=10 or len(checked['uncertainties'])>=30:
+                        raise ValueError('video_model_invalid')
+                    q='局部重观在原帧 '+dialog_retry['frame']+' 补充了触点归因，请对照原视频核对是否存在独立操作及具体对象。'
+                    candidates[0]['uncertainties'].append(q);checked['uncertainties'].append(q)
                 target_conflict=conflict(checked['events'],payload['touch_targets'],images,target_diagnostic,evidence=target_evidence)
                 if target_conflict:
-                    candidate=dialog_target_review(checked['events'],payload['touch_targets'],images,target_diagnostic) if not attempt else None
+                    candidate=dialog_target_review(checked['events'],payload['touch_targets'],images,target_diagnostic) if not attempt or dialog_retry else None
                     if candidate:
                         dialog_reviewed=True
                         event,frame,observed,probe_target=candidate
@@ -180,6 +232,18 @@ def observe_windows(frames,duration,root,cancelled,progress=None,review_events=N
                         checked['uncertainties'].append(hint_question)
                 break
             except ValueError as error:
+                guard=getattr(error,'dialog_guard_evidence',{})
+                anticipated=list(dict.fromkeys(_redact_audit(checked['uncertainties']+attempt_questions,secrets))) if getattr(error,'dialog_review_blocked',False) else []
+                if (not cancelled() and not attempt and getattr(error,'dialog_review_blocked',False) and
+                    guard.get('reason')=='other_probe_match_count' and guard.get('match_count')==0 and
+                    guard.get('probe_frame') in current_ids and len(anticipated)<=28 and
+                    all(len(e['uncertainties'])<10 for e in checked['events']) and
+                    _redact_audit(payload['touch_targets'],secrets)==payload['touch_targets']):
+                    import copy
+                    dialog_retry={'events':copy.deepcopy(checked['events']),'hints':copy.deepcopy(payload['touch_targets']),'frame':guard['probe_frame']}
+                    sticky_questions.extend(attempt_questions);sticky_multiple|=attempt_multiple
+                    payload['validation_feedback']='上次局部探针的原帧尚未被主观察明确解释。重新观察当前原帧，完整保留首答全部操作、结果、证据和疑问；仅原图确证时补充相关操作和帧。不能为满足校验编造、删除或合并操作；不确定时保留疑问。'
+                    continue
                 if cancelled() or attempt or dialog_reviewed or getattr(error,'dialog_review_blocked',False) or getattr(error,'target_diagnostic',{}).get('ambiguous_bare_probe'):raise
                 sticky_questions.extend(attempt_questions)
                 sticky_multiple|=attempt_multiple

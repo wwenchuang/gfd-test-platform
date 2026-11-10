@@ -218,7 +218,7 @@ def test_other_probe_with_multiple_nearby_actions_blocks_dialog_exception(monkey
     monkeypatch.setattr(targets.ai,'run_ai_skill',model)
     with pytest.raises(ValueError,match='video_model_invalid'):
         windows.observe_windows(frames,1000,tmp_path,lambda:False)
-    assert len(calls)==1
+    assert len(calls)==2
 
 def test_other_unmatched_probe_cannot_disappear_while_dialog_exception_applies(monkeypatch,tmp_path):
     frames=[{'frame_id':'frame-118','timestamp_ms':43000},*FRAMES]
@@ -232,7 +232,7 @@ def test_other_unmatched_probe_cannot_disappear_while_dialog_exception_applies(m
     monkeypatch.setattr(targets.ai,'run_ai_skill',model)
     with pytest.raises(ValueError,match='video_model_invalid'):
         windows.observe_windows(frames,50000,tmp_path,lambda:False)
-    assert len(calls)==1
+    assert len(calls)==2
 
 def test_other_same_label_nearby_probe_requires_its_own_explicit_evidence(monkeypatch,tmp_path):
     frames=[{'frame_id':'frame-119','timestamp_ms':44800},*FRAMES]
@@ -247,7 +247,7 @@ def test_other_same_label_nearby_probe_requires_its_own_explicit_evidence(monkey
     monkeypatch.setattr(targets.ai,'run_ai_skill',model)
     with pytest.raises(ValueError,match='video_model_invalid'):
         windows.observe_windows(frames,50000,tmp_path,lambda:False)
-    assert len(calls)==1
+    assert len(calls)==2
 
 def test_distinct_frame_other_probe_cannot_be_swallowed_by_same_event(monkeypatch,tmp_path):
     monkeypatch.setattr(windows,'load_assets',lambda *a:[])
