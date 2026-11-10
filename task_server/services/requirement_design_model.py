@@ -151,7 +151,14 @@ def _validated_draft(draft, manifest):
     }
 
 
-def _call(model, content):
+def generation_parameters(model):
+    parameters = {'response_format': {'type': 'json_object'}, 'max_tokens': 5000}
+    if re.match(r'^qwen3\.(?:5|6|7|8)(?:-|$)', model.lower()):
+        parameters['enable_thinking'] = False
+    return parameters
+
+
+def _call(model, content, *, system_prompt=SYSTEM_PROMPT, capture=None):
     if not re.fullmatch(r'[A-Za-z0-9._-]{1,100}', model or ''):
         raise ValueError('invalid_model')
     url = validate_base_url(dashscope_base_url()) + '/chat/completions'
@@ -159,10 +166,8 @@ def _call(model, content):
         key = dashscope_api_key()
     except ValueError:
         raise ValueError('missing_key') from None
-    body = {'model': model, 'messages': [{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': content}],
-            'response_format': {'type': 'json_object'}, 'max_tokens': 5000}
-    if re.match(r'^qwen3\.(?:5|6|7|8)(?:-|$)', model.lower()):
-        body['enable_thinking'] = False
+    body = {'model': model, 'messages': [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': content}],
+            **generation_parameters(model)}
     request = urllib.request.Request(url, data=_json(body).encode(),
                                      headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key}, method='POST')
     try:
@@ -175,6 +180,8 @@ def _call(model, content):
         raise ValueError('model_request_failed') from None
     if len(raw) > 262144:
         raise ValueError('response_too_large')
+    if capture is not None:
+        capture(raw, request_id)
     try:
         result = json.loads(raw)
         choice = result['choices'][0]

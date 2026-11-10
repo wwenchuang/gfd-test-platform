@@ -253,6 +253,22 @@ def overview(owner, sid=None):
         return dict(source=source,sources=sources,runs=sorted(runs.values(), key=lambda run: run['created'], reverse=True))
 
 
+def completed_design(owner, sid, rid):
+    """Load one owned or explicitly shared design using the same catalog policy as the workbench."""
+    with _db() as db:
+        source_owner, source = _source(db, owner, sid)
+        row = db.execute(
+            "SELECT * FROM designs WHERE id=? AND source=? AND owner=? AND status='completed'",
+            (rid, sid, owner),
+        ).fetchone()
+        if row is not None:
+            return source, _run(row)
+        for run in _published_runs(db, source_owner, source):
+            if run['id'] == rid:
+                return source, run
+    raise Missing()
+
+
 def prototype(owner, sid, vid):
     with _db() as db:
         source_owner,_=_source(db,owner,sid)

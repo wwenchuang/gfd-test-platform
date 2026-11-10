@@ -492,6 +492,17 @@ function attachRequirementDesign(page,current){
     <button type="button" data-design-generate disabled>生成测试设计</button>
     <p role="status" aria-live="polite" data-design-notice></p>
     <section data-design-runs aria-label="生成记录"></section>
+    <details data-design-collection><summary>我的标准用例工作集</summary>
+      <p data-collection-total></p><p data-collection-acceptance hidden></p><p>导入已导出的标准文件，按用例 ID 合并到本人工作集。已有用例的版本必须与文件一致。</p>
+      <label>标准用例文件 <input type="file" data-collection-file accept=".json,.xlsx"></label>
+      <button type="button" data-collection-action="import">导入到我的工作集</button>
+      <div class="ui-design-actions"><label>工作集格式 <select data-collection-format><option value="xlsx">Excel (.xlsx)</option><option value="json">JSON (.json)</option></select></label>
+      <button type="button" data-collection-action="download">下载我的工作集</button>
+      <button type="button" data-collection-action="refresh">刷新工作集</button></div>
+      <p data-collection-notice role="status" aria-live="polite"></p></details>
+    <details data-design-assessment><summary>示范需求的提示词对照评估</summary>
+      <button type="button" data-evaluation-refresh>刷新评估</button>
+      <p role="status" aria-live="polite" data-evaluation-notice></p><div data-evaluation-result></div></details>
     <details data-design-custom><summary>使用自己的需求材料</summary>
       <form><label>需求标题<input name="title" maxlength="160" required></label>
         <label>应用<input name="app" maxlength="128" required></label><label>版本<input name="version" maxlength="100" required></label>
@@ -518,7 +529,7 @@ function attachRequirementDesign(page,current){
     previewUrls.clear();sourceBox.replaceChildren();runsBox.replaceChildren();source=null;running=false;
   }
   function dispose(){
-    interrupt();clearSource();panel.remove();
+    interrupt();clearSource();clearEvaluation();clearCollection();panel.remove();
   }
   uiRequirementCleanup=dispose;
   function live(ticket){
@@ -534,15 +545,20 @@ function attachRequirementDesign(page,current){
   function start(){
     interrupt();busy=true;controls();return serial;
   }
-  async function request(url,body,asImage=false){
-    const activeRequests=asImage?previewRequests:requests;
+  async function request(url,body,asImage=false,activeRequests=asImage?previewRequests:requests){
     const controller=new AbortController();activeRequests.add(controller);
     const timeout=setTimeout(()=>controller.abort(),20000);
     try{
       const options={headers:authHeaders(body?{'Content-Type':'application/json'}:{}),cache:'no-store',signal:controller.signal,redirect:'error'};
       if(body){options.method='POST';options.body=JSON.stringify(body);}
       const response=await nativeFetch(url,options);
-      if(!response.ok)throw Object.assign(Error('request failed'),{status:response.status});
+      if(!response.ok){
+        if(url===path+'/collection'&&[400,409].includes(response.status)){
+          const issue=await response.json().catch(()=>({}));
+          if(typeof issue.error==='string')throw Object.assign(Error(issue.error.slice(0,250)),{status:response.status,userMessage:true});
+        }
+        throw Object.assign(Error('request failed'),{status:response.status});
+      }
       if(asImage){
         if(response.headers.get('content-type')?.split(';')[0].trim()!=='image/png')throw Error('invalid preview');
         return await response.blob();
@@ -553,7 +569,7 @@ function attachRequirementDesign(page,current){
   }
   function failure(error,message){
     if(error.status===401||error.status===403){
-      interrupt();clearSource();select.replaceChildren();custom.hidden=true;form.reset();busy=false;controls();
+      interrupt();clearSource();clearEvaluation();clearCollection();select.replaceChildren();custom.hidden=true;form.reset();busy=false;controls();
       notice.textContent='登录状态或权限已变化，请刷新后查看。';
     }else notice.textContent=message;
   }
@@ -563,6 +579,193 @@ function attachRequirementDesign(page,current){
   function details(parent,title){
     const element=document.createElement('details');write(element,'summary',title);parent.append(element);return element;
   }
+  function downloadDesignJson(data,filename){
+    downloadDesignFile(new Blob([JSON.stringify(data,null,2)+'\n'],{type:'application/json;charset=utf-8'}),filename);
+  }
+  function downloadDesignFile(blob,filename){
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');link.href=url;link.download=filename;
+    document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  async function requestFile(url,format,active){
+    const controller=new AbortController();active.add(controller);
+    const timeout=setTimeout(()=>controller.abort(),20000);
+    try{
+      const response=await nativeFetch(url,{headers:authHeaders({}),cache:'no-store',redirect:'error',signal:controller.signal});
+      if(!response.ok)throw Object.assign(Error('download failed'),{status:response.status});
+      const mime=format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'application/json';
+      if(response.headers.get('content-type')?.split(';')[0].trim()!==mime)throw Error('unexpected format');
+      const blob=await response.blob();
+      if(!blob.size)throw Error('empty file');
+      return blob;
+    }finally{clearTimeout(timeout);active.delete(controller);}
+  }
+  const collection=q('[data-design-collection]'),collectionNotice=q('[data-collection-notice]');
+  const collectionTotal=q('[data-collection-total]'),collectionFile=q('[data-collection-file]');
+  const collectionRequests=new Set();
+  let collectionEpoch=0;
+  function collectionBusy(busy){
+    for(const control of collection.querySelectorAll('button, input, select'))control.disabled=busy;
+  }
+  function clearCollection(){
+    collectionEpoch++;
+    for(const controller of collectionRequests)controller.abort();
+    collectionRequests.clear();collectionTotal.textContent='';collectionNotice.textContent='';collectionFile.value='';collectionBusy(false);
+    showCollectionAcceptance(null);
+  }
+  function collectionLive(epoch){return epoch===collectionEpoch&&collection.open&&live(serial);}
+  function showCollectionError(error){
+    if(error.status===401||error.status===403){failure(error,'');return;}
+    if(error.status===409){collectionNotice.textContent=(error.userMessage?error.message:'版本冲突')+'。整批未写入，请下载最新工作集，对照修改后重新导入。';return;}
+    collectionNotice.textContent=error.message&&error.userMessage?error.message:'操作失败，请检查文件或刷新工作集后重试。';
+  }
+  function showCollectionAcceptance(record){
+    const line=q('[data-collection-acceptance]');
+    const fields=['real_case_count','stress_row_count','offline_controls','eligible_count','generated'];
+    const valid=fields.every(key=>Number.isSafeInteger(record?.[key])&&record[key]>=0);
+    line.hidden=!valid;
+    line.textContent=valid?'实测：'+record.real_case_count+' 条历史用例完成 Excel 往返，'+record.stress_row_count+
+      ' 行边界数据通过。可回放业务断言 '+record.offline_controls+' 条，可进入候选脚本生成 '+record.eligible_count+
+      ' 条，已生成 '+record.generated+' 条。人工审核待办。':'';
+  }
+  async function collectionAction(action){
+    const epoch=collectionEpoch;
+    if(!collectionLive(epoch))return;
+    collectionBusy(true);collectionNotice.textContent='';
+    try{
+      const url=path+'/collection';
+      if(action==='download'){
+        const format=q('[data-collection-format]').value;
+        const file=await requestFile(url+'?format='+format,format,collectionRequests);
+        if(collectionLive(epoch))downloadDesignFile(file,'我的标准用例工作集.'+format);
+        return;
+      }
+      let body=null;
+      if(action==='import'){
+        const file=collectionFile.files[0],format=file?.name.split('.').pop()?.toLowerCase();
+        if(!file||!['json','xlsx'].includes(format)||!file.size||file.size>2097152)
+          throw Object.assign(Error('请选择 2 MiB 以内的 .json 或 .xlsx 文件。'),{userMessage:true});
+        const dataUrl=await new Promise((resolve,reject)=>{
+          const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('file read'));reader.readAsDataURL(file);
+        });
+        if(!collectionLive(epoch))return;
+        body={format,file_base64:dataUrl.split(',')[1]};
+      }
+      const data=await request(url,body,false,collectionRequests);
+      if(!collectionLive(epoch))return;
+      collectionTotal.textContent='当前工作集共 '+data.total+' 条用例。';
+      if(action==='refresh')showCollectionAcceptance(data.acceptance);
+      if(action==='import'){
+        collectionFile.value='';
+        collectionNotice.textContent='已导入。新增 '+data.added+' 条、更新 '+data.updated+' 条、未变动 '+data.unchanged+' 条。';
+      }
+    }catch(error){if(collectionLive(epoch))showCollectionError(error);}
+    finally{if(collectionLive(epoch))collectionBusy(false);}
+  }
+  collection.addEventListener('toggle',event=>{
+    if(event.target!==collection)return;
+    clearCollection();
+    if(collection.open)void collectionAction('refresh');
+  });
+  for(const button of collection.querySelectorAll('[data-collection-action]')){
+    button.onclick=()=>void collectionAction(button.dataset.collectionAction);
+  }
+  const assessment=q('[data-design-assessment]');
+  const reportBox=q('[data-evaluation-result]'),evaluationNotice=q('[data-evaluation-notice]');
+  const evaluationRequests=new Set();
+  let evaluationEpoch=0;
+  function clearEvaluation(){
+    evaluationEpoch++;
+    for(const controller of evaluationRequests)controller.abort();
+    evaluationRequests.clear();reportBox.replaceChildren();evaluationNotice.textContent='';
+  }
+  function evaluationLive(epoch){
+    return epoch===evaluationEpoch&&assessment.open&&live(serial);
+  }
+  async function fetchEvaluation(blind=false){
+    const response=await request(path+'/evaluation'+(blind?'/blind':''),null,false,evaluationRequests);
+    return blind?response.blind:response.report;
+  }
+  function evaluationError(error){
+    clearEvaluation();
+    if(error.status===401||error.status===403){
+      failure(error,'');return;
+    }
+    evaluationNotice.textContent=error.status===404?'尚未发布对照评估。':'评估资料读取失败，请刷新评估。';
+  }
+  function renderEvaluation(report){
+    write(reportBox,'p',report.sample_count+' 个需求片段 · '+report.prototype_count+' 张原型 · 候选 '+report.candidate_count+' / '+report.candidate_target+' 条 · 待人工盲评');
+    if(report.deduplication)write(reportBox,'p',report.deduplication);
+    if(report.status==='partial'||report.target_met===false)write(reportBox,'p','本批次只完成了部分生成或候选数量尚未达标。');
+    for(const group of report.groups){
+      const row=details(reportBox,group.title);
+      write(row,'p',group.sample_count+' 个需求片段 · '+group.prototype_count+' 张原型');
+      if(group.clauses?.length||group.prototypes?.length){
+        const sources=details(row,'冻结来源');
+        for(const clause of group.clauses||[])write(sources,'p',clause.id+' · '+clause.text);
+        for(const prototype of group.prototypes||[])write(sources,'p',prototype.id+' · '+prototype.caption+' · PNG SHA256 '+prototype.sha256);
+      }
+      for(const variant of group.variants){
+        const label=variant.variant==='few'?'带例子':'无例子';
+        const state=({completed:'已生成',failed:'生成失败',pending:'待运行'})[variant.status]||'状态待核实';
+        const run=details(row,label+' · '+state);
+        if(variant.status!=='completed')continue;
+        write(run,'p',variant.point_count+' 个测试点 · '+variant.case_count+' 条用例 · '+variant.question_count+' 个待确认问题');
+        write(run,'p','未被测试点引用的来源　'+(variant.unreferenced_source_ids.join('、')||'无'));
+        write(run,'p','模型　'+(variant.model||'未返回')+' · 请求编号　'+(variant.request_id||'未返回'));
+        if(Number.isFinite(variant.elapsed_ms))write(run,'p','耗时 '+(variant.elapsed_ms/1000).toFixed(1)+' 秒');
+        if(Number.isInteger(variant.usage?.total_tokens))write(run,'p','Token 总数 '+variant.usage.total_tokens);
+      }
+      for(const observation of group.observations){
+        const label=({fact:'需求事实',visual:'原型观察',unknown:'待确认'})[observation.kind]||'观察';
+        write(row,'p',label+' · '+observation.text+'　'+observation.refs.join('、'));
+      }
+      if(group.questions.length){
+        const list=details(row,'待确认问题（'+group.questions.length+'）');
+        for(const question of group.questions)write(list,'p',question);
+      }
+    }
+    const collection=details(reportBox,'查看候选用例（'+report.candidates.length+'）');
+    for(const item of report.candidates){
+      const entry=details(collection,item.id+' · '+item.title);
+      write(entry,'p','来源　'+item.group+' / '+item.refs.join('、'));
+      write(entry,'p','前置条件　'+item.precondition);
+      const steps=document.createElement('ol');entry.append(steps);
+      for(const step of item.steps)write(steps,'li',step);
+      write(entry,'p','预期　'+item.expected);
+    }
+    for(const blind of [false,true]){
+      const button=write(reportBox,'button',blind?'下载匿名盲评表':'下载对照证据 JSON');button.type='button';
+      button.onclick=async()=>{
+        const epoch=evaluationEpoch;
+        if(!evaluationLive(epoch)||!button.isConnected)return;
+        button.disabled=true;
+        try{
+          const data=await fetchEvaluation(blind);
+          if(evaluationLive(epoch)&&button.isConnected)downloadDesignJson(data,blind?'测试设计-匿名盲评表.json':'测试设计-提示词对照证据.json');
+        }catch(error){if(evaluationLive(epoch))evaluationError(error);}
+        finally{if(button.isConnected)button.disabled=false;}
+      };
+    }
+    write(reportBox,'p','安排盲评时，请将匿名盲评表和来源材料单独交给评审人。');
+  }
+  async function loadEvaluation(){
+    clearEvaluation();
+    const epoch=evaluationEpoch;
+    if(!evaluationLive(epoch))return;
+    evaluationNotice.textContent='正在读取评估记录…';
+    try{
+      const report=await fetchEvaluation();
+      if(!evaluationLive(epoch))return;
+      evaluationNotice.textContent='';renderEvaluation(report);
+    }catch(error){if(evaluationLive(epoch))evaluationError(error);}
+  }
+  assessment.addEventListener('toggle',event=>{
+    if(event.target!==assessment)return;
+    if(assessment.open)void loadEvaluation();
+    else clearEvaluation();
+  });
+  q('[data-evaluation-refresh]').onclick=()=>void loadEvaluation();
   function renderSource(data){
     clearSource();source=data;
     write(sourceBox,'h3',data.title);
@@ -589,6 +792,33 @@ function attachRequirementDesign(page,current){
         finally{if(button.isConnected)button.disabled=false;}
       };
     }
+  }
+  function standardExport(row,run,material){
+    const section=details(row,'导出标准用例');
+    const label=write(section,'label','文件格式 ');
+    const format=document.createElement('select');label.append(format);
+    for(const [value,title] of [['xlsx','Excel (.xlsx)'],['json','JSON (.json)']]){
+      const option=write(format,'option',title);option.value=value;
+    }
+    const button=write(section,'button','下载标准用例');button.type='button';
+    const message=write(section,'p','');message.setAttribute('role','status');
+    button.onclick=async()=>{
+      if(!live(serial)||!row.isConnected||material!==source)return;
+      const chosen=format.value, ticket=serial;
+      button.disabled=true;message.textContent='正在导出…';
+      try{
+        const query=new URLSearchParams({source_id:material.id,run_id:run.id,format:chosen});
+        const blob=await requestFile(path+'/standard-cases?'+query,chosen,requests);
+        if(!live(ticket)||!row.isConnected||material!==source)return;
+        downloadDesignFile(blob,'标准用例-'+run.id+'.'+chosen);message.textContent='已生成下载文件。';
+      }catch(error){
+        if(!live(ticket)||!row.isConnected)return;
+        if(error.status===401||error.status===403){failure(error,'');return;}
+        message.textContent='导出失败，请刷新记录后重试。';
+      }finally{
+        if(row.isConnected)button.disabled=false;
+      }
+    };
   }
   function renderRuns(runs){
     const snapshot=JSON.stringify(runs);
@@ -635,12 +865,10 @@ function attachRequirementDesign(page,current){
       }
       const button=write(row,'button','下载证据 JSON');button.type='button';button.dataset.designExport='';
       const material=source;
+      if(run.status==='completed'&&result?.cases?.length)standardExport(row,run,material);
       button.onclick=()=>{
         if(!live(serial)||!row.isConnected||material!==source)return;
-        const json=JSON.stringify({source:material,run},null,2)+'\n';
-        const url=URL.createObjectURL(new Blob([json],{type:'application/json;charset=utf-8'}));
-        const link=document.createElement('a');link.href=url;link.download='需求测试设计-'+run.id+'.json';
-        document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        downloadDesignJson({source:material,run},'需求测试设计-'+run.id+'.json');
       };
     }
   }
@@ -676,7 +904,7 @@ function attachRequirementDesign(page,current){
     if(event.target!==panel||opened===panel.open)return;
     opened=panel.open;
     if(opened){void load(selected);return;}
-    interrupt();clearSource();select.replaceChildren();notice.textContent='';busy=false;controls();
+    interrupt();clearSource();clearEvaluation();clearCollection();collection.open=false;assessment.open=false;select.replaceChildren();notice.textContent='';busy=false;controls();
   });
   select.onchange=()=>{if(hash(select.value))void load(select.value);};
   refresh.onclick=()=>void load(selected);

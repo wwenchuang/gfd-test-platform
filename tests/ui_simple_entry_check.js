@@ -1422,3 +1422,14 @@ test('requirement design ignores late results and clears rendered source on same
  const panel=await openWeek7(w);w.nativeFetch=()=>new Promise(resolve=>{finish=resolve;});panel.querySelector('[data-design-refresh]').click();
  w.currentAccessProfile.scope.ui_apps=['restricted'];finish(week7Json(week7Data()));await wait();await wait();assert.equal(w.document.querySelector('[data-requirement-design]'),null);
 });
+
+test('requirement evaluation discards a late result after the caller changes session',async t=>{
+ const {w}=fixture(t);let finish;
+ w.nativeFetch=async()=>week7Json(week7Data());
+ const panel=await openWeek7(w),assessment=panel.querySelector('[data-design-assessment]');
+ w.nativeFetch=()=>new Promise(resolve=>{finish=resolve;});
+ assessment.open=true;assessment.dispatchEvent(new w.Event('toggle'));await wait();
+ w.sessionStorage.setItem('sessionToken','different-session');
+ finish(week7Json({ok:true,report:{groups:[],candidates:[]}}));await wait();await wait();
+ assert.equal(w.document.querySelector('[data-requirement-design]'),null);
+});
