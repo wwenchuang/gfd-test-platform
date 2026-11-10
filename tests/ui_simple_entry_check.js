@@ -254,6 +254,80 @@ test('phone image URL must carry the selected row app',async t=>{
  await options.loadPicture(img,{app_id:'app.a',target:{runner_id:'r',device_id:'d'},snapshot_url:'/api/runner/device-snapshot?runner_id=r&device_id=d&app_id=app.b',snapshot_captured_at:'1'},()=>true);
  assert.equal(fetched,0);assert.equal(img.hasAttribute('src'),false);
 });
+test('forced phone picture refresh discards cached bytes and sends a new authorized request',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const options=calls.find(x=>x?.loadPicture);
+ let fetched=0,created=0;const revoked=[];w.nativeFetch=async()=>{fetched++;return {ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['png'],{type:'image/png'})};};
+ w.URL.createObjectURL=()=>`blob:picture-${++created}`;w.URL.revokeObjectURL=value=>revoked.push(value);
+ const img=w.document.createElement('img');w.document.body.append(img);const device={app_id:'app.a',target:{runner_id:'r',device_id:'d'},snapshot_url:'/api/runner/device-snapshot?runner_id=r&device_id=d&app_id=app.a',snapshot_captured_at:'1'};
+ await options.loadPicture(img,device,()=>true);await options.loadPicture(img,device,()=>true);assert.equal(fetched,1);
+ await options.loadPicture(img,device,()=>true,{forceFresh:true});assert.equal(fetched,2);assert.ok(revoked.includes('blob:picture-1'));assert.equal(img.src,'blob:picture-2');
+});
+test('refreshing one picture does not revoke an independently visible card for the same snapshot',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const loader=calls.find(x=>x?.loadPicture).loadPicture;
+ let created=0;const revoked=[];w.URL.createObjectURL=()=>`blob:separate-${++created}`;w.URL.revokeObjectURL=value=>revoked.push(value);
+ const first=w.document.createElement('img'),second=w.document.createElement('img');w.document.body.append(first,second);
+ const device={app_id:'app.a',target:{runner_id:'r',device_id:'d'},snapshot_url:'/api/runner/device-snapshot?runner_id=r&device_id=d&app_id=app.a',snapshot_captured_at:'1'};
+ await loader(first,device,()=>true);await loader(second,device,()=>true,{forceFresh:true});
+ assert.notEqual(first.src,second.src);assert.equal(first.hidden,false);assert.equal(revoked.includes(first.src),false);
+});
+test('releasing a phone image leaves an unrelated practice screenshot available',async t=>{
+ const {w,calls}=fixture(t);w.canAccessWorkflow=()=>true;const id='c'.repeat(32),revoked=[];let created=0;
+ w.apiRequest=async(path,options={})=>path==='/ui-executions/availability'?{ok:true,enabled:true}:options.method==='POST'?{ok:true,result:{id,scenario:'ui_catalog_count',status:'passed',total:1,artifacts:['screenshot']}}:{ok:true,results:[]};
+ mockCatalogFetch(w,async()=>({ok:true,status:200,headers:{get:key=>key==='content-type'?'image/png':key==='content-length'?'3':null},blob:async()=>new w.Blob(['png'])}));
+ w.URL.createObjectURL=()=>`blob:separate-${++created}`;w.URL.revokeObjectURL=url=>revoked.push(url);
+ await w.initUiSimpleAvailability({navigate:false});w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const options=calls.find(x=>x?.loadPicture);
+ w.activeWorkflow='ai_practice';w.showAiPractice();const panel=w.document.querySelector('[data-catalog-check]');panel.querySelector('[data-catalog-run]').click();await wait();await wait();panel.querySelector('[data-catalog-artifact="screenshot"]').click();await wait();await wait();
+ const practice=panel.querySelector('[data-catalog-preview]');assert.ok(practice);const practiceSrc=practice.src;
+ const phone=w.document.createElement('img');w.document.body.append(phone);const device={app_id:'app.a',target:{runner_id:'r',device_id:'d'},snapshot_url:'/api/runner/device-snapshot?runner_id=r&device_id=d&app_id=app.a',snapshot_captured_at:'1'};
+ await options.loadPicture(phone,device,()=>true);const phoneSrc=phone.src;options.releasePicture(phone);
+ assert.ok(revoked.includes(phoneSrc));assert.equal(revoked.includes(practiceSrc),false);assert.equal(practice.src,practiceSrc);
+});
+test('unselected phone removed and restored must reauthorize its cached image without disturbing another phone',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const entry=calls.find(x=>x?.loadPicture),loader=entry.loadPicture;
+ const makeDevice=id=>({app_id:'app.a',target:{runner_id:'r',device_id:id,platform:'android'},name:'手机',connection_status:'ready',snapshot_url:`/api/runner/device-snapshot?runner_id=r&device_id=${id}&app_id=app.a`,snapshot_captured_at:'1'});
+ const a=makeDevice('a'),b=makeDevice('b');let devices=[a,b],denyA=false,created=0;const requests=[],revoked=[];
+ w.nativeFetch=async path=>{requests.push(path);return denyA&&path.includes('device_id=a')?{ok:false,status:403,headers:{get:()=>null}}:{ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['png'])};};
+ w.URL.createObjectURL=()=>`blob:pic-${++created}`;w.URL.revokeObjectURL=url=>revoked.push(url);
+ w.eval(fs.readFileSync('js/ui-test-home.js','utf8'));const host=w.document.getElementById('editor-area');
+ const request=async path=>path.startsWith('/ui-executions/devices')?{ok:true,devices}:{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:[],items:[],groups:[],total:0};
+ w.UiSimpleFlow.mount(host,{mode:'start',request,identity:()=> 'u1',canExecute:()=>true,loadPicture:loader,releasePicture:entry.releasePicture});await wait();const app=host.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new w.Event('change'));await wait();await wait();
+ const cards=host.querySelectorAll('.ui-simple-device'),oldA=cards[0].querySelector('img'),oldASrc=oldA.src,other=cards[1].querySelector('img'),otherSrc=other.src;assert.equal(requests.length,2);assert.equal(oldA.hidden,false);
+ devices=[b];await w.UiSimpleFlow.refresh();assert.equal(oldA.isConnected,false);assert.ok(revoked.includes(oldASrc));assert.equal(revoked.includes(otherSrc),false);
+ denyA=true;devices=[a,b];await w.UiSimpleFlow.refresh();await wait();const newA=[...host.querySelectorAll('.ui-simple-device')].find(card=>card.textContent.includes('设备编号：a')).querySelector('img');
+ assert.equal(requests.filter(p=>p.includes('device_id=a')).length,2);assert.equal(newA.hidden,true);assert.equal(newA.hasAttribute('src'),false);assert.equal(other.src,otherSrc);assert.equal(revoked.includes(otherSrc),false);
+});
+test('selected phone disappearance revokes only its image and rejects a denied restore',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const options=calls.find(x=>x?.loadPicture);
+ const device={app_id:'app.a',target:{runner_id:'r',device_id:'d',platform:'android'},name:'手机',connection_status:'ready',snapshot_url:'/api/runner/device-snapshot?runner_id=r&device_id=d&app_id=app.a',snapshot_captured_at:'1'};
+ let devices=[device],denied=false,requests=0;const revoked=[];w.URL.createObjectURL=()=> 'blob:selected-phone';w.URL.revokeObjectURL=url=>revoked.push(url);
+ w.nativeFetch=async()=>{requests++;return denied?{ok:false,status:403,headers:{get:()=>null}}:{ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['png'])};};
+ w.eval(fs.readFileSync('js/ui-test-home.js','utf8'));const host=w.document.getElementById('editor-area');const request=async path=>path.startsWith('/ui-executions/devices')?{ok:true,devices}:{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:[],items:[],groups:[],total:0};
+ w.UiSimpleFlow.mount(host,{mode:'start',request,identity:()=> 'u1',canExecute:()=>true,loadPicture:options.loadPicture,releasePicture:options.releasePicture});await wait();const app=host.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new w.Event('change'));await wait();await wait();
+ const card=host.querySelector('.ui-simple-device'),img=card.querySelector('img');card.querySelector('input').click();assert.equal(img.src,'blob:selected-phone');
+ devices=[];await w.UiSimpleFlow.refresh();assert.ok(revoked.includes('blob:selected-phone'));assert.equal(img.hidden,true);assert.equal(card.querySelector('input').checked,true);assert.equal(card.querySelector('input').disabled,true);
+ denied=true;devices=[device];await w.UiSimpleFlow.refresh();await wait();assert.equal(requests,2);assert.equal(img.hidden,true);assert.equal(img.hasAttribute('src'),false);
+});
+test('snapshot URL withdrawal and application switch release the old image for the affected card',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const options=calls.find(x=>x?.loadPicture);
+ const device={app_id:'app.a',target:{runner_id:'r',device_id:'d',platform:'android'},name:'手机',connection_status:'ready',snapshot_url:'/api/runner/device-snapshot?runner_id=r&device_id=d&app_id=app.a',snapshot_captured_at:'1'};
+ let devices=[device],created=0;const revoked=[];w.URL.createObjectURL=()=>`blob:switch-${++created}`;w.URL.revokeObjectURL=url=>revoked.push(url);
+ w.nativeFetch=async()=>({ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['png'])});
+ w.eval(fs.readFileSync('js/ui-test-home.js','utf8'));const host=w.document.getElementById('editor-area');const request=async path=>path.startsWith('/ui-executions/devices')?{ok:true,devices}:{ok:true,apps:[{app_id:'app.a',name:'应用甲'},{app_id:'app.b',name:'应用乙'}],modules:[],items:[],groups:[],total:0};
+ w.UiSimpleFlow.mount(host,{mode:'start',request,identity:()=> 'u1',canExecute:()=>true,loadPicture:options.loadPicture,releasePicture:options.releasePicture});await wait();const app=host.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new w.Event('change'));await wait();await wait();
+ const img=host.querySelector('.ui-simple-device img');assert.equal(img.src,'blob:switch-1');devices=[{...device,snapshot_url:''}];await w.UiSimpleFlow.refresh();assert.ok(revoked.includes('blob:switch-1'));assert.equal(img.hidden,true);
+ devices=[device];await w.UiSimpleFlow.refresh();await wait();assert.equal(img.src,'blob:switch-2');devices=[];app.value='app.b';app.dispatchEvent(new w.Event('change'));await wait();assert.ok(revoked.includes('blob:switch-2'));assert.equal(img.isConnected,false);
+});
+test('old unselected picture response cannot attach after card removal and denied reauthorization',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();w.activeWorkflow='ui_start';w.showUiSimpleWorkflow();const loader=calls.find(x=>x?.loadPicture).loadPicture;
+ const device={app_id:'app.a',target:{runner_id:'r',device_id:'d',platform:'android'},name:'手机',connection_status:'ready',snapshot_url:'/api/runner/device-snapshot?runner_id=r&device_id=d&app_id=app.a',snapshot_captured_at:'1'};
+ let devices=[device],requests=0,resolveOld,created=0;w.URL.createObjectURL=()=>`blob:pic-${++created}`;
+ w.nativeFetch=async()=>{requests++;if(requests===1)return new Promise(r=>resolveOld=r);return {ok:false,status:403,headers:{get:()=>null}};};
+ w.eval(fs.readFileSync('js/ui-test-home.js','utf8'));const host=w.document.getElementById('editor-area');const request=async path=>path.startsWith('/ui-executions/devices')?{ok:true,devices}:{ok:true,apps:[{app_id:'app.a',name:'应用甲'}],modules:[],items:[],groups:[],total:0};
+ w.UiSimpleFlow.mount(host,{mode:'start',request,identity:()=> 'u1',canExecute:()=>true,loadPicture:loader});await wait();const app=host.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new w.Event('change'));await wait();assert.equal(requests,1);
+ const old=host.querySelector('.ui-simple-device img');devices=[];await w.UiSimpleFlow.refresh();devices=[device];await w.UiSimpleFlow.refresh();await wait();assert.equal(requests,2);
+ resolveOld({ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['png'])});await wait();await wait();const current=host.querySelector('.ui-simple-device img');
+ assert.equal(old.isConnected,false);assert.equal(current.hidden,true);assert.equal(current.hasAttribute('src'),false);assert.equal(created,0);
+});
 
 test('report download cannot save a stale account response or fetch outside private batch routes',async t=>{
  const {w}=fixture(t);w.responseAttachmentFilename=()=> '智小白3D发布测试报告.docx';

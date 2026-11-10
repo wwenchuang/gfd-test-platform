@@ -5,6 +5,7 @@ const staticPaths = new Set([
   '/task-manager.html', '/assets/brand/kongfudou-icon.png', '/assets/icons/flask-conical.svg',
   '/js/ui-simple-entry.1514fe455649371c.js', '/js/ui-simple-entry.d6214cd9458c31ef.js',
   '/js/ui-simple-entry.cc3d421d522c3502.js', '/js/ui-test-home.550ea3ea79d3dd5a.js',
+  '/js/ui-simple-entry.5544fabaad139990.js', '/js/ui-test-home.c7eaa641cdc4556b.js',
   '/css/ui-case-draft.98c46b5734c85379.css',
   ...['operation-history','app','round5','ui-simple','platform-workbench','ui-workbench','ui-case-draft'].map(name=>`/css/${name}.css`),
   ...['utils','error-handler','empty-states','loading-manager','form-steps','state','auth','identity-management','operation-history','navigation','agent-workbench','agent-status','device-recorder','cases','execution','reports','ai-repair','model-config','yaml-editor','pending-actions','ui-execution-replay','ui-batch-view','ui-batch-report','ui-test-home','ui-case-draft','ui-simple-entry','app'].map(name=>`/js/${name}.js`),

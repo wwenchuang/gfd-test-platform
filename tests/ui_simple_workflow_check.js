@@ -153,6 +153,77 @@ test('two online connections show runner identity and retain each exact target',
  cards[1].querySelector('input').click();await wait();f.node.querySelector('[data-ui-start]').click();await wait();await wait();
  assert.equal(creationPosts(f)[0].options.body.targets[0].runner_id,'second-host');
 });
+test('same-model phones show their own exact device identifiers',async t=>{
+ const f=fixture(t);f.setDevices([
+  {...DEVICE,target:{...DEVICE.target,device_id:'9888E0094F2A'}},
+  {...DEVICE,target:{...DEVICE.target,device_id:'other-phone'},connection_status:'offline'}
+ ]);f.mount();await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();
+ const cards=f.node.querySelectorAll('.ui-simple-device');assert.equal(cards.length,2);
+ assert.match(cards[0].textContent,/设备编号：9888E0094F2A/);assert.match(cards[1].textContent,/设备编号：other-phone/);
+ assert.equal(cards[0].querySelector('input').checked,false);assert.equal(cards[1].querySelector('input').disabled,true);
+});
+test('a selected phone that goes offline labels its screenshot historical without changing the selection',async t=>{
+ const f=fixture(t);const withPicture={...DEVICE,snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:'2026-10-23 11:20:56'};
+ const loadPicture=img=>{img.src='blob:picture';img.hidden=false;return Promise.resolve(true);};
+ f.setDevices([withPicture]);await select(t,f,{loadPicture});const card=f.node.querySelector('.ui-simple-device');
+ assert.doesNotMatch(card.textContent,/历史画面/);
+ f.setDevices([{...withPicture,connection_status:'offline'}]);await f.w.UiSimpleFlow.refresh();
+ assert.match(card.textContent,/历史画面/);assert.match(card.textContent,/2026-10-23 11:20:56/);
+ assert.equal(card.querySelector('input').checked,true);assert.equal(card.querySelector('input').disabled,true);assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
+ assert.equal(creationPosts(f).length,0);
+});
+test('an offline screenshot that fails authorization is unavailable, not a historical picture',async t=>{
+ const f=fixture(t);const device={...DEVICE,connection_status:'offline',snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:'2026-10-23 11:20:56'};
+ f.setDevices([device]);f.mount('start',{loadPicture:()=>Promise.resolve(false)});await wait();const app=f.node.querySelector('[name="ui-app"]');app.value='app.a';app.dispatchEvent(new f.w.Event('change'));await wait();await wait();
+ const card=f.node.querySelector('.ui-simple-device');assert.doesNotMatch(card.textContent,/历史画面/);assert.match(card.textContent,/截图不可用/);assert.match(card.textContent,/2026-10-23 11:20:56/);
+ assert.equal(card.querySelector('img').hidden,true);assert.equal(card.querySelector('input').disabled,true);
+});
+test('a selected phone missing from the registry retains its target and hides the screenshot',async t=>{
+ const f=fixture(t);const withPicture={...DEVICE,snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:'2026-10-23 11:20:56'};
+ f.setDevices([withPicture]);await select(t,f);const card=f.node.querySelector('.ui-simple-device');
+ f.setDevices([]);await f.w.UiSimpleFlow.refresh();
+ assert.match(card.textContent,/截图不可用/);assert.match(card.textContent,/2026-10-23 11:20:56/);
+ assert.match(card.textContent,/所选手机已断开/);assert.equal(card.querySelector('input').checked,true);assert.equal(card.querySelector('input').disabled,true);
+ assert.equal(card.classList.contains('ui-device-unavailable'),true);
+ assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);assert.equal(creationPosts(f).length,0);
+ await f.w.UiSimpleFlow.refresh();assert.doesNotMatch(card.textContent,/历史画面/);
+ f.setDevices([withPicture]);await f.w.UiSimpleFlow.refresh();assert.doesNotMatch(card.textContent,/历史画面/);assert.equal(card.querySelector('input').checked,true);assert.equal(card.classList.contains('ui-device-unavailable'),false);
+});
+test('a disconnected phone with no capture time hides the retained picture',async t=>{
+ const f=fixture(t);f.setDevices([{...DEVICE,snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:''}]);await select(t,f);
+ const card=f.node.querySelector('.ui-simple-device');f.setDevices([]);await f.w.UiSimpleFlow.refresh();
+ assert.match(card.textContent,/截图不可用/);
+ assert.equal(card.querySelector('input').checked,true);assert.equal(card.querySelector('input').disabled,true);
+});
+test('an unavailable screenshot is not described as a historical picture even when its capture time is known',async t=>{
+ const f=fixture(t);f.setDevices([{...DEVICE,snapshot_url:'',snapshot_captured_at:'2026-10-23 11:20:56'}]);await select(t,f);
+ const card=f.node.querySelector('.ui-simple-device');f.setDevices([{...DEVICE,connection_status:'offline',snapshot_url:'',snapshot_captured_at:'2026-10-23 11:20:56'}]);await f.w.UiSimpleFlow.refresh();
+ assert.doesNotMatch(card.textContent,/历史画面/);assert.match(card.textContent,/截图不可用/);
+ f.setDevices([]);await f.w.UiSimpleFlow.refresh();
+ assert.doesNotMatch(card.textContent,/历史画面/);assert.match(card.textContent,/截图不可用/);assert.match(card.textContent,/2026-10-23 11:20:56/);
+ assert.equal(card.querySelector('input').checked,true);assert.equal(card.querySelector('input').disabled,true);
+});
+test('a missing selected phone clears its picture and asks for a fresh load after authorization returns',async t=>{
+ const f=fixture(t),loads=[];const device={...DEVICE,app_id:'app.a',snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:'1'};
+ const loadPicture=(img,d,current,options)=>{loads.push({img,current,options});img.src='blob:old';img.hidden=false;return Promise.resolve(true);};
+ f.setDevices([device]);await select(t,f,{loadPicture});assert.equal(loads.length,1);
+ const card=f.node.querySelector('.ui-simple-device'),img=card.querySelector('img'),fallback=card.querySelector('[data-picture-fallback]');
+ f.setDevices([]);await f.w.UiSimpleFlow.refresh();
+ assert.equal(img.hidden,true);assert.equal(img.hasAttribute('src'),false);assert.equal(img.dataset.pictureStamp,undefined);assert.equal(fallback.hidden,false);assert.match(card.textContent,/截图不可用/);
+ assert.equal(card.querySelector('input').checked,true);assert.equal(f.node.querySelector('[data-ui-start]').disabled,true);
+ f.setDevices([{...device,snapshot_url:''}]);await f.w.UiSimpleFlow.refresh();assert.equal(loads.length,1);assert.equal(img.hidden,true);
+ f.setDevices([device]);await f.w.UiSimpleFlow.refresh();assert.equal(loads.length,2);assert.equal(loads[1].options?.forceFresh,true);
+});
+test('a picture request begun before a phone disappeared cannot attach after the same phone returns',async t=>{
+ const f=fixture(t),loads=[];const device={...DEVICE,app_id:'app.a',snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:'1'};
+ const loadPicture=(img,d,current,options)=>new Promise(resolve=>loads.push({img,current,options,resolve}));
+ f.setDevices([device]);await select(t,f,{loadPicture});assert.equal(loads.length,1);
+ f.setDevices([]);await f.w.UiSimpleFlow.refresh();assert.equal(loads[0].current(),false);
+ f.setDevices([device]);await f.w.UiSimpleFlow.refresh();assert.equal(loads.length,2);assert.equal(loads[0].current(),false);assert.equal(loads[1].current(),true);
+ if(loads[0].current()){loads[0].img.src='blob:old';loads[0].img.hidden=false;}loads[0].resolve(false);await wait();
+ assert.equal(loads[1].img.hasAttribute('src'),false);assert.equal(loads[1].img.hidden,true);
+ loads[1].resolve(false);await wait();
+});
 test('device refresh failure hides a previously visible image',async t=>{
  let fail=false;const f=fixture(t,path=>path.startsWith('/ui-executions/devices')&&fail?Promise.reject(new Error('权限已变化')):undefined);
  f.setDevices([{...DEVICE,app_id:'app.a',snapshot_url:'/api/runner/device-snapshot?runner_id=mac&device_id=iphone&app_id=app.a',snapshot_captured_at:'1'}]);

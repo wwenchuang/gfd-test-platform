@@ -7,6 +7,8 @@ let uiCaseDraftHandle=null;
 let uiSimpleStartSelection=null;
 let uiStartCreationIntent=null;
 const uiSimplePictures=new Map();
+const uiSimplePictureElements=new WeakMap();
+let uiSimplePictureElementSequence=0;
 const uiSimplePictureRequests=new Set();
 const uiSimpleDownloads=new Set();
 let uiCatalogCleanup=null;
@@ -58,18 +60,20 @@ async function initUiSimpleAvailability({navigate=true}={}){
     }
   }catch(_){/* Feature discovery can fail without breaking the existing workspace. */}
 }
-async function loadUiSimplePicture(img,device,isCurrent){
+async function loadUiSimplePicture(img,device,isCurrent,{forceFresh=false}={}){
   const epoch=uiSimpleEpoch,identity=uiSimpleIdentity();
   const url=new URL(device.snapshot_url,window.location.origin);
   if(url.origin!==window.location.origin||url.pathname!=='/api/runner/device-snapshot'
     ||url.searchParams.get('runner_id')!==device.target.runner_id||url.searchParams.get('device_id')!==device.target.device_id
     ||url.searchParams.get('app_id')!==device.app_id)return;
-  const key=identity+'|'+url.href+'|'+device.snapshot_captured_at;
+  if(!uiSimplePictureElements.has(img))uiSimplePictureElements.set(img,++uiSimplePictureElementSequence);
+  const key='ui-device-picture|'+uiSimplePictureElements.get(img)+'|'+identity+'|'+url.href+'|'+device.snapshot_captured_at;
   const attach=src=>{
     if(epoch!==uiSimpleEpoch||identity!==uiSimpleIdentity()||!isCurrent())return false;
     img.src=src;img.hidden=false;const fallback=img.parentElement?.querySelector('[data-picture-fallback]');if(fallback)fallback.hidden=true;
     return true;
   };
+  if(forceFresh&&uiSimplePictures.has(key)){URL.revokeObjectURL(uiSimplePictures.get(key));uiSimplePictures.delete(key);}
   if(uiSimplePictures.has(key))return attach(uiSimplePictures.get(key));
   const controller=new AbortController();uiSimplePictureRequests.add(controller);
   const timeout=setTimeout(()=>controller.abort(),12000);
@@ -83,6 +87,11 @@ async function loadUiSimplePicture(img,device,isCurrent){
     return true;
   }catch(_){/* Keep an explicit no-picture state; device metadata still renders. */}
   finally{clearTimeout(timeout);uiSimplePictureRequests.delete(controller);}
+}
+function releaseUiSimplePicture(img){
+  const id=uiSimplePictureElements.get(img);if(!id)return;
+  const prefix='ui-device-picture|'+id+'|';
+  for(const [key,src] of uiSimplePictures){if(key.startsWith(prefix)){URL.revokeObjectURL(src);uiSimplePictures.delete(key);}}
 }
 function uiSimpleReportIntent(){
   const query=new URLSearchParams(window.location.search);
@@ -119,7 +128,7 @@ function showUiSimpleWorkflow(){
       if(identity!==uiSimpleIdentity()||activeWorkflow!=='ui_library'||!page.isConnected||!hasPermission('ui.execute'))return;
       uiSimpleStartSelection={identity,selection};activateWorkflow('ui_start');
     },
-    request:apiRequest,identity:uiSimpleIdentity,canAdmit:()=>uiSimpleEnabled,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,loadEvidenceImage:loadUiBatchImage,
+    request:apiRequest,identity:uiSimpleIdentity,canAdmit:()=>uiSimpleEnabled,canExecute:()=>hasPermission('ui.execute'),canNotify:()=>hasPermission('platform.notify'),reportIntent,loadPicture:loadUiSimplePicture,releasePicture:releaseUiSimplePicture,loadEvidenceImage:loadUiBatchImage,
     canRefreshPictures:()=>!!uiSimpleIdentity()&&hasPermission('ui.view')&&hasPermission('platform.configure')&&(currentAccessProfile.is_superuser===true||currentAccessProfile.scope?.ui_apps==='*'),
     onReportClose:intent=>{if(uiSimpleIdentity()===identity)clearUiSimpleReportIntent(intent);},
     download:downloadUiBatchFile,copy:async text=>{if(!await copyText(text))throw new Error('复制未完成，请重试');}

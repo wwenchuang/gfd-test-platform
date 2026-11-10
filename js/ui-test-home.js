@@ -24,7 +24,7 @@
   function store(s,key,value){try{sessionStorage.setItem(`ui-simple:${s.identity}:${key}`,JSON.stringify(value));}catch(_){/* Storage can be disabled; current-page behavior still works. */}}
   function read(s,key){try{return JSON.parse(sessionStorage.getItem(`ui-simple:${s.identity}:${key}`)||'null');}catch(_){return null;}}
   function notice(s,message,error=false){if(!valid(s))return;const n=s.node.querySelector('[data-ui-notice]');n.textContent=message;n.setAttribute('role',error?'alert':'status');n.classList.toggle('ui-simple-error',error);}
-  function leave(){window.UiExecutionReplay?.close();if(!state)return;state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);clearTimeout(state.pictureTimer);for(const c of state.pending.values())c.abort();state.pending.clear();state=null;}
+  function leave(){window.UiExecutionReplay?.close();if(!state)return;state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);clearTimeout(state.pictureTimer);for(const c of state.pending.values())c.abort();state.pending.clear();for(const card of state.deviceNodes.values())releaseDevicePicture(state,card);state=null;}
   function reset(){const node=state?.node;leave();node?.replaceChildren();}
   async function request(s,slot,path,options={}){
     s.pending.get(slot)?.abort();const controller=new AbortController();s.pending.set(slot,controller);
@@ -173,12 +173,21 @@
     const hadSelection=s.selected.size>0||!!s.target;
     s.app=app;s.module='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';s.notifyEnabled=false;s.notificationChannel=null;
     s.node.querySelector('[name="ui-app"]').value=app;
-    s.pending.get('devices')?.abort();s.pending.delete('devices');s.deviceNodes.clear();
+    s.pending.get('devices')?.abort();s.pending.delete('devices');for(const card of s.deviceNodes.values())releaseDevicePicture(s,card);s.deviceNodes.clear();
     const cases=s.node.querySelector('[data-ui-cases]');cases.replaceChildren();cases.textContent='正在加载当前应用的用例…';
     s.node.querySelector('[data-ui-case-count]').textContent='';
     if(hadSelection)notice(s,'已切换应用，之前选择的用例和手机已清除，请重新选择。');
     s.node.querySelector('[data-ui-devices]')?.replaceChildren();invalidateStart(s);remember(s);loadCatalog(s);
     if(s.options.mode==='start'&&!app)renderDevices(s);else loadDevices(s);
+  }
+  function releaseDevicePicture(s,card){
+    const img=card.querySelector('img');img.hidden=true;img.removeAttribute('src');delete img.dataset.pictureStamp;
+    img.dataset.pictureEpoch=String((Number(img.dataset.pictureEpoch)||0)+1);card.dataset.pictureMustRevalidate='true';
+    s.options.releasePicture?.(img);
+  }
+  function renderCaptured(card,d){
+    const img=card.querySelector('img'),hasPicture=!!d.snapshot_url&&!img.hidden&&img.hasAttribute('src')&&img.dataset.pictureStamp===d.snapshot_url+'|'+d.snapshot_captured_at;
+    card.querySelector('[data-phone-captured]').textContent=hasPicture?(d.snapshot_captured_at?`${d.connection_status!=='ready'?'历史画面 · ':''}截图：${d.snapshot_captured_at}`:`${d.connection_status!=='ready'?'历史画面 · ':''}截图时间未上报`):d.snapshot_captured_at?`截图不可用 · 上次采集：${d.snapshot_captured_at}`:d.snapshot_url?'截图不可用':'尚未采集截图';
   }
   function renderDevices(s){
     const host=s.node.querySelector('[data-ui-devices]'),keep=new Set(),connections=new Map();
@@ -194,38 +203,49 @@
       const key=keyOf(d.target);keep.add(key);let card=s.deviceNodes.get(key);
       if(!card){
         card=document.createElement('label');card.className='ui-simple-device';
-        card.innerHTML='<input type="radio" name="ui-device"><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><strong data-phone-name></strong><span data-phone-version></span><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
+        card.dataset.pictureMustRevalidate='true';
+        card.innerHTML='<input type="radio" name="ui-device"><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><strong data-phone-name></strong><span data-phone-version></span><small data-phone-id></small><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
         const input=card.querySelector('input');input.dataset.deviceKey=key;input.onchange=()=>{if(s.busy||s.uncertain)return;s.target=key;invalidateStart(s);remember(s);};
         s.deviceNodes.set(key,card);host.append(card);
       }
       const input=card.querySelector('input');input.checked=s.target===key;input.disabled=d.connection_status!=='ready';
       card.querySelector('[data-phone-name]').textContent=d.name;
       card.querySelector('[data-phone-version]').textContent=`${d.target.platform==='ios'?'iOS':'Android'} ${d.os_version||''} · 应用 ${d.app_version||'版本未上报'}`;
+      card.querySelector('[data-phone-id]').textContent=`设备编号：${d.target.device_id||'未上报'}`;
       card.querySelector('[data-phone-state]').textContent=labels[d.connection_status]||'设备状态待确认';
       const connection=card.querySelector('[data-phone-connection]'),multiple=connections.get(JSON.stringify([d.target.platform,d.target.device_id]))>1;
       connection.textContent=`${multiple&&d.connection_status!=='offline'?'多个在线连接 · ':''}执行机器：${d.target.runner_id}`;
-      card.querySelector('[data-phone-captured]').textContent=d.snapshot_captured_at?`截图：${d.snapshot_captured_at}`:'尚未采集截图';
+      card._uiDevice=d;
       card.classList.toggle('ui-device-unavailable',d.connection_status!=='ready');
       const img=card.querySelector('img');img.alt=`${d.name} 最近一次手机画面`;
       card.querySelector('[data-picture-fallback]').textContent=d.snapshot_hint||'暂无截图';
       if(!d.snapshot_url||img.dataset.pictureStamp!==(d.snapshot_url+'|'+d.snapshot_captured_at)){
-        img.hidden=true;img.removeAttribute('src');card.querySelector('[data-picture-fallback]').hidden=false;
-        if(!d.snapshot_url)delete img.dataset.pictureStamp;
+        if(img.dataset.pictureStamp||img.hasAttribute('src'))releaseDevicePicture(s,card);
+        card.querySelector('[data-picture-fallback]').hidden=false;
       }
+      renderCaptured(card,d);
       if(d.snapshot_url&&s.options.loadPicture){
         const stamp=d.snapshot_url+'|'+d.snapshot_captured_at;
         if(img.dataset.pictureStamp!==stamp){
-          img.dataset.pictureStamp=stamp;
-          Promise.resolve(s.options.loadPicture(img,d,()=>valid(s)&&img.isConnected&&img.dataset.pictureStamp===stamp))
-            .then(loaded=>{if(!loaded&&valid(s)&&img.dataset.pictureStamp===stamp)delete img.dataset.pictureStamp;})
-            .catch(()=>{if(valid(s)&&img.dataset.pictureStamp===stamp)delete img.dataset.pictureStamp;});
+          img.dataset.pictureStamp=stamp;const epoch=img.dataset.pictureEpoch=String((Number(img.dataset.pictureEpoch)||0)+1);
+          const current=()=>valid(s)&&img.isConnected&&img.dataset.pictureStamp===stamp&&img.dataset.pictureEpoch===epoch;
+          Promise.resolve(s.options.loadPicture(img,d,current,{forceFresh:card.dataset.pictureMustRevalidate==='true'}))
+            .then(loaded=>{if(current()){if(loaded)delete card.dataset.pictureMustRevalidate;else delete img.dataset.pictureStamp;renderCaptured(card,card._uiDevice);}})
+            .catch(()=>{if(current()){delete img.dataset.pictureStamp;renderCaptured(card,card._uiDevice);}});
         }
       }
     }
     for(const [key,card]of s.deviceNodes){if(!keep.has(key)){
       // Keep an explicit selection visible if the registry no longer contains it.
-      if(s.target===key){card.querySelector('input').disabled=true;card.querySelector('[data-phone-state]').textContent='所选手机已断开，请连接后刷新或明确改选';}
-      else{card.remove();s.deviceNodes.delete(key);}
+      if(s.target===key){
+        card.querySelector('input').disabled=true;card.classList.add('ui-device-unavailable');
+        card.querySelector('[data-phone-state]').textContent='所选手机已断开，请连接后刷新或明确改选';
+        releaseDevicePicture(s,card);
+        const fallback=card.querySelector('[data-picture-fallback]');fallback.hidden=false;fallback.textContent='截图不可用';
+        const captured=card.querySelector('[data-phone-captured]');
+        captured.textContent=captured.textContent.replace(/^历史画面 · /,'').replace(/^截图：/,'截图不可用 · 上次采集：').replace(/^截图时间未上报$/,'截图不可用 · 时间未上报').replace(/^尚未采集截图$/,'截图不可用');
+      }
+      else{releaseDevicePicture(s,card);card.remove();s.deviceNodes.delete(key);}
     }}
     const hint=s.node.querySelector('[data-ui-device-hint]');
     hint.textContent=!s.app?'先选择应用，再选择手机。':s.deviceLoading&&!s.devices.length?'正在查找手机，请稍候。':s.deviceError?'手机状态读取失败，请点击页面刷新重试。':!s.devices.length?'没有发现手机，请检查连接后刷新。':'每 5 秒同步连接状态；执行前核对占用与用例兼容性。';
