@@ -44,7 +44,7 @@ run_clean() {
       PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
       MIDSCENE_ENV_FILE="$scratch/state/absent.env" TASK_RELEASE_REVISION="$revision" \
       TASK_AUTH_DB="$scratch/state/auth.sqlite3" TASK_OPERATION_DB="$scratch/state/operations.sqlite3" \
-      TASK_DIR="$scratch/state/tasks" REPORT_DIR="$scratch/state/reports" LEARNING_DIR="$scratch/state/learning" \
+      TASK_DIR="$scratch/state/midscene-tasks" REPORT_DIR="$scratch/state/reports" LEARNING_DIR="$scratch/state/learning" \
       ASSET_DIR="$scratch/state/assets" CASE_DIR="$scratch/state/cases" KNOWLEDGE_DIR="$scratch/state/knowledge" \
       GENERATE_JOB_DIR="$scratch/state/jobs" \
       "$@"
