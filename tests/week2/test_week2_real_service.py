@@ -15,6 +15,68 @@ REAL_INVOKE_WORKER = service._invoke_worker
 REAL_AUTHORIZED_ACTOR = service.authorized_actor
 
 
+def test_root_contract_requires_reauthorization_before_return_and_history(tmp_path, payload, monkeypatch):
+    payload['case_result']['sanitized_result']['response']['body'] = json.dumps({'code': 0, 'msg': 'ok', 'data': []})
+    ref = '#/components/schemas/Result'
+    operation = {'responses': {'200': {'content': {'application/json': {'schema': {'$ref': ref}}}}},
+                 'resolved_dependencies': {ref: {'type': 'object', 'required': ['code', 'msg', 'data']}}}
+    allowed = [True]
+    monkeypatch.setattr(service, '_fetch_authorized', lambda *_: payload)
+    monkeypatch.setattr(service, '_contract_operation_authorized', lambda *_: operation)
+    monkeypatch.setattr(service, '_invoke_contract_authorization', lambda owner, username, sources, timeout, **kwargs: [allowed[0]] * len(sources))
+    db = tmp_path / 'contract.sqlite'
+    result = service.run('alice-id', 'alice', db)
+    assert result['contract_check']['status'] == 'checked'
+    allowed[0] = False
+    history = service.list_results('alice-id', db, username='alice')
+    assert history[0]['contract_check']['status'] == 'unavailable'
+    denied = service.run('alice-id', 'alice', db)
+    assert denied['contract_check']['status'] == 'unavailable'
+
+
+def test_uncertain_contract_authorization_cleanup_keeps_analysis_lease(tmp_path, payload, monkeypatch):
+    payload['case_result']['sanitized_result']['response']['body'] = json.dumps({'code': 0, 'msg': 'ok', 'data': []})
+    ref = '#/components/schemas/Result'
+    operation = {'responses': {'200': {'content': {'application/json': {'schema': {'$ref': ref}}}}},
+                 'resolved_dependencies': {ref: {'type': 'object', 'required': ['code', 'msg', 'data']}}}
+    monkeypatch.setattr(service, '_fetch_authorized', lambda *_: payload)
+    monkeypatch.setattr(service, '_contract_operation_authorized', lambda *_: operation)
+    monkeypatch.setattr(service, '_invoke_contract_authorization',
+                        lambda *args, **kwargs: (_ for _ in ()).throw(service.WorkerCleanupUncertain()))
+    db = tmp_path / 'contract-cleanup.sqlite'
+    result = service.run('alice-id', 'alice', db)
+    assert result['status'] == 'blocked'
+    with pytest.raises(service.PracticeBusy): service._claim(db)
+
+
+@pytest.mark.parametrize('invalid', [None, [], 'private', {'status':'checked','scope':'root_required_only',
+    'fields':[{'name':n,'present':True} for n in ('code','msg','data')]}])
+def test_history_ignores_malformed_contract_check_without_exposing_it(tmp_path, monkeypatch, invalid):
+    db = tmp_path / 'invalid-contract.sqlite'
+    service._save(db, 'alice-id', {'id':'a'*32, 'status':'passed', 'created_at':'now',
+        'execution_id': service.EXECUTION_ID, 'execution_case_id': service.CASE_ID,
+        'contract_check': invalid}, time.time())
+    history = service.list_results('alice-id', db, username='alice')
+    assert history[0]['status'] == 'passed'
+    assert history[0]['contract_check'] == {'status': 'unavailable', 'scope': 'root_required_only', 'fields': []}
+
+
+def test_history_authorizations_share_time_budget(tmp_path, monkeypatch):
+    db = tmp_path / 'contract-budget.sqlite'
+    service._save(db, 'alice-id', {'id':'b'*32, 'status':'passed', 'created_at':'now',
+        'execution_id': service.EXECUTION_ID, 'execution_case_id': service.CASE_ID,
+        'contract_check': {'status':'checked', 'scope':'root_required_only', 'fields':[
+            {'name': name, 'present': True, 'negative_control_rejected': True} for name in ('code','msg','data')]}}, time.time())
+    times = iter([10, 13])
+    monkeypatch.setattr(service.time, 'monotonic', lambda: next(times))
+    seen = []
+    monkeypatch.setattr(service, '_invoke_authorization', lambda owner, username, sources, timeout, **kwargs: [True])
+    monkeypatch.setattr(service, '_invoke_contract_authorization',
+                        lambda owner, username, sources, timeout, **kwargs: seen.append(timeout) or [True])
+    service.list_results('alice-id', db, username='alice')
+    assert seen == [12]
+
+
 @pytest.fixture(autouse=True)
 def authorized(monkeypatch):
     monkeypatch.setattr(service.identity, 'get_access_profile', lambda _: {'user_id': 'alice-id', 'scope': {}})

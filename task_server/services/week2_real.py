@@ -27,6 +27,31 @@ _LEASE_SECONDS = 120
 _FIXTURES = Path(__file__).resolve().parent.parent / 'fixtures' / 'week2_real'
 
 
+def _contract_unavailable():
+    return {'status': 'unavailable', 'scope': 'root_required_only', 'fields': []}
+
+
+def _clean_contract_check(value):
+    if not isinstance(value, dict) or value.get('status') != 'checked' or value.get('scope') != 'root_required_only':
+        return _contract_unavailable()
+    fields = value.get('fields')
+    if not isinstance(fields, list) or len(fields) != 3:
+        return _contract_unavailable()
+    names = ('code', 'msg', 'data')
+    result = []
+    for field, name in zip(fields, names):
+        if (not isinstance(field, dict) or not {'name', 'present', 'negative_control_rejected'} <= field.keys() or
+                field.get('name') != name or type(field.get('present')) is not bool or
+                field.get('negative_control_rejected') not in (True, False, None) or
+                type(field.get('negative_control_rejected')) not in (bool, type(None))):
+            return _contract_unavailable()
+        result.append({key: field[key] for key in ('name', 'present', 'negative_control_rejected')})
+    missing = any(not field['present'] for field in result)
+    if any((field['negative_control_rejected'] is not None) == missing for field in result):
+        return _contract_unavailable()
+    return {'status': 'checked', 'scope': 'root_required_only', 'fields': result}
+
+
 class PracticeBusy(Exception):
     pass
 
@@ -160,6 +185,76 @@ def _scope_authorized(username, execution_id, case_id):
             raise ValueError('not_found')
 
 
+def _contract_operation_authorized(username, execution_id, case_id):
+    """Bind an authorized case to its execution-time source and environment."""
+    from task_server.api_testing import http
+    factory = http._factory()
+    execution = http._scope_execution(factory, execution_id, username)
+    case = http._scope_execution_case(factory, case_id, username)
+    if (case.execution_id != execution.id or
+            case.environment_revision_id != execution.environment_revision_id):
+        raise ValueError('not_found')
+    endpoint = http._scope_endpoint(factory, case.endpoint_id, username, include_operation=True)
+    if (endpoint.revision_id != execution.source_revision_id or endpoint.method != 'GET' or
+            endpoint.path != '/print3d/api/v1/feedback/category/first'):
+        raise ValueError('not_found')
+    revision = http._scope_source_revision(factory, endpoint.revision_id, username)
+    source = http._scope_source(factory, revision.source_id, username)
+    env_revision = http._scope_environment_revision(factory, execution.environment_revision_id, username)
+    environment = http._scope_environment(factory, env_revision.environment_id, username)
+    if source.project_id != execution.project_id or environment.project_id != execution.project_id:
+        raise ValueError('not_found')
+    return endpoint.operation
+
+
+def _summarize_root_contract(operation, body, *, status=200):
+    """Compare only known root required-field presence in an already-redacted record."""
+    unavailable = _contract_unavailable()
+    try:
+        if type(status) is not int or status != 200 or not isinstance(operation, dict):
+            return unavailable
+        if not isinstance(body, str) or len(body.encode('utf-8')) > 2 * 1024 * 1024:
+            return unavailable
+        def unique_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError('duplicate field')
+                result[key] = value
+            return result
+        def invalid_constant(_value):
+            raise ValueError('invalid JSON constant')
+        parsed = json.loads(body, object_pairs_hook=unique_pairs, parse_constant=invalid_constant)
+        if not isinstance(parsed, dict):
+            return unavailable
+        response = operation['responses']['200']
+        schema = response['content']['application/json']['schema']
+        if not isinstance(schema, dict) or set(schema) != {'$ref'}:
+            return unavailable
+        reference = schema['$ref']
+        if not isinstance(reference, str) or not reference.startswith('#/components/schemas/'):
+            return unavailable
+        target = operation['resolved_dependencies'][reference]
+        fields = ('code', 'msg', 'data')
+        required = target['required']
+        if (target.get('type') != 'object' or any(key in target for key in ('$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else')) or
+                not isinstance(required, list) or
+                len(required) != len(fields) or set(required) != set(fields)):
+            return unavailable
+        from task_server.api_testing.assertions import _schema_matches
+        projected = {'type': 'object', 'required': list(fields)}
+        original_passed = _schema_matches(parsed, projected)
+        summary = []
+        for field in fields:
+            present = field in parsed
+            rejected = (not _schema_matches({key: value for key, value in parsed.items() if key != field}, projected)
+                        if original_passed else None)
+            summary.append({'name': field, 'present': present, 'negative_control_rejected': rejected})
+        return {'status': 'checked', 'scope': 'root_required_only', 'fields': summary}
+    except (KeyError, TypeError, ValueError, RecursionError, UnicodeError):
+        return unavailable
+
+
 def _analyze(payload, execution_id, case_id):
     source_request = payload.get('case_result', {}).get('sanitized_result', {}).get('request', {})
     url = urlsplit(source_request.get('url', ''))
@@ -205,6 +300,12 @@ def _derive(owner, username, execution_id, case_id):
             raise ValueError('actor_not_authorized')
         resolved_case_id = case_id or str(uuid.UUID(source['case_result']['execution_case_id']))
         outcome = _analyze(source, execution_id, resolved_case_id)
+        try:
+            operation = _contract_operation_authorized(username, execution_id, resolved_case_id)
+            response = source['case_result']['sanitized_result']['response']
+            outcome['contract_check'] = _summarize_root_contract(operation, response['body'], status=response['status_code'])
+        except Exception:
+            outcome['contract_check'] = _contract_unavailable()
         _scope_authorized(username, execution_id, resolved_case_id)
         return True, outcome
     except AmbiguousCase:
@@ -275,6 +376,32 @@ def _verify_sources(owner, username, sources):
     return verified
 
 
+def _verify_contract_sources(owner, username, sources):
+    verified = []
+    for execution_id, case_id in sources:
+        try:
+            execution_id = str(uuid.UUID(execution_id))
+            case_id = str(uuid.UUID(case_id))
+            if not authorized_actor(owner, username):
+                raise ValueError('actor_not_authorized')
+            _contract_operation_authorized(username, execution_id, case_id)
+            if not authorized_actor(owner, username):
+                raise ValueError('actor_not_authorized')
+            verified.append(True)
+        except Exception:
+            verified.append(False)
+    return verified
+
+
+def _invoke_contract_authorization(owner, username, sources, timeout, slot_fd=None):
+    body = json.dumps({'operation': 'authorize_contract', 'arguments': [owner, username, sources]})
+    raw = _run_isolated([sys.executable, '-m', 'task_server.services.week2_real'], body, timeout, slot_fd=slot_fd)
+    verified = json.loads(raw)
+    if not isinstance(verified, list) or len(verified) != len(sources) or any(type(item) is not bool for item in verified):
+        raise ValueError('invalid_authorization_result')
+    return verified
+
+
 def _invoke_authorization(owner, username, sources, timeout, slot_fd=None):
     body = json.dumps({'operation': 'authorize', 'arguments': [owner, username, sources]})
     raw = _run_isolated([sys.executable, '-m', 'task_server.services.week2_real'], body, timeout, slot_fd=slot_fd)
@@ -332,6 +459,18 @@ def _run_in_slot(owner, username, path, *, execution_id, case_id, slot_fd):
                                                       deadline - time.monotonic(), slot_fd=slot_fd)[0]
             if not source_authorized:
                 ok, data = False, None
+        if ok and 'contract_check' in data:
+            data['contract_check'] = _clean_contract_check(data['contract_check'])
+        if ok and data.get('contract_check', {}).get('status') == 'checked':
+            try:
+                contract_authorized = _invoke_contract_authorization(
+                    owner, username, [(execution_id, resolved_case)], deadline - time.monotonic(), slot_fd=slot_fd)[0]
+            except WorkerCleanupUncertain:
+                raise
+            except Exception:
+                contract_authorized = False
+            if not contract_authorized:
+                data['contract_check'] = _contract_unavailable()
         if ok:
             result.update(data, source_verification='server_authorized_platform_read',
                           message='已按当前账号权限读取既有记录；检查为本地数据处理，未重跑业务接口。')
@@ -368,16 +507,27 @@ def list_results(owner, path=None, *, username=None):
     with _db(path) as db:
         rows = db.execute('SELECT created, payload FROM results WHERE owner=? ORDER BY created DESC LIMIT 50', (owner,)).fetchall()
     result = []
-    scopes = {}
+    scopes, contract_scopes = {}, {}
     hidden_message = '当前无法核验来源权限，详情已隐藏。'
     if username and rows:
         sources = list(dict.fromkeys((json.loads(raw).get('execution_id'), json.loads(raw).get('execution_case_id')) for _, raw in rows))
         try:
             profile = copy.deepcopy(identity.get_access_profile(username))
             with _history_slot(path) as slot:
+                deadline = time.monotonic() + _HISTORY_TIMEOUT_SECONDS
                 scopes = dict(zip(sources, _invoke_authorization(owner, username, sources, _HISTORY_TIMEOUT_SECONDS, slot_fd=slot)))
+                contract_sources = list(dict.fromkeys(
+                    (item.get('execution_id'), item.get('execution_case_id'))
+                    for _, raw in rows for item in [json.loads(raw)]
+                    if _clean_contract_check(item.get('contract_check'))['status'] == 'checked'))
+                if contract_sources:
+                    try:
+                        contract_scopes = dict(zip(contract_sources, _invoke_contract_authorization(
+                            owner, username, contract_sources, deadline - time.monotonic(), slot_fd=slot)))
+                    except Exception:
+                        contract_scopes = {}
             if not authorized_actor(owner, username) or profile != identity.get_access_profile(username):
-                scopes = {}
+                scopes, contract_scopes = {}, {}
         except HistoryBusy:
             hidden_message = '核验繁忙，详情已隐藏，请稍后重试。'
         except Exception:
@@ -392,6 +542,11 @@ def list_results(owner, path=None, *, username=None):
                 continue
         if item['status'] == 'running' and created + _LEASE_SECONDS < time.time():
             item.update(status='blocked', message='分析中断，请重新尝试。')
+        source = (item.get('execution_id'), item.get('execution_case_id'))
+        if 'contract_check' in item:
+            item['contract_check'] = _clean_contract_check(item['contract_check'])
+            if item['contract_check']['status'] == 'checked' and not contract_scopes.get(source, False):
+                item['contract_check'] = _contract_unavailable()
         result.append(item)
     return result
 
@@ -404,6 +559,8 @@ if __name__ == '__main__':
             result = _derive(*arguments)
         elif request['operation'] == 'authorize' and len(arguments) == 3:
             result = _verify_sources(*arguments)
+        elif request['operation'] == 'authorize_contract' and len(arguments) == 3:
+            result = _verify_contract_sources(*arguments)
         else:
             raise ValueError('invalid_worker_arguments')
         print(json.dumps(result, ensure_ascii=False))

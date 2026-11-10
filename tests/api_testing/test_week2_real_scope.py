@@ -26,6 +26,24 @@ def test_existing_platform_scope_is_enforced_for_week2(api_context, owned_record
         week2_real._scope_authorized('reader', owned_records['second_execution'].id, evidence_id)
 
 
+def test_contract_scope_checks_real_project_environment_and_source(api_context, owned_records, identities):
+    from task_server.api_testing.models.source import ApiSourceEndpoint
+    evidence_id = _passing_evidence(api_context['factory'], owned_records)
+    execution_id = owned_records['execution'].id
+    ref = '#/components/schemas/Result'
+    operation = {'responses': {'200': {'content': {'application/json': {'schema': {'$ref': ref}}}}},
+                 'resolved_dependencies': {ref: {'type':'object', 'required':['code','msg','data']}}}
+    with api_context['factory'].begin() as session:
+        endpoint = session.get(ApiSourceEndpoint, owned_records['endpoint'].id)
+        endpoint.method = 'GET'
+        endpoint.path = '/print3d/api/v1/feedback/category/first'
+        endpoint.operation = operation
+    assert week2_real._contract_operation_authorized('reader', execution_id, evidence_id) == operation
+    identities['reader']['scope']['api_environments'] = []
+    with pytest.raises(ApiHttpError):
+        week2_real._contract_operation_authorized('reader', execution_id, evidence_id)
+
+
 def test_real_subprocess_rechecks_identity_and_project_environment_scope(api_context, owned_records, identity_db, monkeypatch):
     from task_server.api_testing.models.execution import ApiExecutionCase
     identity, store = identity_db
