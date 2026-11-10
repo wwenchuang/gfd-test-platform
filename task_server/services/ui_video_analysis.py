@@ -170,7 +170,12 @@ def validate_analysis(result, frames, duration, prior_secrets=(), *, max_events=
             distance=value.get('distance')
             if isinstance(distance,(int,float)) and not math.isfinite(distance):raise ValueError('video_action_invalid')
             if validate_midscene_action_parameters('aiScroll',{'aiScroll':event['target'],**value}):raise ValueError('video_action_invalid')
-        elif event['value']!='': raise ValueError('video_action_invalid')
+        elif event['value']!='':
+            error=ValueError('video_action_invalid')
+            error.action_reason='unexpected_value'
+            error.action_failure_evidence={'reason':'unexpected_value','action':event['action'],
+                                           'frame_refs':list(dict.fromkeys((refs[0],refs[-1])))}
+            raise error
         last=start
         clean.append(event)
     secrets=list(prior_secrets)+[e['value'] for e in events if isinstance(e,dict) and e.get('action')=='aiInput' and isinstance(e.get('value'),str) and e['value']]
@@ -516,6 +521,14 @@ def _check_extended_whole_assets(frames, root, cancelled):
 
 
 def analyze_whole_frames(document, root, cancelled, progress=None):
+    from .ui_video_touch_detail import pixel_cache_scope
+    # Keep only raw, content-addressed detector results for this analysis;
+    # model observations, crops and candidate actions are never cached.
+    with pixel_cache_scope():
+        return _analyze_whole_frames(document, root, cancelled, progress)
+
+
+def _analyze_whole_frames(document, root, cancelled, progress=None):
     """One full-context observation, one bounded plan, at most one correction."""
     frames=document['media']['frames'];duration=document['media']['duration_ms']
     if cancelled():raise ValueError('video_cancelled')

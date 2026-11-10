@@ -724,6 +724,30 @@ def _validate_boundary_role_claims(claims,events,preserved,boundary,image_frames
     return result
 
 
+def _rejected_action_values(observation):
+    """Collect bounded values for in-memory redaction, never for feedback."""
+    events=observation.get('events') if isinstance(observation,dict) else None
+    if not isinstance(events,list) or len(events)>50:raise ValueError('video_action_invalid')
+    todo=[event['value'] for event in events if isinstance(event,dict) and 'value' in event]
+    values=[];seen=set();nodes=0
+    while todo:
+        item=todo.pop();nodes+=1
+        if nodes>4096:raise ValueError('video_action_invalid')
+        if isinstance(item,str):
+            if len(item)>4000:raise ValueError('video_action_invalid')
+            if item and item not in seen:
+                values.append(item);seen.add(item)
+                if len(values)>128:raise ValueError('video_action_invalid')
+        elif isinstance(item,dict):
+            todo.extend(item.keys());todo.extend(item.values())
+        elif isinstance(item,list):todo.extend(item)
+        elif item is not None:
+            # Numbers may be codes, and their rendered form is ambiguous.
+            # Do not retry if their later repetition cannot be safely redacted.
+            raise ValueError('video_action_invalid')
+    return values
+
+
 def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missing_refs,boundary=(),context_frames=None,attempt_limit=2,motion_review_refs=(),retry_return_gesture_only=False,preserved_interactions=(),adjacent_boundary_refs=()):
     """Revisit one bounded gap without accepting omission or copying old semantics."""
     import copy
@@ -854,6 +878,7 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
     before=copy.deepcopy(checked['events'])
     resolutions=[];redundant_claims=[];redundant_tap_claims=[]
     sticky_questions=[];sticky_multiple_scenarios=False
+    retry_hypotheses=[]
     for attempt in range(attempt_limit):
         if cancelled():raise ValueError('video_cancelled')
         try:
@@ -880,9 +905,37 @@ def _repair_window(original,checked,frames,duration,root,cancelled,secrets,missi
         try:
             repaired=validate_analysis(_bind_whole_evidence(observation,window),window,duration,secrets)
         except ValueError as error:
-            if retry_return_gesture_only or attempt+1>=attempt_limit or str(error) not in {'video_action_invalid','video_model_invalid','video_reference_invalid'}:raise
-            payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。navigateBack的target必须精确为上一页面、value必须为空字符串；dismissKeyboard的target必须精确为当前页面的软键盘、value必须为空字符串。仅在原帧证实相应动作时使用，不能为满足格式编造操作。'
+            if (attempt+1>=attempt_limit or str(error) not in {'video_action_invalid','video_model_invalid','video_reference_invalid'} or
+                (retry_return_gesture_only and getattr(error,'action_reason',None)!='unexpected_value')):raise
+            if getattr(error,'action_reason',None)=='unexpected_value' and isinstance(observation,dict) and isinstance(observation.get('events'),list):
+                # An unexpected value may be business input misclassified as
+                # a tap/assertion. Never echo it in retained questions or audit.
+                secrets.extend(_rejected_action_values(observation))
+                sticky_questions.append(f"视频 {window[0]['timestamp_ms']/1000:.1f}–{window[-1]['timestamp_ms']/1000:.1f} 秒的动作和值不一致，请核对是否存在实际输入。")
+                # A malformed response can also contain independently valid
+                # observations. Keep them as hypotheses: a later format retry
+                # must not silently discard or rewrite them.
+                try:
+                    validated_root=validate_analysis({'events':[],'uncertainties':observation.get('uncertainties'),
+                        'multiple_scenarios':observation.get('multiple_scenarios')},window,duration,secrets)
+                except (ValueError,TypeError):
+                    validated_root=None
+                if validated_root is None:raise
+                sticky_questions.extend(validated_root['uncertainties'])
+                sticky_multiple_scenarios|=validated_root['multiple_scenarios']
+                for event in observation['events']:
+                    try:
+                        one=_bind_whole_evidence({'events':[event]},window)['events'][0]
+                        one=validate_analysis({'events':[one],'uncertainties':[],'multiple_scenarios':False},window,duration,secrets)['events'][0]
+                    except (ValueError,TypeError):
+                        continue
+                    retry_hypotheses.append(one)
+            payload['validation_feedback']+=' 上次结构校验未通过。events每项只含规定字段，frame_refs须1至8个本次原帧且按时间排列；滚动只用direction=up/down/left/right及scrollType=singleAction；不输出时间字段或未提供帧。aiTap、aiAssert、aiWaitFor的value必须为空字符串；如原图实际是文字输入应按aiInput保留并交由人工配置，不得删除真实业务操作。navigateBack的target必须精确为上一页面、value必须为空字符串；dismissKeyboard的target必须精确为当前页面的软键盘、value必须为空字符串。仅在原帧证实相应动作时使用，不能为满足格式编造操作。'
             continue
+        unmatched=list(repaired['events'])
+        for event in retry_hypotheses:
+            if event not in unmatched:raise ValueError('video_required_action_missing')
+            unmatched.remove(event)
         # A later mapping, boundary, or coverage rejection cannot authorize a
         # subsequent model response to erase already validated uncertainty.
         from .ui_video_business_inputs import _MANUAL
