@@ -666,7 +666,7 @@ def parse_case_payload(payload, *, allow_disabled_scope=False):
         "processing": _parse_processing(payload["processing"]),
     }
     try:
-        cleanup_binding.validate_binding(parsed["processing"], parsed["extractions"], parsed["dependencies"])
+        cleanup_binding.validate_binding(parsed["processing"], parsed["extractions"], parsed["dependencies"], parsed["request"])
     except ValueError as exc:
         raise CasePayloadError(str(exc)) from exc
     issue = binding_error(parsed["request"], parsed["dependencies"], parsed["processing"])

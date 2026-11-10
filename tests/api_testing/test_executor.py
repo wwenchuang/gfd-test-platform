@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from task_server.api_testing import cleanup_binding
 from task_server.api_testing.executor import (
     ExecutorLimits,
     HostPolicy,
@@ -52,7 +53,25 @@ class _TargetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         type(self).request_count += 1
         type(self).workflow_calls.append(("GET", self.path, None))
-        if self.path.startswith("/workflow/ambiguous-list"):
+        if self.path == cleanup_binding.LIST_PATH:
+            mode = getattr(type(self), "lookup_mode", "")
+            if mode == "drop":
+                self.connection.close()
+            elif mode == "redirect_source":
+                self.send_response(302)
+                self.send_header("Location", "/workflow/cancel")
+                self.end_headers()
+            else:
+                self._send(200, {"code": 0, "data": {"focusLevelSn":"this-run"}})
+        elif self.path.startswith(cleanup_binding.DETAIL_PATH + "?"):
+            mode = getattr(type(self), "lookup_mode", "")
+            if mode == "redirect_detail":
+                self.send_response(302)
+                self.send_header("Location", "/workflow/cancel")
+                self.end_headers()
+            else:
+                self._send(200, {"code":0,"data":{"levelSn":"foreign" if mode=="mismatch" else "this-run"}})
+        elif self.path.startswith("/workflow/ambiguous-list"):
             self._send(200, {"code": 0, "records": [{"sn": "resource-1", "id": "12"}, {"sn": "resource-1", "id": "34"}]})
         elif self.path.startswith("/workflow/missing-list"):
             self._send(200, {"code": 0, "records": [{"sn": "other", "id": "12"}]})
@@ -588,6 +607,9 @@ def test_cleanup_rejects_stale_resource_derived_before_a_lost_response(target_se
     case = _case("/disconnect", extractions=[_extraction("resourceSn", "json_path", "$.data.resourceSn")], processing=processing)
     result = _executor(target_server, case).execute_case("case", "env", {"resourceSn": initial})
     assert result.status == "BROKEN"
+    if guarded:
+        assert handler.workflow_calls == []
+        return
     assert handler.workflow_calls[0][1] == "/disconnect"
     if action == "json_encode":
         # Encoding preserves the same stale identifier as a JSON string.
@@ -617,7 +639,11 @@ def test_cleanup_rejects_data_row_id_after_optional_dependency_fails(target_serv
         case.dependencies = [dependency]
         case.processing["pre"] = [{"action":"bind_cleanup_response_id", "source":"setup", "name":"resourceSn", "target":"resourceSn"}]
     result = _executor(target_server, case).execute_case("case", "env", {}, dependency_overrides=overrides)
-    assert result.status == ("FAILED" if guarded else "PASSED")
+    if guarded:
+        assert result.status == "BROKEN"
+        assert handler.workflow_calls == []
+        return
+    assert result.status == "PASSED"
     assert handler.workflow_calls[0][1] == "/ok"
     _assert_no_stale_cleanup(handler)
 
@@ -2026,67 +2052,58 @@ def test_owned_record_selector_does_not_cleanup_when_not_unique(target_server, p
     assert all(call[1] != '/workflow/cancel' for call in handler.workflow_calls)
 
 
-def _bound_case(source="main", *, path="/workflow/setup", headers=None, post=()):
-    cleanup = _workflow_step("清理", "POST", "/workflow/cancel", body={"target":"{{alias}}"})
-    processing = _workflow_processing(cleanup_steps=[cleanup])
-    processing["pre"] = [{"action":"bind_cleanup_response_id","name":"resourceSn","target":"alias","source":source}]
-    processing["post"] = list(post)
-    case = _case(path, headers=headers, extractions=[_extraction("resourceSn","json_path","$.data.resourceSn")], processing=processing)
-    case.dependencies = [] if source == "main" else [{"case_version_id":source,"exports":["resourceSn"]}]
-    return case
+def _correlation_case():
+    lookup = _workflow_step("回查关卡", "GET", cleanup_binding.DETAIL_PATH)
+    lookup["request"]["query"] = {"levelSn": "{{lookupId}}"}
+    processing = _workflow_processing(cleanup_steps=[lookup])
+    processing["pre"] = [{"action":cleanup_binding.ACTION,"source":"main","name":"focus","target":"lookupId"}]
+    return _case(cleanup_binding.LIST_PATH, extractions=[_extraction("focus","json_path",cleanup_binding.SOURCE_FIELD)], processing=processing)
 
 
-def test_bound_cleanup_uses_literal_response_id_even_when_environment_and_row_supply_alias(target_server):
-    _, handler = target_server
+@pytest.mark.parametrize("mode,expected", [("", "PASSED"), ("drop", "BROKEN"), ("mismatch", "FAILED"),
+                                           ("redirect_source","BROKEN"), ("redirect_detail","FAILED")])
+def test_response_lookup_only_uses_this_response_and_requires_matching_detail(target_server, monkeypatch, mode, expected):
+    url, handler = target_server
+    monkeypatch.setattr(cleanup_binding, "SERVICE_BASE", url)
+    monkeypatch.setattr(handler, "lookup_mode", mode, raising=False)
     handler.workflow_calls = []
-    case = _bound_case()
-    case.data_rows = [SimpleNamespace(enabled=True, values={"alias":"row-stale"})]
-    result = _executor(target_server, case, values={"alias":"{{resourceSn}}", "resourceSn":"environment-stale"}).execute_case("case", "env", {"resourceSn":"old"})
-    assert result.status == "PASSED", result.error_message
-    assert handler.workflow_calls == [("GET","/workflow/setup",None),("POST","/workflow/cancel",{"target":"resource-1"})]
-    assert "binding_context" not in result.to_dict()
+    case = _correlation_case()
+    case.data_rows = [SimpleNamespace(enabled=True, values={"lookupId": "old-from-row"})]
+    runner = _executor(target_server, case, values={"lookupId":"old-from-env"})
+    result = runner.execute_case("case","env",{"lookupId":"old-from-overrides"})
+    assert result.status == expected, result.error_message
+    paths = [cleanup_binding.LIST_PATH]
+    if mode not in {"drop", "redirect_source"}:
+        paths.append(cleanup_binding.DETAIL_PATH+"?levelSn=this-run")
+    assert handler.workflow_calls == [("GET", path, None) for path in paths]
 
 
-def test_bound_cleanup_refuses_different_effective_authorization(target_server):
-    _, handler = target_server
+@pytest.mark.parametrize("changed", ["write", "foreign", "path", "query", "header", "source", "dependency", "extra_step", "forged_source"])
+def test_response_lookup_rejects_dangerous_requests_before_any_outbound(target_server, monkeypatch, changed):
+    url, handler = target_server
+    if changed != "foreign":
+        monkeypatch.setattr(cleanup_binding,"SERVICE_BASE",url)
+    case = _correlation_case()
+    req = case.processing["cleanup_steps"][0]["request"]
+    if changed == "write": req.update(method="POST", path="/workflow/cancel")
+    if changed == "path": req.update(path="/workflow/cancel")
+    if changed == "query": req["query"]["_method"] = "DELETE"
+    if changed == "header": req["headers"]["X-HTTP-Method-Override"] = "DELETE"
+    if changed == "source": case.request["path"] = "/workflow/owned-list"
+    if changed == "dependency": case.dependencies = [{"case_version_id":"old-id", "exports":["focus"]}]
+    if changed == "extra_step": case.processing["setup_steps"] = [_workflow_step("写", "POST", "/workflow/cancel")]
+    if changed == "forged_source": case.extractions = [_extraction("focus","json_path","$.records[0].id")]
     handler.workflow_calls = []
-    case = _bound_case(headers={"Authorization":"only-on-main"})
-    result = _executor(target_server, case).execute_case("case","env",{})
-    assert result.failure_category == "cleanup"
-    assert handler.workflow_calls == [("GET","/workflow/setup",None)]
+    result = _executor(target_server,case).execute_case("case","env",{})
+    assert result.status != "PASSED"
+    assert handler.workflow_calls == []
 
 
-def test_bound_dependency_is_direct_response_from_named_producer_only(target_server):
+def test_response_lookup_preview_never_sends_steps(target_server):
     _, handler = target_server
-    producer = _case("/workflow/setup", extractions=[_extraction("resourceSn","json_path","$.data.resourceSn")])
-    child = _bound_case("producer",path="/ok")
-    child.extractions = []
-    for env, expected_cleanup, overwrite in (("env",True,False),("different-env",False,False),("env",False,True)):
-        producer.processing["post"] = ([{"action":"set_variable","name":"resourceSn","value":"resource-1"}] if overwrite else [])
-        upstream = _executor(target_server,producer).execute_case("producer","env",{},capture_response_ids={"resourceSn"})
-        outcomes = {"producer":ExecutionService._dependency_outcome(upstream, {"resourceSn"})}
-        verified = ExecutionService._verified_dependency_ids({"dependencies":child.dependencies, "cleanup_response_binding":child.processing["pre"][0]},outcomes)
-        handler.workflow_calls = []
-        result = _executor(target_server,child).execute_case("case",env,{"resourceSn":"unrelated"},
-            dependency_overrides={"resourceSn":"stale"}, verified_dependency_ids=verified)
-        calls = [c for c in handler.workflow_calls if c[1] == "/workflow/cancel"]
-        assert calls == ([("POST","/workflow/cancel",{"target":"resource-1"})] if expected_cleanup else [])
-        assert result.status == ("PASSED" if expected_cleanup else "FAILED")
-
-
-def test_bound_cleanup_does_not_share_ids_between_concurrent_calls_or_a_retry(target_server):
-    from concurrent.futures import ThreadPoolExecutor
-
-    _, handler = target_server
-    handler.workflow_calls = []
-    case = _bound_case(path="/{{route}}")
-    runner = _executor(target_server, case)
-    def execute(route):
-        return runner.execute_case("case", "env", {"route":route, "alias":"stale"})
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = list(pool.map(execute, ["workflow/setup", "disconnect"]))
-    assert [r.status for r in outcomes] == ["PASSED", "BROKEN"]
-    assert execute("disconnect").status == "BROKEN"
-    assert [c for c in handler.workflow_calls if c[1] == "/workflow/cancel"] == [
-        ("POST", "/workflow/cancel", {"target":"resource-1"})]
+    case = _correlation_case()
+    handler.workflow_calls=[]
+    with pytest.raises(ValueError,match="完整功能执行"):
+        _executor(target_server,case).preview_setup_steps("env",[_workflow_step("写","POST","/workflow/cancel")],0,
+            processing_pre=case.processing["pre"])
+    assert handler.workflow_calls==[]

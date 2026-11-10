@@ -70,7 +70,7 @@ describe('CaseEditor', () => {
     expect(actions[1].find('option[value="bind_cleanup_response_id"]').exists()).toBe(false)
     await actions[0].setValue('bind_cleanup_response_id')
     await wrapper.get('input[placeholder="响应提取变量名"]').setValue('createdId')
-    await wrapper.get('input[placeholder="清理请求中唯一的 ID 变量"]').setValue('ownedId')
+    await wrapper.get('input[placeholder="详情查询 levelSn 的变量"]').setValue('ownedId')
     const saved = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
     expect(saved.processing.pre[0]).toEqual({ action: 'bind_cleanup_response_id', source: 'main', name: 'createdId', target: 'ownedId' })
   })

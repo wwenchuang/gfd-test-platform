@@ -198,7 +198,6 @@ class _HttpStepOutcome:
     error: str
     secrets: tuple
     raw_response: Optional[dict] = None
-    binding_context: Optional[bytes] = None
 
 
 @dataclass(frozen=True, repr=False)
@@ -213,8 +212,6 @@ class CaseExecutionResult:
     error_message: str
     trace: tuple
     response_time_warning: Optional[dict] = None
-    verified_response_ids: frozenset = frozenset()
-    binding_context: Optional[bytes] = None
 
     def __repr__(self):
         return "CaseExecutionResult(status=%r, failure_category=%r, duration_ms=%r)" % (
@@ -325,8 +322,6 @@ class HttpExecutor:
         overrides,
         *,
         dependency_overrides=None,
-        verified_dependency_ids=None,
-        capture_response_ids=(),
         cancellation_check=None,
         phase_callback=None,
     ):
@@ -354,9 +349,14 @@ class HttpExecutor:
             variables = copy.deepcopy(dict(overrides or {}))
             variables.update(row_values)
             variables.update(copy.deepcopy(dict(dependency_overrides or {})))
-            binding = cleanup_binding.validate_binding(case.processing, case.extractions, getattr(case, "dependencies", ()))
-            pre = case.processing.get("pre", [])
-            self._apply_processing(pre[1:] if binding else pre, variables)
+            binding = cleanup_binding.validate_binding(
+                case.processing, case.extractions, getattr(case, "dependencies", ()), case.request)
+            source_context = []
+            if binding:
+                # Environment credentials come only from the selected revision.
+                variables = {}
+            else:
+                self._apply_processing(case.processing.get("pre", []), variables)
             setup_steps = tuple(case.processing.get("setup_steps", []))
             cleanup_steps = tuple(case.processing.get("cleanup_steps", []))
             has_workflow = bool(setup_steps or cleanup_steps)
@@ -413,7 +413,7 @@ class HttpExecutor:
                     callback,
                     trace,
                     record_main_phases=True,
-                    capture_context=bool(binding or capture_response_ids),
+                    binding_context=source_context if binding else None,
                 )
                 all_secrets.extend(main_outcome.secrets)
                 variables.update(copy.deepcopy(main_outcome.extracted))
@@ -432,35 +432,24 @@ class HttpExecutor:
                         main_outcome,
                     )
 
-            capture_names = set(capture_response_ids)
-            if binding and binding["source"] == "main":
-                capture_names.add(binding["name"])
-            direct_ids = cleanup_binding.fresh_ids(main_outcome, case.extractions, capture_names)
-            if direct_ids:
-                direct_ids = {name: value for name, value in direct_ids.items()
-                              if redact(value, main_outcome.secrets) == value}
             cleanup_problem = None
             for index, step in enumerate(cleanup_steps):
                 if not step.get("enabled", True):
                     continue
-                cleanup_variables = variables
-                expected_context = None
                 if binding:
-                    if binding["source"] == "main":
-                        value = direct_ids.get(binding["name"])
-                        expected_context = main_outcome.binding_context if main_outcome else None
-                    else:
-                        value, expected_context = (verified_dependency_ids or {}).get(
-                            (binding["source"], binding["name"]), (None, None))
-                    if value is None or not expected_context:
+                    value = cleanup_binding.response_id(main_outcome)
+                    if value is None or not source_context or redact(value, main_outcome.secrets) != value:
                         cleanup_problem = _HttpStepOutcome("SKIPPED", "cleanup", {}, {}, (), {},
-                            "本次指定响应未确认资源 ID，清理请求未发送", ())
+                            "本次主体响应未确认关卡编号，未发送详情回查", ())
                         self._emit_workflow_step(callback, trace, "cleanup", index, step, cleanup_problem)
                         continue
-                    # Bind the validated ID as a literal, before environment rendering.
-                    # No data-row, environment alias or dependency override selects the resource.
-                    step = cleanup_binding.bind_request(step, binding["target"], value)
-                    cleanup_variables = {}
+                    step = copy.deepcopy(step)
+                    step["request"]["query"] = {"levelSn": value}
+                    step["assertions"] = list(step.get("assertions", ())) + [
+                        {"type": "status_code", "operator": "equals", "expected": 200},
+                        {"type": "json_path", "path": "$.code", "operator": "equals", "expected": 0},
+                        {"type": "json_path", "path": cleanup_binding.DETAIL_FIELD, "operator": "equals", "expected": value},
+                    ]
                 if self._skip_conditional_step(callback, trace, "cleanup", index, step, variables):
                     continue
                 missing = self._missing_step_variables(step, variables)
@@ -486,11 +475,11 @@ class HttpExecutor:
                     index,
                     step,
                     environment_revision_id,
-                    cleanup_variables,
+                    {} if binding else variables,
                     lambda _phase: False,
                     callback,
                     trace,
-                    expected_context=expected_context,
+                    binding_context=source_context if binding else None,
                 )
                 all_secrets.extend(step_secrets)
                 if outcome.status == "PASSED":
@@ -530,15 +519,7 @@ class HttpExecutor:
                 trace,
                 secrets,
             )
-            # Postprocessing can manufacture or overwrite an equal-looking export.
-            for action in case.processing.get("post", []):
-                direct_ids.pop(action.get("target") or action.get("name"), None)
-            verified = frozenset(name for name, value in direct_ids.items()
-                                 if type(result.extracted_variables.get(name)) is type(value)
-                                 and result.extracted_variables[name] == value)
-            return replace(result, verified_response_ids=verified,
-                binding_context=main_outcome.binding_context if verified else None,
-                response_time_warning=evaluate_response_time_warning(
+            return replace(result, response_time_warning=evaluate_response_time_warning(
                 case.processing.get("response_time_warning_ms"),
                 main_outcome.response if main_outcome is not None else {},
             ))
@@ -571,9 +552,9 @@ class HttpExecutor:
                 self._validate_schema_definitions(step.get("assertions", []))
 
         variables = copy.deepcopy(dict(initial_variables or {}))
-        pre = processing_pre or []
-        # Setup preview never runs the main request or cleanup.
-        self._apply_processing(pre[1:] if pre and pre[0]["action"] == cleanup_binding.ACTION else pre, variables)
+        if any(action.get("action") == cleanup_binding.ACTION for action in processing_pre or []):
+            raise ValueError("响应关联用例必须通过完整功能执行进行回查")
+        self._apply_processing(processing_pre or [], variables)
         overrides = copy.deepcopy(dict(extraction_overrides or {}))
         trace = []
         target_outcome = None
@@ -651,7 +632,7 @@ class HttpExecutor:
         callback,
         trace,
         *,
-        expected_context=None,
+        binding_context=None,
     ):
         polling = step.get("polling") or {}
         max_attempts = int(polling.get("max_attempts", 1))
@@ -669,7 +650,7 @@ class HttpExecutor:
                 callback,
                 trace,
                 record_main_phases=False,
-                expected_context=expected_context,
+                binding_context=binding_context,
             )
             all_secrets.extend(outcome.secrets)
             self._emit_workflow_step(
@@ -717,8 +698,7 @@ class HttpExecutor:
         trace,
         *,
         record_main_phases,
-        capture_context=False,
-        expected_context=None,
+        binding_context=None,
     ):
         request_view = {}
         response_view = {}
@@ -787,12 +767,6 @@ class HttpExecutor:
                 headers["Cookie"] = "; ".join(
                     f"{key}={value}" for key, value in cookies.items()
                 )
-            binding_context = None
-            if capture_context or expected_context is not None:
-                binding_context = cleanup_binding.transport_context(
-                    environment_revision_id, service_name, base_url, headers)
-                if expected_context is not None and expected_context != binding_context:
-                    raise ValueError("来源请求与清理请求的服务或凭证不一致，清理请求未发送")
             body = rendered.get("body")
             body_bytes = None
             if body is not None:
@@ -815,6 +789,14 @@ class HttpExecutor:
                     callback, trace, "request", {"request": request_view}
                 )
             request_options = {}
+            if binding_context is not None:
+                expected_path = cleanup_binding.LIST_PATH if record_main_phases else cleanup_binding.DETAIL_PATH
+                context = cleanup_binding.checked_context(base_url, url, expected_path, headers)
+                if record_main_phases:
+                    binding_context.append(context)
+                elif binding_context != [context]:
+                    raise ValueError("来源与详情的环境凭证不一致")
+                request_options["follow_redirects"] = False
             if "timeout_seconds" in rendered:
                 timeout = rendered["timeout_seconds"]
                 if type(timeout) is not int or not 1 <= timeout <= 60:
@@ -958,7 +940,6 @@ class HttpExecutor:
                 "",
                 response_secrets,
                 raw_response,
-                binding_context,
             )
         except Exception as exc:
             status, category, error = self._exception_details(exc)
@@ -1191,6 +1172,7 @@ class HttpExecutor:
         authorized_base=None,
         allow_private_network=False,
         timeout_seconds=None,
+        follow_redirects=True,
     ):
         network_started = time.monotonic()
         deadline = network_started + (self.limits.timeout_seconds if timeout_seconds is None else timeout_seconds)
@@ -1242,6 +1224,8 @@ class HttpExecutor:
                 transport_socket = self._response_socket(raw, connection)
                 self._remaining(deadline)
                 if raw.status in {301, 302, 303, 307, 308}:
+                    if not follow_redirects:
+                        raise RedirectLimitError("响应关联不允许重定向")
                     location = raw.getheader("Location")
                     raw.read(0)
                     if not location:

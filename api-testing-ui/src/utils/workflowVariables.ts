@@ -34,8 +34,7 @@ export function workflowVariableOptions(
 
   const binding = draft.processing?.pre?.[0]
   if (stage === 'cleanup' && binding?.action === 'bind_cleanup_response_id') {
-    const main = binding.source === 'main'
-    add(binding.target, main ? '本次主体响应 ID' : '本次指定依赖的响应 ID', main ? 'main' : 'dependency')
+    add(binding.target, '本次主体响应 ID', 'main')
     return result
   }
 
