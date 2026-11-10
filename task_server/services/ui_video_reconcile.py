@@ -404,7 +404,27 @@ def _overlap_retained(previous,current,*,ordered=True):
     return all(assign(i,set()) for i in range(len(previous)))
 
 
-def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,missing_refs,_overlap_retry=None):
+def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,missing_refs,_overlap_retry=None,_trace=None):
+    """Keep the first bounded conflict if any later repair stage fails."""
+    import copy
+    trace={} if _trace is None else _trace
+    try:
+        return _repair_coverage_impl(original,checked,frames,duration,root,cancelled,secrets,missing_refs,_overlap_retry,trace)
+    except Exception as error:
+        arg=error.args[0] if error.args else None
+        if trace.get('evidence') and arg!='video_cancelled':
+            try:
+                error.state_overlap_evidence=copy.deepcopy(trace['evidence'])
+                error.state_overlap_context=True
+                allowed={'video_required_action_missing','video_reference_invalid','video_model_invalid',
+                         'video_action_invalid','video_coverage_resolution_invalid','video_vision_limit'}
+                if trace.get('started'):
+                    error.overlap_expanded_window_failure_kind=arg if type(arg) is str and arg in allowed else 'other'
+            except (AttributeError,TypeError):pass
+        raise
+
+
+def _repair_coverage_impl(original,checked,frames,duration,root,cancelled,secrets,missing_refs,_overlap_retry,trace):
     """Keep distant conflicts separate with at most one targeted sixth call."""
     import copy
     from .ui_video_analysis import validate_analysis
@@ -532,11 +552,15 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
     boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} for r in e['frame_refs']}
     all_ids={f['frame_id'] for f in window}
-    return_retry_only=len(groups)>=5
+    return_retry_only=len(groups)>=5 or bool(_overlap_retry and _overlap_retry.get('return_retry_only'))
     calls_remaining=(len(groups)+1 if len(groups)>5 else 6) if return_retry_only else 4
     if _overlap_retry is not None:
         if len(groups)!=1:raise ValueError('video_required_action_missing')
         calls_remaining=_overlap_retry['remaining']
+    used_overlap_retry=False
+    overlap_audit=None
+    overlap_events=[]
+    overlap_group_index=None
     for group_index,group in enumerate(groups):
         if cancelled():raise ValueError('video_cancelled')
         ids={f['frame_id'] for f in group}
@@ -547,6 +571,7 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
         # Reserve one call for each later gap; extra attempts share the same
         # bounded ceiling; five to eight gaps share one return-specific retry.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
+        if _overlap_retry is not None and trace.get('evidence'):trace['started']=True
         repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only,preserved_interactions=preserved,adjacent_boundary_refs=shared_tap_boundaries&ids)
         frame_role_audit.extend(repaired.get('frame_role_audit',[]))
         calls_remaining-=repaired['reconciliation_audit'].get('model_attempts',attempt_limit)
@@ -572,9 +597,55 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
             except (KeyError,TypeError,ValueError):
                 pass  # The original safety failure remains authoritative.
             audit=repaired['reconciliation_audit']
+            # For multiple groups, re-observe only this group: earlier output
+            # and later reservations remain owned by this outer invocation.
+            if (_overlap_retry is None and len(groups)>1 and not used_overlap_retry and
+                calls_remaining>len(groups)-group_index-1 and
+                not audit.get('coverage_resolutions') and not audit.get('redundant_assert_claims') and
+                not audit.get('redundant_tap_claims') and not repaired.get('frame_role_audit')):
+                refs=_overlap_closure(frames,group,original+checked['events']+repaired['events'],cancelled)
+                if refs and ids<refs:
+                    expanded={positions[ref] for ref in refs}
+                    other={positions[f['frame_id']] for n,g in enumerate(groups) if n!=group_index for f in g}
+                    # Never touch, bridge, or reorder a neighboring group.
+                    if len(all_ids|refs)>160 or any(abs(a-b)<=1 for a in expanded for b in other):raise error
+                    low=min(frames[i]['timestamp_ms'] for i in expanded)
+                    high=max(frames[i]['timestamp_ms'] for i in expanded)
+                    if any(set(e['frame_refs'])&refs or max(low,e['start_ms'])<=min(high,e['end_ms']) for e in replacements):raise error
+                    new_group=[f for f in frames if f['frame_id'] in refs]
+                    next_groups=list(groups);next_groups[group_index]=new_group
+                    _validate_repair_group_ownership(original+checked['events'],next_groups)
+                    idx={name:[i for i,e in enumerate(source) if set(e['frame_refs'])<=refs]
+                         for name,source in [('first_pass',original),('independent_review',checked['events'])]}
+                    local_first=[original[i] for i in idx['first_pass']]
+                    local_second={**checked,'events':[checked['events'][i] for i in idx['independent_review']]}
+                    retry={'remaining':1,'return_retry_only':return_retry_only,'first':copy.deepcopy(repaired),
+                           'preserved_states':[copy.deepcopy(e) for e in preserved
+                               if e['action'] in state_actions and set(e['frame_refs'])<=refs]}
+                    if hasattr(error,'state_overlap_evidence'):
+                        trace.setdefault('evidence',copy.deepcopy(error.state_overlap_evidence))
+                    try:
+                        repaired=_repair_coverage(local_first,local_second,frames,duration,root,cancelled,secrets,refs,retry,trace)
+                    except ValueError as retry_error:
+                        if (str(retry_error)=='video_required_action_missing' and
+                            not hasattr(retry_error,'state_overlap_evidence') and hasattr(error,'state_overlap_evidence')):
+                            retry_error.state_overlap_evidence=copy.deepcopy(error.state_overlap_evidence)
+                        raise
+                    trace['started']=False
+                    calls_remaining-=1;used_overlap_retry=True
+                    groups=next_groups;group=new_group;ids=refs;indexes=idx
+                    window=[f for f in frames if f['frame_id'] in all_ids|refs]
+                    all_ids={f['frame_id'] for f in window}
+                    replaced={i for i,e in enumerate(checked['events']) if set(e['frame_refs'])<=all_ids}
+                    preserved=[e for i,e in enumerate(checked['events']) if i not in replaced]
+                    boundary={ref for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} for ref in e['frame_refs']}
+                    overlap_audit=repaired['reconciliation_audit'].pop('state_overlap_first_repair')
+                    overlap_events=copy.deepcopy(repaired['events']);overlap_group_index=group_index
+                    frame_role_audit.extend(repaired.get('frame_role_audit',[]))
+                    conflict=None
             # The first version deliberately handles only one group and no
             # earlier claimed resolutions; all other cases keep the old gate.
-            if (_overlap_retry is None and len(groups)==1 and calls_remaining>0 and
+            if (conflict and _overlap_retry is None and len(groups)==1 and calls_remaining>0 and
                 not audit.get('coverage_resolutions') and not audit.get('redundant_assert_claims') and
                 not audit.get('redundant_tap_claims') and not repaired.get('frame_role_audit')):
                 refs=_overlap_closure(frames,group,original+checked['events']+repaired['events'],cancelled)
@@ -582,8 +653,15 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
                     retry={'remaining':calls_remaining,'first':copy.deepcopy(repaired),
                            'preserved_states':[copy.deepcopy(e) for e in preserved
                                if e['action'] in state_actions and set(e['frame_refs'])<=refs]}
-                    return _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,refs,retry)
-            raise error
+                    if hasattr(error,'state_overlap_evidence'):
+                        trace.setdefault('evidence',copy.deepcopy(error.state_overlap_evidence))
+                    return _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,refs,retry,trace)
+            if conflict:raise error
+        if overlap_group_index is not None and group_index>overlap_group_index:
+            if any(set(new['frame_refs'])&set(old['frame_refs']) or
+                   max(new['start_ms'],old['start_ms'])<=min(new['end_ms'],old['end_ms'])
+                   for new in repaired['events'] for old in overlap_events):
+                raise ValueError('video_required_action_missing')
         from .ui_video_coverage_resolution import boundary_safe
         if any(not boundary_safe(e,boundary,repaired['reconciliation_audit']['coverage_resolutions'],frames) for e in repaired['events']):
             raise ValueError('video_required_action_missing')
@@ -678,6 +756,8 @@ def _repair_coverage(original,checked,frames,duration,root,cancelled,secrets,mis
     result['reconciliation_audit']=_redact_audit({'frame_refs':[f['frame_id'] for f in window],'before_events':before,'coverage_resolutions':resolutions,'redundant_assert_claims':redundant_claims,'redundant_tap_claims':redundant_tap_claims},secrets)
     if _overlap_retry is not None:
         result['reconciliation_audit']['state_overlap_first_repair']=_redact_audit(_overlap_retry['first'],secrets)
+    elif overlap_audit is not None:
+        result['reconciliation_audit']['state_overlap_first_repair']=_redact_audit(overlap_audit,secrets)
     if frame_role_audit:result['frame_role_audit']=frame_role_audit
     return result
 

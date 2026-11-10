@@ -33,7 +33,9 @@ def test_repair_failure_records_only_first_bounded_state_pair_without_mutating(m
     monkeypatch.setattr(reconcile,'_repair_window',fake)
     with pytest.raises(ValueError,match='video_required_action_missing') as caught:
         reconcile._repair_coverage(events,checked,frames,11000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in events})
-    assert calls==[1] and checked==before
+    # One bounded re-observation is now permitted; this deliberately invalid
+    # stub then fails in a later group. The original evidence must survive.
+    assert calls==[1,1,1] and checked==before
     evidence=caught.value.state_overlap_evidence
     assert evidence['kind']==('shared_frame' if shared else 'time_overlap')
     assert evidence['group_index']==1 and evidence['group_count']==8
@@ -41,7 +43,9 @@ def test_repair_failure_records_only_first_bounded_state_pair_without_mutating(m
     assert evidence['repaired']=={'event_index':1,'action':'aiWaitFor','frame_refs':['frame-005'],'start_ms':500,'end_ms':500}
     assert evidence['preserved']=={'event_index':0,'action':'aiAssert','frame_refs':old['frame_refs'],'start_ms':400,'end_ms':old['end_ms']}
     assert 'PRIVATE' not in json.dumps(evidence)
-    assert worker._private_target_failure(caught.value,'video_required_action_missing',{'media':{'frames':frames,'duration_ms':11000}})=={'state_overlap_evidence':evidence}
+    result=worker._private_target_failure(caught.value,worker._failure_code(caught.value),{'media':{'frames':frames,'duration_ms':11000}})
+    assert result['state_overlap_evidence']==evidence
+    assert 'overlap_expanded_window_failure_kind' not in result
 
 
 def sample_evidence():

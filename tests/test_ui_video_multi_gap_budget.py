@@ -146,7 +146,7 @@ def test_partly_preserved_assertion_cannot_be_replayed(monkeypatch,tmp_path):
     monkeypatch.setattr(reconcile,'_repair_window',fake)
     with pytest.raises(ValueError,match='video_required_action_missing'):
         reconcile._repair_coverage(events,{'events':reviewed,'uncertainties':[],'multiple_scenarios':False},frames,11000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in events})
-    assert len(calls)==1
+    assert len(calls)==2  # Bounded re-observation still refuses to lose state evidence.
 
 
 def test_cross_group_assertion_expansion_over_40_fails_before_call(monkeypatch,tmp_path):
@@ -176,7 +176,7 @@ def test_preserved_state_time_overlap_refuses_distinct_frames(monkeypatch,tmp_pa
     monkeypatch.setattr(reconcile,'_repair_window',fake)
     with pytest.raises(ValueError,match='video_required_action_missing'):
         reconcile._repair_coverage(events,{'events':reviewed,'uncertainties':[],'multiple_scenarios':False},frames,11000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in events})
-    assert len(calls)==1
+    assert len(calls)==3  # The next invalid stub result still fails after re-observation.
 
 
 def test_state_bridges_and_interactions_reach_fixed_point(monkeypatch,tmp_path):

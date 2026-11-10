@@ -68,7 +68,7 @@ def _state_overlap_failure(error,document):
     except (KeyError,TypeError,ValueError):return {}
 
 
-def _private_target_failure(error,code,document):
+def _private_target_failure_base(error,code,document):
     """Bounded evidence saved under the existing owner/app source permissions."""
     if code=='video_action_invalid':
         evidence=getattr(error,'action_failure_evidence',None)
@@ -192,6 +192,21 @@ def _private_target_failure(error,code,document):
     if type(pair['frame_id']) is not str or pair['frame_id'] not in {f.get('frame_id') for f in document.get('media',{}).get('frames',[])}:return {}
     if any(type(pair[k]) is not str or not 1<=len(pair[k])<=400 for k in ('observed_target','probe_target')):return {}
     return dict(pair)
+
+
+def _private_target_failure(error,code,document):
+    """Keep the first validated overlap alongside a bounded later failure."""
+    result=_private_target_failure_base(error,code,document)
+    kind=getattr(error,'overlap_expanded_window_failure_kind',None)
+    allowed={'video_required_action_missing','video_reference_invalid','video_model_invalid',
+             'video_action_invalid','video_coverage_resolution_invalid','video_vision_limit','other'}
+    if getattr(error,'state_overlap_context',False) is True and code!='video_cancelled':
+        evidence=_state_overlap_failure(error,document)
+        if evidence:
+            result.update(evidence)
+            if type(kind) is str and kind in allowed:
+                result['overlap_expanded_window_failure_kind']=kind
+    return result
 
 
 def _log_failure(identifier,stage,error,code):

@@ -85,13 +85,13 @@ def test_cancellation_before_reobservation_stops_model(monkeypatch,tmp_path):
     assert len(calls)==1
 
 
-def test_multiple_groups_do_not_replan_or_discard_diagnostic(monkeypatch,tmp_path):
+def test_failed_multigroup_replan_does_not_discard_first_diagnostic(monkeypatch,tmp_path):
     frames,tap,old,new=sample();later=event('aiTap','后续',['f10']);calls=[]
     def fake(*args,**kw):calls.append(1);return reply([tap,new])
     monkeypatch.setattr(r,'_repair_window',fake)
     with pytest.raises(ValueError,match='video_required_action_missing') as caught:
         r._repair_coverage([tap,later],{'events':[old,tap,later],'uncertainties':[],'multiple_scenarios':False},frames,1200,tmp_path,lambda:False,[],{'f5','f10'})
-    assert len(calls)==1 and caught.value.state_overlap_evidence['group_count']==2
+    assert len(calls)==2 and caught.value.state_overlap_evidence['group_count']==2
 
 
 def test_first_answer_with_resolution_is_not_retried(monkeypatch,tmp_path):
