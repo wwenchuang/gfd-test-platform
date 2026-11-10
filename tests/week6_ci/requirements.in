@@ -1,0 +1,9 @@
+-c ../../requirements-api-testing.txt
+argon2-cffi
+celery
+cryptography
+jsonschema
+Pillow
+PyYAML
+redis
+SQLAlchemy
