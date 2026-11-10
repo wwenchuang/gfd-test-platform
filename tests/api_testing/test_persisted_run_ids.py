@@ -34,7 +34,7 @@ def test_persisted_ids_reach_http_and_are_isolated(session_factory, redis_client
             pass
 
         def do_GET(self):
-            seen.append((self.headers.get_all("X-Run"), parse_qs(urlsplit(self.path).query)["label"]))
+            seen.append((self.headers.get_all("X-Execution-ID"), parse_qs(urlsplit(self.path).query)["label"]))
             self.send_response(200)
             self.send_header("Content-Length", "10")
             self.end_headers()
@@ -42,7 +42,7 @@ def test_persisted_ids_reach_http_and_are_isolated(session_factory, redis_client
 
     endpoint = execution_context["endpoint"]
     payload = valid_list_case(endpoint)
-    payload["request"].update(run_id_binding=1, headers={"X-Run": "{{@execution_id}}"},
+    payload["request"].update(run_id_binding=1, headers={"X-Execution-ID": "{{@execution_id}}"},
                               query={"label": "test-{{@execution_case_id}}"})
     payload["assertions"] = payload["extractions"] = []
     payload["data_rows"][0]["values"]["execution_id"] = "forged-row"
@@ -60,7 +60,7 @@ def test_persisted_ids_reach_http_and_are_isolated(session_factory, redis_client
             revision_id = execution_context["environment_revision"].id
             with session_factory.begin() as session:
                 revision = session.get(ApiEnvironmentRevision, revision_id)
-                revision.default_headers = {"x-run": "forged-environment"}
+                revision.default_headers = {"x-execution-id": "forged-environment"}
                 session.add(ApiEnvironmentService(revision_id=revision_id, service_name="default",
                                                   base_url=f"http://127.0.0.1:{target.server_port}", **_audit()))
             service = ExecutionService(session_factory, event_stream=EventStream(session_factory, redis_client=redis_client))
@@ -73,7 +73,7 @@ def test_persisted_ids_reach_http_and_are_isolated(session_factory, redis_client
                 children = [repository.get_execution_cases(parent)[0] for parent in ids]
                 assert [child.status for child in children] == ["PASSED", "PASSED"]
                 assert sorted(seen) == sorted(([parent], ["test-" + child.id]) for parent, child in zip(ids, children))
-            assert case_service.get_version(version.id).request["headers"]["X-Run"] == "{{@execution_id}}"
+            assert case_service.get_version(version.id).request["headers"]["X-Execution-ID"] == "{{@execution_id}}"
             # No persisted child exists for direct preview/execution. The resolver refuses the token before HTTP.
             direct = service.executor.execute_case(version.id, revision_id, {})
             assert direct.status == "BROKEN"
@@ -108,16 +108,26 @@ def test_persisted_ids_reach_http_and_are_isolated(session_factory, redis_client
 def test_reject_invalid_opt_in_before_persistence(execution_context, change):
     payload = valid_list_case(execution_context["endpoint"])
     request = payload["request"]
-    request.update(run_id_binding=1, headers={"X-Run": "{{@execution_id}}"})
+    request.update(run_id_binding=1, headers={"X-Execution-ID": "{{@execution_id}}"})
     if change == "method":
         request["method"] = "POST"
     elif change == "no-token":
         request["headers"] = {}
     elif change == "duplicate-header":
-        request["headers"]["x-run"] = "different"
+        request["headers"]["x-execution-id"] = "different"
     elif change == "wrong-field":
         request["cookies"] = {"id": "{{@execution_case_id}}"}
     elif change == "version":
         request["run_id_binding"] = True
     with pytest.raises(CasePayloadError):
+        parse_case_payload(payload)
+
+
+@pytest.mark.parametrize("header", ["Cookie", "Host", "Authorization", "Content-Length", "Connection",
+                                   "X-Forwarded-For", "X-HTTP-Method-Override", "X-User-Id", "Location"])
+def test_binding_refuses_controls_before_sending_or_persisting(execution_context, header):
+    payload = valid_list_case(execution_context["endpoint"])
+    payload["request"].update(run_id_binding=1, headers={header: "trace={{@execution_id}}"},
+                              cookies={"trace": "another-record"})
+    with pytest.raises(CasePayloadError, match="追踪请求头"):
         parse_case_payload(payload)

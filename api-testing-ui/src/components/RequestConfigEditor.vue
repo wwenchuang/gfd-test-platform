@@ -171,8 +171,9 @@ function updateBody(value: string): void {
   }
 }
 
-function supportsRunIds(field: RequestMapField): boolean {
-  return props.allowRunIds && props.prefix === 'request' && ['GET', 'HEAD'].includes(local.value.method) && ['headers', 'query'].includes(field)
+const traceHeaders = ['X-Request-ID', 'X-Correlation-ID', 'X-Execution-ID', 'X-Execution-Case-ID']
+function supportsRunIds(field: RequestMapField, key: string): boolean {
+  return props.allowRunIds && props.prefix === 'request' && ['GET', 'HEAD'].includes(local.value.method) && (field === 'query' || (field === 'headers' && traceHeaders.some(header => header.toLowerCase() === key.toLowerCase())))
 }
 
 function insertRunId(name: string): void {
@@ -226,14 +227,15 @@ function renderValue(value: unknown): string {
     <div class="structured-grid">
       <fieldset v-for="section in sections" :key="section.field" class="row-editor">
         <legend>{{ section.label }}</legend>
+        <small v-if="section.field === 'headers' && supportsRunIds('query', '')">运行标识可插入 {{ traceHeaders.join('、') }}。</small>
         <div v-for="([name, value], index) in Object.entries(local[section.field])" :key="`${section.field}-${index}`" class="key-value-row">
           <input :data-testid="testId(`${section.field}-name`)" :value="name" aria-label="参数名" @change="renameEntry(section.field, name, ($event.target as HTMLInputElement).value)" />
           <input :data-testid="testId(`${section.field}-value`)" :value="renderValue(value)" aria-label="参数值" @input="updateValue(section.field, index, ($event.target as HTMLInputElement).value)" />
-          <button v-if="variableOptions.length || supportsRunIds(section.field)" :data-testid="testId(`${section.field}-variable-${index}`)" class="mini-icon" type="button" title="插入已有变量" @click="toggleVariableTarget(section.field, index)"><Braces :size="14" /></button>
+          <button v-if="variableOptions.length || supportsRunIds(section.field, name)" :data-testid="testId(`${section.field}-variable-${index}`)" class="mini-icon" type="button" title="插入已有变量" @click="toggleVariableTarget(section.field, index)"><Braces :size="14" /></button>
           <button class="mini-icon danger" type="button" title="删除参数" @click="removeEntry(section.field, name)"><Trash2 :size="14" /></button>
           <div v-if="variableTarget?.field === section.field && 'index' in variableTarget && variableTarget.index === index" class="variable-insert-menu">
             <strong>插入变量</strong>
-            <template v-if="supportsRunIds(section.field)">
+            <template v-if="supportsRunIds(section.field, name)">
               <small>由已创建的功能执行记录提供。仅支持无依赖和流程步骤的 GET 或 HEAD。</small>
               <button type="button" data-testid="insert-execution-id" @click="insertRunId('@execution_id')">本次执行 ID</button>
               <button type="button" data-testid="insert-execution-case-id" @click="insertRunId('@execution_case_id')">本次用例执行 ID</button>

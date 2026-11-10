@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from functools import wraps
 import re
 
+TRACE_HEADERS = {"x-request-id", "x-correlation-id", "x-execution-id", "x-execution-case-id"}
 TOKEN = re.compile(r"\{\{@(execution_id|execution_case_id)\}\}")
 
 
@@ -54,6 +55,9 @@ def binding_error(request, dependencies, processing):
     keys = [key.lower() for key in request.get("headers", {})]
     if len(keys) != len(set(keys)) or any("{{" in key for key in keys):
         return "使用运行标识时请求头名称必须固定且不区分大小写唯一"
+    for key, value in request.get("headers", {}).items():
+        if isinstance(value, str) and TOKEN.search(value) and key.lower() not in TRACE_HEADERS:
+            return "运行标识仅支持指定的追踪请求头和查询参数"
     has_token = any(isinstance(value, str) and TOKEN.search(value)
                     for field_name in ("headers", "query") for value in request.get(field_name, {}).values())
     if not has_token:

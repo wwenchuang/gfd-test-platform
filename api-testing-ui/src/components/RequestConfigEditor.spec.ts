@@ -24,6 +24,15 @@ describe('RequestConfigEditor', () => {
     expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).not.toHaveProperty('run_id_binding')
   })
 
+  it('restricts ID insertion to trace headers while leaving ordinary headers editable', () => {
+    const wrapper = mount(RequestConfigEditor, { props: { modelValue: {
+      ...REQUEST, headers: { Cookie:'trace=other', 'X-HTTP-Method-Override':'', 'x-correlation-id':'' },
+    } } })
+    expect(wrapper.find('[data-testid="headers-variable-0"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="headers-variable-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="headers-variable-2"]').exists()).toBe(true)
+  })
+
   it('only offers persisted ID choices for the main read request', () => {
     for (const props of [
       { modelValue: { ...REQUEST, method: 'POST', query: { id: '' } }, prefix: 'request', allowRunIds: true },
