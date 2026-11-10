@@ -51,6 +51,13 @@ describe('workflow variables', () => {
     expect(option).toMatchObject({ sourceKind: 'setup', source: '前置步骤 1 · 登录' })
   })
 
+  it('only offers the bound resource variable in protected cleanup', () => {
+    const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
+    draft.processing.pre = [{ action: 'bind_cleanup_response_id', source: 'main', name: 'createdId', target: 'cleanupId' }]
+    const options = workflowVariableOptions(draft, 'cleanup', 0, ['oldId'], DEPENDENCIES)
+    expect(options).toEqual([{ name: 'cleanupId', source: '本次主体响应 ID', sourceKind: 'main', available: true }])
+  })
+
   it('includes active test data and pre-processing outputs while respecting removals', () => {
     const draft = JSON.parse(JSON.stringify(DRAFT)) as CaseDraft
     draft.data_rows = [{ name: '设备数据', enabled: true, values: { deviceSn: '***', removedId: '***' } }]

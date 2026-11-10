@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from ..models.case import ApiBaseline
 
-from .. import access
+from .. import access, cleanup_binding
 
 from ..events import EventStream
 from ..executor import CaseExecutionResult, HttpExecutor, redact
@@ -82,6 +82,8 @@ class ExecutionView:
 class DependencyOutcome:
     status: str
     extracted_variables: dict
+    verified_response_ids: frozenset = frozenset()
+    binding_context: Optional[bytes] = None
 
 
 def _canonical(value):
@@ -611,6 +613,11 @@ class ExecutionService:
         required_exports = self._required_dependency_exports(
             version_snapshots.values()
         )
+        capture_ids = {}
+        for version in version_snapshots.values():
+            binding = version.get("cleanup_response_binding")
+            if binding and binding["source"] != "main":
+                capture_ids.setdefault(binding["source"], set()).add(binding["name"])
         try:
             self.event_stream.append(execution_id, "execution_started", {})
             allow_failure_analysis = self._should_dispatch_failure_analysis(children)
@@ -645,6 +652,8 @@ class ExecutionService:
                             child,
                             snapshot["request"]["overrides"],
                             dependency_overrides,
+                            self._verified_dependency_ids(child_snapshot, outcomes),
+                            capture_ids.get(child.case_version_id, ()),
                         )
                     )
                 except Exception as exc:
@@ -700,6 +709,8 @@ class ExecutionService:
         child,
         overrides,
         dependency_overrides,
+        verified_dependency_ids=None,
+        capture_response_ids=(),
     ):
         def phase_callback(phase, payload):
             self.event_stream.append(
@@ -712,6 +723,10 @@ class ExecutionService:
             "cancellation_check": lambda _phase: self._is_cancelled(execution_id),
             "phase_callback": phase_callback,
         }
+        if capture_response_ids:
+            keyword_arguments["capture_response_ids"] = capture_response_ids
+        if verified_dependency_ids:
+            keyword_arguments["verified_dependency_ids"] = verified_dependency_ids
         if dependency_overrides:
             keyword_arguments["dependency_overrides"] = copy.deepcopy(
                 dependency_overrides
@@ -992,10 +1007,26 @@ class ExecutionService:
         return output
 
     @staticmethod
+    def _verified_dependency_ids(snapshot, outcomes):
+        binding = snapshot.get("cleanup_response_binding")
+        if not binding or binding["source"] == "main":
+            return {}
+        source, name = binding["source"], binding["name"]
+        result = outcomes.get(source)
+        if (not result or result.status != "PASSED" or name not in result.verified_response_ids
+                or not result.binding_context
+                or not any(d.get("case_version_id") == source and name in d.get("exports", ())
+                           for d in snapshot.get("dependencies", ()))):
+            return {}
+        return {(source, name): (result.extracted_variables[name], result.binding_context)}
+
+    @staticmethod
     def _dependency_outcome(result, required_exports):
         extracted = result.extracted_variables or {}
         return DependencyOutcome(
             status=result.status,
+            binding_context=getattr(result, "binding_context", None),
+            verified_response_ids=frozenset(required_exports) & getattr(result, "verified_response_ids", frozenset()),
             extracted_variables={
                 name: copy.deepcopy(extracted[name])
                 for name in required_exports
@@ -1133,6 +1164,10 @@ class ExecutionService:
             application.get("business"),
             include_disabled=True,
         )
+        pre = (getattr(version, "processing_spec", None) or {}).get("pre") or []
+        binding = {}
+        if pre and pre[0].get("action") == cleanup_binding.ACTION:
+            binding["cleanup_response_binding"] = {"source": pre[0]["source"], "name": pre[0]["name"]}
         return {
             "id": version.id,
             "case_id": version.case_id,
@@ -1152,6 +1187,7 @@ class ExecutionService:
             ).strip(),
             "business": str(application.get("business") or "").strip(),
             "dependencies": cls._case_dependencies(version),
+            **binding,
         }
 
     @classmethod

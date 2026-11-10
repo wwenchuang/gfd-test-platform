@@ -407,3 +407,19 @@ def test_request_timeout_is_optional_bounded_and_preserved():
         payload['request']['timeout_seconds'] = invalid
         with pytest.raises(CasePayloadError):
             parse_case_payload(payload)
+
+
+def test_response_bound_cleanup_contract_only_accepts_one_direct_resource_parameter():
+    binding = {"action":"bind_cleanup_response_id","name":"resourceSn","source":"main","target":"owned"}
+    step = _step("回收", "/resources/{sn}")
+    step["request"]["path_params"] = {"sn":"{{owned}}"}
+    payload = _payload({"pre":[binding], "cleanup_steps":[step]})
+    payload["extractions"] = [{"target":"resourceSn","type":"json_path","path":"$.data.id","required":True}]
+    assert parse_case_payload(payload)["processing"]["pre"] == [binding]
+    step["request"]["query"] = {"also":"other-id"}
+    with pytest.raises(CasePayloadError, match="唯一值"):
+        parse_case_payload(payload)
+    step["request"]["query"] = {}
+    payload["extractions"][0]["required"] = False
+    with pytest.raises(CasePayloadError, match="必需提取"):
+        parse_case_payload(payload)

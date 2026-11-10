@@ -65,6 +65,11 @@ class LoadScenarioService:
         snapshots = [cls._case_snapshot(item) for item in cases]
         for case in snapshots:
             processing = case.get("processing") or {}
+            if any(a.get("action") == "bind_cleanup_response_id" for a in processing.get("pre", [])):
+                return LoadScenarioAdmission(False, None, (LoadScenarioIssue(
+                    "error", "cleanup_binding_unsupported", "processing.pre",
+                    "压测执行器不支持本次响应 ID 绑定，不能复制该用例。", "保留为功能回归。",
+                ),))
             for stage in ("setup_steps", "cleanup_steps"):
                 for step in processing.get(stage) or []:
                     if step.get("only_if_variable"):

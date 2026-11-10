@@ -571,18 +571,20 @@ def _assert_no_stale_cleanup(handler):
         raise _CleanupOwnershipRisk("cleanup sent an identifier from a previous run")
 
 
-@pytest.mark.xfail(strict=True, raises=_CleanupOwnershipRisk, reason="preprocessing copies a stale resource ID into cleanup")
+@pytest.mark.parametrize("guarded", [True, pytest.param(False, marks=pytest.mark.xfail(strict=True, raises=_CleanupOwnershipRisk, reason="legacy cleanup can reuse an old alias"))])
 @pytest.mark.parametrize(("action", "initial"), [
     ("copy_variable", "another-run"),
     ("json_encode", "another-run"),
     ("json_decode", '"another-run"'),
 ])
-def test_cleanup_rejects_stale_resource_derived_before_a_lost_response(target_server, action, initial):
+def test_cleanup_rejects_stale_resource_derived_before_a_lost_response(target_server, action, initial, guarded):
     _, handler = target_server
     handler.workflow_calls = []
     cleanup = _workflow_step("清理", "POST", "/workflow/cancel", body={"target": "{{alias}}"})
     processing = _workflow_processing(cleanup_steps=[cleanup])
     processing["pre"] = [{"action": action, "source": "resourceSn", "target": "alias"}]
+    if guarded:
+        processing["pre"].insert(0, {"action":"bind_cleanup_response_id", "source":"main", "name":"resourceSn", "target":"alias"})
     case = _case("/disconnect", extractions=[_extraction("resourceSn", "json_path", "$.data.resourceSn")], processing=processing)
     result = _executor(target_server, case).execute_case("case", "env", {"resourceSn": initial})
     assert result.status == "BROKEN"
@@ -597,8 +599,8 @@ def test_cleanup_rejects_stale_resource_derived_before_a_lost_response(target_se
         _assert_no_stale_cleanup(handler)
 
 
-@pytest.mark.xfail(strict=True, raises=_CleanupOwnershipRisk, reason="optional dependency failure permits cleanup to reuse a stale data-row ID")
-def test_cleanup_rejects_data_row_id_after_optional_dependency_fails(target_server):
+@pytest.mark.parametrize("guarded", [True, pytest.param(False, marks=pytest.mark.xfail(strict=True, raises=_CleanupOwnershipRisk, reason="legacy cleanup can reuse an old data row"))])
+def test_cleanup_rejects_data_row_id_after_optional_dependency_fails(target_server, guarded):
     _, handler = target_server
     handler.workflow_calls = []
     dependency = {"case_version_id": "setup", "required": False, "exports": ["resourceSn"]}
@@ -611,8 +613,11 @@ def test_cleanup_rejects_data_row_id_after_optional_dependency_fails(target_serv
     row = SimpleNamespace(enabled=True, values={"resourceSn": "another-run"})
     cleanup = _workflow_step("清理", "POST", "/workflow/cancel", body={"target": "{{resourceSn}}"})
     case = _case("/ok", data_rows=[row], processing=_workflow_processing(cleanup_steps=[cleanup]))
+    if guarded:
+        case.dependencies = [dependency]
+        case.processing["pre"] = [{"action":"bind_cleanup_response_id", "source":"setup", "name":"resourceSn", "target":"resourceSn"}]
     result = _executor(target_server, case).execute_case("case", "env", {}, dependency_overrides=overrides)
-    assert result.status == "PASSED"
+    assert result.status == ("FAILED" if guarded else "PASSED")
     assert handler.workflow_calls[0][1] == "/ok"
     _assert_no_stale_cleanup(handler)
 
@@ -2019,3 +2024,69 @@ def test_owned_record_selector_does_not_cleanup_when_not_unique(target_server, p
     result = _executor(target_server, _case(processing=_workflow_processing(setup_steps=[create, select], cleanup_steps=[cleanup]))).execute_case('v', 'env', {})
     assert result.status != 'PASSED'
     assert all(call[1] != '/workflow/cancel' for call in handler.workflow_calls)
+
+
+def _bound_case(source="main", *, path="/workflow/setup", headers=None, post=()):
+    cleanup = _workflow_step("清理", "POST", "/workflow/cancel", body={"target":"{{alias}}"})
+    processing = _workflow_processing(cleanup_steps=[cleanup])
+    processing["pre"] = [{"action":"bind_cleanup_response_id","name":"resourceSn","target":"alias","source":source}]
+    processing["post"] = list(post)
+    case = _case(path, headers=headers, extractions=[_extraction("resourceSn","json_path","$.data.resourceSn")], processing=processing)
+    case.dependencies = [] if source == "main" else [{"case_version_id":source,"exports":["resourceSn"]}]
+    return case
+
+
+def test_bound_cleanup_uses_literal_response_id_even_when_environment_and_row_supply_alias(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _bound_case()
+    case.data_rows = [SimpleNamespace(enabled=True, values={"alias":"row-stale"})]
+    result = _executor(target_server, case, values={"alias":"{{resourceSn}}", "resourceSn":"environment-stale"}).execute_case("case", "env", {"resourceSn":"old"})
+    assert result.status == "PASSED", result.error_message
+    assert handler.workflow_calls == [("GET","/workflow/setup",None),("POST","/workflow/cancel",{"target":"resource-1"})]
+    assert "binding_context" not in result.to_dict()
+
+
+def test_bound_cleanup_refuses_different_effective_authorization(target_server):
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _bound_case(headers={"Authorization":"only-on-main"})
+    result = _executor(target_server, case).execute_case("case","env",{})
+    assert result.failure_category == "cleanup"
+    assert handler.workflow_calls == [("GET","/workflow/setup",None)]
+
+
+def test_bound_dependency_is_direct_response_from_named_producer_only(target_server):
+    _, handler = target_server
+    producer = _case("/workflow/setup", extractions=[_extraction("resourceSn","json_path","$.data.resourceSn")])
+    child = _bound_case("producer",path="/ok")
+    child.extractions = []
+    for env, expected_cleanup, overwrite in (("env",True,False),("different-env",False,False),("env",False,True)):
+        producer.processing["post"] = ([{"action":"set_variable","name":"resourceSn","value":"resource-1"}] if overwrite else [])
+        upstream = _executor(target_server,producer).execute_case("producer","env",{},capture_response_ids={"resourceSn"})
+        outcomes = {"producer":ExecutionService._dependency_outcome(upstream, {"resourceSn"})}
+        verified = ExecutionService._verified_dependency_ids({"dependencies":child.dependencies, "cleanup_response_binding":child.processing["pre"][0]},outcomes)
+        handler.workflow_calls = []
+        result = _executor(target_server,child).execute_case("case",env,{"resourceSn":"unrelated"},
+            dependency_overrides={"resourceSn":"stale"}, verified_dependency_ids=verified)
+        calls = [c for c in handler.workflow_calls if c[1] == "/workflow/cancel"]
+        assert calls == ([("POST","/workflow/cancel",{"target":"resource-1"})] if expected_cleanup else [])
+        assert result.status == ("PASSED" if expected_cleanup else "FAILED")
+
+
+def test_bound_cleanup_does_not_share_ids_between_concurrent_calls_or_a_retry(target_server):
+    from concurrent.futures import ThreadPoolExecutor
+
+    _, handler = target_server
+    handler.workflow_calls = []
+    case = _bound_case(path="/{{route}}")
+    runner = _executor(target_server, case)
+    def execute(route):
+        return runner.execute_case("case", "env", {"route":route, "alias":"stale"})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(execute, ["workflow/setup", "disconnect"]))
+    assert [r.status for r in outcomes] == ["PASSED", "BROKEN"]
+    assert execute("disconnect").status == "BROKEN"
+    assert [c for c in handler.workflow_calls if c[1] == "/workflow/cancel"] == [
+        ("POST", "/workflow/cancel", {"target":"resource-1"})]

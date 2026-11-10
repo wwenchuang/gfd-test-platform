@@ -420,6 +420,9 @@ def validate_case(
     )
 
     cleanup_available = set(available)
+    for action in case_version.processing.get("pre", ()):
+        if action.get("action") == "bind_cleanup_response_id":
+            cleanup_available.add(action["target"])
     cleanup_available.update(
         _item_value(extraction, "target")
         for extraction in case_version.extractions

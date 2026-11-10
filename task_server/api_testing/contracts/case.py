@@ -8,6 +8,7 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Tuple
 
+from task_server.api_testing import cleanup_binding
 from task_server.api_testing.assertions import AssertionDefinitionError, validate_response_schema
 
 from task_server.services.business_line_service import (
@@ -100,7 +101,7 @@ MEANINGFUL_SCHEMA_KEYS = frozenset(
 )
 EXTRACTION_TYPES = frozenset({"json_path", "header", "cookie", "status_code"})
 PROCESSING_ACTIONS = frozenset(
-    {"set_variable", "copy_variable", "remove_variable", "json_encode", "json_decode"}
+    {"set_variable", "copy_variable", "remove_variable", "json_encode", "json_decode", cleanup_binding.ACTION}
 )
 VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 
@@ -406,9 +407,12 @@ def _parse_processing(value):
             item = _require_mapping(item, f"processing.{phase}[{index}]")
             _reject_unknown(item, allowed, f"processing.{phase}[{index}]")
             action = _text(item.get("action"), f"processing.{phase}[{index}].action", maximum=64)
+            if action == cleanup_binding.ACTION and (phase != "pre" or index != 0 or set(item) != {"action","source","name","target"}):
+                raise CasePayloadError("响应 ID 绑定只能配置为第一项前置处理")
             if action not in PROCESSING_ACTIONS:
                 raise CasePayloadError(f"processing.{phase}[{index}].action is not supported")
             required_fields = {
+                cleanup_binding.ACTION: {"source", "name", "target"},
                 "set_variable": {"name", "value"},
                 "copy_variable": {"source", "target"},
                 "remove_variable": {"name"},
@@ -644,7 +648,7 @@ def parse_case_payload(payload, *, allow_disabled_scope=False):
             )
         except ValueError:
             raise CasePayloadError("business is not supported")
-    return {
+    parsed = {
         "name": _text(payload["name"], "name", maximum=300),
         "purpose": _text(payload["purpose"], "purpose", maximum=10_000),
         "priority": priority,
@@ -658,6 +662,11 @@ def parse_case_payload(payload, *, allow_disabled_scope=False):
         "dependencies": _parse_dependencies(payload["dependencies"]),
         "processing": _parse_processing(payload["processing"]),
     }
+    try:
+        cleanup_binding.validate_binding(parsed["processing"], parsed["extractions"], parsed["dependencies"])
+    except ValueError as exc:
+        raise CasePayloadError(str(exc)) from exc
+    return parsed
 
 
 @dataclass(frozen=True)
