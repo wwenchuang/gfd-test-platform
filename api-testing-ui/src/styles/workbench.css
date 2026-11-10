@@ -345,6 +345,18 @@ body, #app { background: #10171d; color: #eaf1f5; }
 #app .main-content .target-picker > header strong { color: #eaf1f5; }
 #app .main-content .target-picker > header span { color: #acbdc8; }
 
+/* Dynamic case actions use the same surfaces as the surrounding workbench. */
+#app .main-content :is(.endpoint-picker-domain-toggle, .endpoint-picker-group-toggle,
+  .endpoint-picker-subgroup .endpoint-picker-group-toggle, .case-batch-toolbar,
+  .debug-context, .ai-generated-list > header) {
+  border-color: #30434d; background: #202e37; color: #eaf1f5;
+}
+#app .main-content :is(.endpoint-picker-domain-toggle, .endpoint-picker-group-toggle):is(:hover, :focus-visible) {
+  background: #28483f; color: #d4ffec;
+}
+#app .main-content :is(.endpoint-picker-domain-toggle span,
+  .endpoint-picker-group-toggle b, .debug-context span) { color: #acbdc8; }
+
 /* Status meaning remains visible on graphite. */
 #app .main-content :is(.inline-error, .field-error, .state-error,
   .task-state-failed, .summary-failed strong, .tone-failed .report-status-chip,
