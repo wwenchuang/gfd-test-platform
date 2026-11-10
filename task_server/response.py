@@ -31,6 +31,10 @@ def request_body_limit(path):
     The legacy raw report endpoint is streamed to disk and may use the larger
     upload limit. JSON and base64 chunk endpoints stay on the normal limit.
     """
+    if path == "/api/platform/requirement-design/source":
+        return 3 * 1024 * 1024
+    if path == "/api/platform/requirement-design":
+        return 1024
     if path in {"/api/platform/week1-probes", "/api/platform/week1-probes/confirm", "/api/platform/week1-smoke", "/api/platform/week2-real", "/api/ui-executions/web-check"}:
         return 1024
     return MAX_UPLOAD_BODY_SIZE if path == "/report" else MAX_BODY_SIZE
@@ -103,7 +107,7 @@ class ResponseMixin:
         self.send_header("Content-Type", "application/json; charset=utf-8")
         # Authentication failures may precede access-control initialization.
         path = getattr(self, "_access_path", "") or urllib.parse.urlsplit(getattr(self, "path", "")).path
-        if (path.startswith("/api/ui-executions") or path in (
+        if (path.startswith(("/api/ui-executions", "/api/platform/requirement-design")) or path in (
                     "/api/platform/practice-cleanup-evidence", "/api/platform/week2-real",
                     "/api/platform/practice-legacy-evidence")):
             self.send_header("Cache-Control", "private, no-store")

@@ -6697,6 +6697,8 @@ def _post_ui_execution_confirm_stop(handler, qs, match):
         handler._json({"ok": True, "batch": batch})
 
 
+from task_server.requirement_design_http import register_routes as register_requirement_design_routes
+register_requirement_design_routes(route_get, route_post)
 from task_server.ui_case_draft_http import register_routes as register_ui_case_draft_routes
 register_ui_case_draft_routes(route_get, route_post, route_get_regex, route_post_regex)
 from task_server.ui_video_http import register_routes as register_ui_video_routes

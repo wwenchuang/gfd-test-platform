@@ -1363,3 +1363,62 @@ test('stability summary keeps partial results and binds screenshot to its round 
  w.sessionStorage.setItem('sessionToken','another-session');resolveArtifact({ok:false,status:403});await wait();await wait();
  assert.equal(report.children.length,0);
 });
+
+const week7Id='a'.repeat(64), ownWeek7Id='b'.repeat(64);
+const week7Source=(id=week7Id)=>({id,title:id===week7Id?'示范搜索':'我的搜索',app:'应用',version:'v2',prd_file_sha256:'c'.repeat(64),clauses:[{id:'R1',text:'返回搜索页'}],prototypes:[{id:'V1',caption:'搜索原型',sha256:'d'.repeat(64)}]});
+const week7Data=(id=week7Id,runs=[])=>({ok:true,source:week7Source(id),sources:[week7Id,ownWeek7Id].map(id=>({id,title:week7Source(id).title,version:'v2'})),runs});
+const week7Json=(value,status=200)=>({ok:status===200,status,json:async()=>value});
+async function openWeek7(w){
+ w.activeWorkflow='ai_practice';w.showAiPractice();
+ const panel=w.document.querySelector('[data-requirement-design]');assert.ok(panel);
+ panel.open=true;panel.dispatchEvent(new w.Event('toggle'));await wait();await wait();return panel;
+}
+test('requirement design checks full UI and configure access without hiding ordinary entries',async t=>{
+ for(const [scope,denied] of [['*','platform.configure'],[['limited'],''],['*','ui.view']]){
+  const {w}=fixture(t);w.currentAccessProfile.scope.ui_apps=scope;w.hasPermission=p=>p!==denied;w.activeWorkflow='ai_practice';w.showAiPractice();
+  assert.equal(w.document.querySelector('[data-requirement-design]'),null);assert.ok(w.document.querySelector('[data-practice-workflow="ui_start"]'));
+ }
+ const {w}=fixture(t);let gets=0;w.nativeFetch=async()=>{gets++;return week7Json(week7Data());};
+ w.activeWorkflow='ai_practice';w.showAiPractice();assert.ok(w.document.querySelector('[data-requirement-design]'));await wait();assert.equal(gets,0);
+});
+test('requirement design binds generation to source, retries same request and exports the matched run',async t=>{
+ const {w}=fixture(t),posts=[];let generated=false,exported,downloaded;
+ const run={id:'x1',status:'completed',created:1730000000,result:{points:[{id:'P1',title:'校验返回',expected:'首页可见',refs:['R1','V1']}],cases:[{id:'C1',title:'返回首页',precondition:'已搜索',steps:['轻触返回'],expected:'进入首页',point_ids:['P1']}],questions:['需要跨端吗？'],evidence:{model:'model-one',request_id:'req-123',usage:{total_tokens:123}},checks:{unreferenced_source_ids:[],uncovered_point_ids:[],review_required:true}}};
+ w.nativeFetch=async(path,options={})=>{if(options.method==='POST'){posts.push(JSON.parse(options.body));if(posts.length===1)throw Error('network');generated=true;return week7Json({ok:true,run});}return week7Json(week7Data(week7Id,generated?[run]:[]));};
+ w.URL.createObjectURL=blob=>{exported=blob;return 'blob:test';};w.HTMLAnchorElement.prototype.click=function(){downloaded=this.download;};
+ const panel=await openWeek7(w);assert.match(panel.textContent,/返回搜索页/);const gen=panel.querySelector('[data-design-generate]');gen.click();await wait();await wait();gen.click();await wait();await wait();
+ assert.equal(posts.length,2);assert.deepEqual(posts[0],posts[1]);assert.equal(posts[0].source_id,week7Id);assert.match(posts[0].request_id,/^[a-f0-9]{32}$/);
+ for(const text of ['R1','V1','P1','C1','校验返回','轻触返回','进入首页','需要跨端吗','model-one','req-123','人工复核'])assert.ok(panel.textContent.includes(text),text);
+ panel.querySelector('[data-design-export]').click();assert.match(downloaded,/\.json$/);const reader=new w.FileReader();const saved=new Promise(resolve=>reader.onload=()=>resolve(JSON.parse(reader.result)));reader.readAsText(exported);const result=await saved;assert.equal(result.run.id,'x1');assert.equal(result.source.id,week7Id);
+ assert.equal(panel.querySelector('[data-design-execute]'),null);
+});
+test('requirement design clears stale source and preview after switching, denial or navigation',async t=>{
+ const {w}=fixture(t);let releaseImage,deny=false,signal,imgPath;
+ w.nativeFetch=async(path,options)=>{
+  if(path.includes('/prototype?')){imgPath=path;signal=options.signal;return new Promise(resolve=>releaseImage=()=>resolve({ok:true,headers:{get:()=> 'image/png'},blob:async()=>new w.Blob(['image'],{type:'image/png'})}));}
+  return deny?week7Json({error:'private error'},403):week7Json(week7Data(path.includes(ownWeek7Id)?ownWeek7Id:week7Id));
+ };
+ const panel=await openWeek7(w);panel.querySelector('[data-design-preview]').click();assert.ok(imgPath.includes('source_id='+week7Id));assert.ok(imgPath.includes('id=V1'));const select=panel.querySelector('[data-design-select]');select.value=ownWeek7Id;select.dispatchEvent(new w.Event('change'));releaseImage();await wait();await wait();
+ assert.equal(signal.aborted,true);assert.equal(panel.querySelector('img'),null);assert.equal(select.value,ownWeek7Id);deny=true;panel.querySelector('[data-design-refresh]').click();await wait();await wait();assert.doesNotMatch(panel.textContent,/我的搜索|private error|返回搜索页/);
+ w.leaveUiSimpleWorkflow();assert.equal(w.document.querySelector('[data-requirement-design]'),null);
+});
+test('requirement design uploads PNG with trimmed clauses and selects server response',async t=>{
+ const {w}=fixture(t);let body;const paths=[];
+ w.nativeFetch=async(path,opts)=>{paths.push(path);if(path.endsWith('/source')){body=JSON.parse(opts.body);return week7Json({ok:true,source_id:ownWeek7Id});}return week7Json(week7Data(path.includes(ownWeek7Id)?ownWeek7Id:week7Id));};
+ const panel=await openWeek7(w),form=panel.querySelector('form');form.elements.title.value='设计 A';form.elements.app.value='应用';form.elements.version.value='v1';form.elements.clauses.value='第一条\n\n 第二条 ';
+ const png=new w.File(['PNG'],'search.png',{type:'image/png'});Object.defineProperty(form.elements.prototype,'files',{value:[png]});form.dispatchEvent(new w.Event('submit',{cancelable:true}));
+ for(let i=0;i<50&&!paths.some(p=>p.includes(ownWeek7Id));i++)await new Promise(r=>setTimeout(r,5));
+ assert.deepEqual(body,{title:'设计 A',app:'应用',version:'v1',clauses:['第一条','第二条'],image_base64:'UE5H'});assert.equal(panel.querySelector('[data-design-select]').value,ownWeek7Id);
+});
+test('requirement design can import the first source and labels partial output honestly',async t=>{
+ const {w}=fixture(t);let populated=false;
+ w.nativeFetch=async()=>week7Json(populated?week7Data(week7Id,[{id:'partial-1',status:'completed',created:1730000000,result:{points:[],cases:[],questions:['如何返回？'],checks:{partial:true},evidence:{}}}]):{ok:true,source:null,sources:[],runs:[]});
+ const panel=await openWeek7(w);assert.match(panel.textContent,/尚无需求材料/);assert.equal(panel.querySelector('form').closest('details').hidden,false);assert.equal(panel.querySelector('[data-design-generate]').disabled,true);
+ populated=true;panel.querySelector('[data-design-refresh]').click();await wait();await wait();assert.match(panel.textContent,/草稿不完整/);
+});
+test('requirement design ignores late results and clears rendered source on same-user permission narrowing',async t=>{
+ const {w}=fixture(t);let finish;
+ w.nativeFetch=async()=>week7Json(week7Data());
+ const panel=await openWeek7(w);w.nativeFetch=()=>new Promise(resolve=>{finish=resolve;});panel.querySelector('[data-design-refresh]').click();
+ w.currentAccessProfile.scope.ui_apps=['restricted'];finish(week7Json(week7Data()));await wait();await wait();assert.equal(w.document.querySelector('[data-requirement-design]'),null);
+});
