@@ -15,8 +15,8 @@ def _actor(handler):
     return owner,username
 
 
-def _serve(handler, operation, *, image=False, download=False, code=200):
-    actor=_actor(handler)
+def _serve(handler, operation, *, image=False, download=False, code=200, authorize=None):
+    actor=(authorize or _actor)(handler)
     if not actor:
         return
     try:
@@ -68,6 +68,30 @@ def register_routes(route_get,route_post):
             _params(qs, ())
             return {'report': practice.report(kind, owner, username)}
         _serve(handler, read)
+
+    def mobile_actor(handler):
+        from task_server.services.ui_execution_contract import AccessDenied, require_ui_actor
+        try:
+            require_ui_actor(permission='ui.view', app_id='com.kfb.model')
+        except AccessDenied:
+            handler._json({'ok': False, 'error': '需要智小白3D的用例查看权限'}, 403)
+            return None
+        actor = current_actor()
+        return actor['user_id'], actor['username']
+
+    @route_get(BASE+'/practice-results/mobile')
+    def mobile_result(handler, qs):
+        def read(owner, username):
+            _params(qs, ())
+            return {'report': practice.mobile_observations()}
+        _serve(handler, read, authorize=mobile_actor)
+
+    @route_get(BASE+'/practice-results/mobile-frame')
+    def mobile_result_frame(handler, qs):
+        def read(owner, username):
+            _params(qs, ('id',))
+            return practice.mobile_frame(qs['id'])
+        _serve(handler, read, image=True, authorize=mobile_actor)
 
     @route_get(BASE+'/practice-results/replay')
     def replay_result(handler, qs):

@@ -22,6 +22,24 @@ window.UiPracticeResults = (() => {
     const date=new Date(value);
     return value && Number.isFinite(date.getTime()) ? date.toLocaleString('zh-CN',{hour12:false}) : '未记录';
   }
+  function mobile(body, report, download) {
+    const runs=report.runs;
+    add(body,'h3','智小白3D '+report.build+' · '+report.device);
+    add(body,'p',formatTime(report.measured_at)+' · 真机只读检查 '+runs.filter(x=>x.status==='passed').length+'/'+runs.length+' 通过');
+    for(const note of report.notes) add(body,'p',note);
+    for(const flow of new Set(runs.map(row=>row.flow))) {
+      const results=runs.filter(row=>row.flow===flow);
+      const group=detail(body,flow+' · '+results.filter(x=>x.status==='passed').length+'/'+results.length+' 通过');
+      for(const row of results) {
+        const item=detail(group,'第 '+row.round+' 轮 · '+({passed:'通过',failed:'失败',blocked:'受阻'}[row.status])+' · '+row.duration_s+' 秒');
+        add(item,'p',row.checks.join('、'));
+        for(const frame of row.screenshots) {
+          const btn=add(item,'button','下载'+frame.label);btn.type='button';
+          btn.onclick=()=>download(btn,frame.sha256);
+        }
+      }
+    }
+  }
   function replay(body,report) {
     add(body,'p','完整回放 '+report.fully_replayed+' / '+report.total+' 条 · 待人工审核 '+report.manual_pending+' 条 · 已生成脚本 '+report.generated+' 条');
     if(Number.isInteger(report.replayed_assertions)) add(body,'p','复用历史响应核对 '+report.replayed_assertions+' 个断言，反向验证 '+report.negative_controls+' 个。');
@@ -642,10 +660,10 @@ window.UiPracticeResults = (() => {
         if(!permitted()||!/^[0-9a-f]{64}$/.test(id)) return;
         const version=revision;button.disabled=true;
         try {
-          const blob=await request('screenshot?id='+id,true);
+          const blob=await request((kind==='mobile'?'mobile-frame':'screenshot')+'?id='+id,true);
           if(!permitted()||revision!==version||!panel.open) return;
           const url=URL.createObjectURL(blob),anchor=document.createElement('a');
-          anchor.href=url; anchor.download='视觉对照-'+id.slice(0,12)+'.png';anchor.click();
+          anchor.href=url; anchor.download=(kind==='mobile'?'手机回归-':'视觉对照-')+id.slice(0,12)+'.png';anchor.click();
           setTimeout(()=>URL.revokeObjectURL(url),0);
         } catch(error) {
           if(permitted()&&revision===version) {clear();notice.textContent=message(error);}
@@ -657,7 +675,8 @@ window.UiPracticeResults = (() => {
         try {
           const report=await request(kind,false);
           if(!permitted()||version!==revision||!panel.open) return;
-          if(kind==='replay') replay(body,report); else visual(body,report,download);
+          if(kind==='mobile') mobile(body,report,download);
+          else if(kind==='replay') replay(body,report); else visual(body,report,download);
           notice.textContent='';
         } catch(error) {
           if(permitted()&&version===revision) {body.replaceChildren();notice.textContent=message(error);}
@@ -668,6 +687,9 @@ window.UiPracticeResults = (() => {
     }
     const guard=setInterval(()=>{if(!permitted()) dispose();},500);
     const disposeTools=attachTools(page,()=>permitted()&&hasPermission('ui.view'));
+    const apps=currentAccessProfile?.scope?.ui_apps;
+    if(hasPermission('ui.view') && (currentAccessProfile?.is_superuser===true || apps==='*' ||
+       (Array.isArray(apps) && apps.includes('com.kfb.model')))) panelFor('mobile','手机回归实测');
     if(hasPermission('platform.configure') && hasPermission('api.view') &&
        (currentAccessProfile?.is_superuser===true || currentAccessProfile?.scope?.ui_apps==='*')) {
       panelFor('replay','接口回放证据');panelFor('visual','视觉巡检对照');

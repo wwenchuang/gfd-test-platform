@@ -36,6 +36,27 @@ class PracticeResultsTests(unittest.TestCase):
         self.routes[http.BASE+'/practice-results/'+kind](handler, params)
         return handler
 
+    def test_android_results_require_app_scope_and_serve_only_listed_frames(self):
+        from task_server.services import ui_execution_contract as contract
+        actor={'kind':'user','user_id':'u','username':'name'}
+        self.enterContext(patch.object(contract, 'current_actor', return_value=actor))
+        png=b'\x89PNG\r\n\x1a\n' + b'private frame'
+        digest=hashlib.sha256(png).hexdigest()
+        frames=self.folder/'android-observations'
+        frames.mkdir()
+        (frames/(digest+'.png')).write_bytes(png)
+        (self.folder/'android-observations.json').write_text(json.dumps({
+            'version':1,'app_id':'com.kfb.model','notes':[],'runs':[{'round':1,'flow':'指定设备打印记录',
+            'status':'passed','checks':[],'screenshots':[{'label':'设备','sha256':digest,'private':1}]}]}))
+        with patch.dict(self.profile, {'permissions':['ui.view'],'scope':{'ui_apps':['com.kfb.model']}}):
+            report=self.call('mobile')._json.call_args.args[0]['report']
+            self.assertNotIn('private',report['runs'][0]['screenshots'][0])
+            self.assertEqual(self.call('mobile-frame',id=digest).wfile.write.call_args.args[0],png)
+            self.assertEqual(self.call('mobile-frame',id='e'*64)._json.call_args.args[1],404)
+        with patch.dict(self.profile, {'scope':{'ui_apps':['other']}}):
+            self.assertEqual(self.call('mobile')._json.call_args.args[1],403)
+            self.assertEqual(self.call('mobile-frame',id=digest)._json.call_args.args[1],403)
+
     def test_case_projection_checks_both_scopes_and_unknown_fields(self):
         doc = dict(version=1,project_id='p',environment_id='e',cases=[dict(id='E01',title='公开标题',status='partial',
                    internal='raw',checks=[],gaps=['原响应未留存'])])

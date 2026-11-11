@@ -97,3 +97,39 @@ def screenshot(owner, username, digest):
     if not data.startswith(b'\x89PNG\r\n\x1a\n') or hashlib.sha256(data).hexdigest() != digest:
         raise files.Unavailable()
     return data
+
+
+def mobile_observations():
+    """Expose only the app-scoped, cropped Android evidence prepared for colleagues."""
+    doc = files._published_file('android-observations.json')
+    if not isinstance(doc, dict) or doc.get('version') != 1 or doc.get('app_id') != 'com.kfb.model':
+        raise files.Unavailable()
+    visible = files._fields(doc, 'app_id build device measured_at')
+    visible['notes'] = files._strings(doc, 'notes')
+    visible['runs'] = []
+    for item in _rows(doc, 'runs'):
+        row = files._fields(item, 'flow round status duration_s')
+        if (row.get('flow') not in ('收藏分类切换', '指定设备打印记录', '创作记录查询') or
+                type(row.get('round')) is not int or row['round'] < 1 or
+                row.get('status') not in ('passed', 'failed', 'blocked')):
+            raise files.Unavailable()
+        row['checks'] = files._strings(item, 'checks')
+        row['screenshots'] = []
+        for frame in _rows(item, 'screenshots'):
+            digest = frame.get('sha256')
+            if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+                raise files.Unavailable()
+            row['screenshots'].append(files._fields(frame, 'sha256 label'))
+        visible['runs'].append(row)
+    return visible
+
+
+def mobile_frame(digest):
+    if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+        raise ValueError('截图标识无效')
+    if not any(pic['sha256'] == digest for row in mobile_observations()['runs'] for pic in row['screenshots']):
+        raise design.Missing()
+    data = files._published_bytes(digest + '.png', subdirectories=('android-observations',), limit=1024 * 1024)
+    if not data.startswith(b'\x89PNG\r\n\x1a\n') or hashlib.sha256(data).hexdigest() != digest:
+        raise files.Unavailable()
+    return data

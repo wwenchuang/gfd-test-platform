@@ -29,9 +29,15 @@ test('workbench opens per-case evidence, downloads authenticated PNG and discard
     const visual={generated_at:'2026-11-01T00:00:00Z',model:'model',scenarios:[{id:'f1',title:'用例交接'}],
       runs:[{scenario_id:'f1',round:1,arm:'ai',status:'failed',elapsed_ms:2300,assertion:'执行按钮禁用',
          reason:'指定控件未命中',actions:1,model_calls:1,tokens:null,screenshots:[{label:'失败截图',sha256:digest}]}]};
-    return route.fulfill({json:{ok:true,report:u.pathname.endsWith('/replay')?replay:visual}});
+    const mobile={build:'2.0.1（55）',device:'OPPO',notes:[],runs:[{
+      flow:'收藏分类切换',round:1,status:'passed',duration_s:12,checks:['主题专区选中'],screenshots:[]}]};
+    return route.fulfill({json:{ok:true,report:u.pathname.endsWith('/mobile')?mobile:u.pathname.endsWith('/replay')?replay:visual}});
   });
   await page.goto('http://127.0.0.1/');
+  await page.getByText('手机回归实测',{exact:true}).click();
+  await page.getByText('收藏分类切换 · 1/1 通过',{exact:true}).click();
+  await page.getByText('第 1 轮 · 通过 · 12 秒',{exact:true}).click();
+  await page.getByText('主题专区选中',{exact:true}).waitFor();
   await page.getByText('接口回放证据',{exact:true}).click();
   await page.getByText('E01 · 回放样本 · 完整回放',{exact:true}).click();
   await page.getByText(/金额正确。确定性反控失败/).waitFor();
