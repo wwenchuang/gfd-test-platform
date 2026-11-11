@@ -69,6 +69,14 @@ cp -R "${SRC_DIR}/ai_skills" "${pkg_dir}/"
 if [ -d "${SRC_DIR}/task_server" ]; then
   cp -R "${SRC_DIR}/task_server" "${pkg_dir}/"
 fi
+if [ -d "${SRC_DIR}/scripts/week10_mcp" ]; then
+  mcp_src="${SRC_DIR}/scripts/week10_mcp"
+  mcp_dest="${pkg_dir}/scripts/week10_mcp"
+  mkdir -p "${mcp_dest}"
+  for item in server.mjs host.mjs qwen.mjs acceptance.mjs contract.test.mjs test-peer.mjs package.json package-lock.json README.md; do
+    cp "${mcp_src}/${item}" "${mcp_dest}/"
+  done
+fi
 if [ -d "${SRC_DIR}/load_agent" ]; then
   cp -R "${SRC_DIR}/load_agent" "${pkg_dir}/"
 fi

@@ -177,10 +177,10 @@ function attachTaskWorkbench(page){
   else apiSlot.textContent='需要 API 查看权限，请联系管理员。';
   if(hasPermission('api.view'))attachPracticeAiResults(page,current);
   if(hasPermission('ui.view'))attachCatalogWebCheck(page,current);
-  if(!hasPermission('platform.configure')||(currentAccessProfile?.is_superuser!==true&&currentAccessProfile?.scope?.ui_apps!=='*'))return;
-  if(hasPermission('ui.view')&&hasPermission('api.view')&&window.UiPracticeResults){
+  if(hasPermission('ui.view')&&window.UiPracticeResults){
     uiPracticeResultCleanup=window.UiPracticeResults.attach(page,current,()=>JSON.stringify([sessionToken(),currentAccessProfile]));
   }
+  if(!hasPermission('platform.configure')||(currentAccessProfile?.is_superuser!==true&&currentAccessProfile?.scope?.ui_apps!=='*'))return;
   attachRequirementDesign(page,current);
   attachUiFirstWeekGuide(page);
   const previousEnvironment=page.querySelector('[data-ui-week-one]');

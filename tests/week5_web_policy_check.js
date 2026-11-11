@@ -56,9 +56,9 @@ test('the 35 observed HTML assets and the candidate hashed entry are on the fixe
   assert.equal(allowRequest(origin,'GET',`${origin}/${next}`),'static');
 });
 
-test('all actual candidate HTML assets including both exact content-hashed scripts are allowed', () => {
+test('all actual candidate HTML assets including exact content-hashed workbench scripts are allowed', () => {
   const origin='http://127.0.0.1:8088',root=path.resolve(__dirname,'..');let html=fs.readFileSync(path.join(root,'task-manager.html'),'utf8');
-  for(const name of ['ui-simple-entry','ui-test-home']){
+  for(const name of ['ui-simple-entry','ui-test-home','ui-practice-results']){
     const digest=crypto.createHash('sha256').update(fs.readFileSync(path.join(root,'js',name+'.js'))).digest('hex').slice(0,16);
     const raw=`js/${name}.js?`, hashed=`js/${name}.${digest}.js?`;assert.ok(html.includes(raw));html=html.replace(raw,hashed);
   }

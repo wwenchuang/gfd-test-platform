@@ -322,6 +322,8 @@ def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, ro
             return dict(blocked, error_kind='evidence', detail='quota_exceeded')
         try:
             result, image, trace = _execute(owner, token, scenario)
+        except TimeoutError:
+            return dict(blocked, error_kind='environment', detail='browser_timeout')
         except Exception:
             return dict(blocked, error_kind='environment')
         refreshed = _profile(owner, username, token)

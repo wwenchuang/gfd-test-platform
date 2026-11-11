@@ -1,4 +1,4 @@
-// Read-only, published evidence in the existing test workbench.
+// Practice runs and published evidence in the existing test workbench.
 window.UiPracticeResults = (() => {
   const base = '/api/platform/requirement-design/practice-results/';
   const statusNames = {complete:'完整回放',partial:'部分回放',missing:'缺少证据',verified:'已验证',
@@ -85,6 +85,218 @@ window.UiPracticeResults = (() => {
       }
     }
   }
+  function attachTools(page, permitted) {
+    const panel=detail(page,'工具执行');
+    panel.className='ui-case-source-picker ui-practice-panel ui-requirement-design';
+    const suiteLabel=add(panel,'p','检查本平台已发布用例在网页中的显示，并保存执行截图和 trace。');
+    const actions=add(panel,'div'); actions.className='ui-design-actions';
+    function button(parent,label,action) {
+      const element=add(parent,'button',label);
+      element.type='button'; element.onclick=action;
+      return element;
+    }
+    const start=button(actions,'开始检查',()=>launch());
+    const refresh=button(actions,'刷新记录',()=>load());
+    const notice=add(panel,'p'); notice.setAttribute('role','status');
+    const result=add(panel,'section');
+    const history=detail(panel,'我的运行记录'), rows=add(history,'div');
+    const trace=detail(panel,'本次网页工具调用'), calls=add(trace,'ol');
+    const negative=button(trace,'验证环境限制',()=>checkEnvironment());
+    const checkNote=add(trace,'p');checkNote.setAttribute('role','status');
+    const receipt=detail(panel,'MCP 客户端验收'), report=add(receipt,'div');
+    const status={queued:'排队中',running:'执行中',passed:'通过',failed:'失败',blocked:'受阻',timed_out:'超时',interrupted:'中断'};
+    const key='practice-mcp-request:'+currentAccessProfile.user_id;
+    const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+    let pending=sessionStorage.getItem(key),selected='',suite=null,controller=null,timer=null,imageUrl=null;
+    function clearImage() {
+      if(imageUrl) URL.revokeObjectURL(imageUrl);
+      imageUrl=null;
+    }
+    function cancel() {
+      clearTimeout(timer); controller?.abort(); controller=null; clearImage();
+    }
+    function clearPrivate() {
+      clearImage();
+      for(const box of [result,rows,calls,report,checkNote]) box.replaceChildren();
+      suite=null; selected='';
+    }
+    function controls(busy) {
+      start.textContent=pending?'重试同一请求':selected?'再运行一次':'开始检查';
+      start.disabled=busy||!suite; negative.disabled=busy||!suite; refresh.disabled=busy;
+      rows.querySelectorAll('button').forEach(b=>{b.disabled=busy;});
+    }
+    function begin() {
+      cancel(); controller=new AbortController(); controls(true);
+      return controller.signal;
+    }
+    function current(signal) {
+      return !signal.aborted && panel.open && permitted() && controller?.signal===signal;
+    }
+    async function fetchData(path,signal,body) {
+      const options={headers:authHeaders(body?{'Content-Type':'application/json'}:{}),cache:'no-store',redirect:'error',
+        signal:AbortSignal.any([signal,AbortSignal.timeout(20000)])};
+      if(body) {options.method='POST';options.body=JSON.stringify(body);}
+      const response=await nativeFetch(path,options),data=await response.json();
+      if(!response.ok||data.ok!==true) throw Object.assign(Error('request'),{status:response.status,code:data.code});
+      return data;
+    }
+    function log(tool,message) {
+      if(calls.children.length>=30) calls.firstElementChild.remove();
+      add(calls,'li',tool+' · '+message);
+    }
+    async function call(name,args,signal) {
+      try {
+        const {result:data}=await fetchData('/api/platform/mcp/call',signal,{name,arguments:args});
+        if(current(signal)) log(name,data.run_id?'运行 '+data.run_id+' · '+(status[data.status]||'状态未知'):'已读取套件');
+        return data;
+      } catch(error) {
+        if(current(signal)) log(name,error.code||'未收到有效回执');
+        throw error;
+      }
+    }
+    function handle(error,signal) {
+      if(!current(signal)) return;
+      if([401,403].includes(error.status)) {
+        clearPrivate();notice.textContent='登录状态或权限已变化，请刷新页面。';
+      } else if(error.code==='check_busy') {
+        notice.textContent='已有目录检查正在执行，请稍后重试同一请求。';
+      } else if(error.code==='execution_disabled') {
+        notice.textContent='服务器尚未启用工具执行。可刷新记录查看已有结果。';
+      } else {
+        notice.textContent=pending?'尚未确认提交结果，请重试同一请求。':'读取失败，请刷新记录后重试。';
+      }
+    }
+    async function checkEnvironment() {
+      const signal=controller?.signal;
+      if(!signal||!current(signal)||negative.disabled) return;
+      negative.disabled=true;checkNote.textContent='正在验证环境参数…';
+      try {
+        const run=await call('run_suite',{suite_id:suite.suite_id,environment:'unlisted',request_id:makeRequestId()},signal);
+        if(current(signal)) checkNote.textContent='验证未通过，服务接受了未列出的环境。运行编号 '+(run.run_id||'未返回')+'。';
+      } catch(error) {
+        if(!current(signal)) return;
+        if(error.status===400&&error.code==='invalid_arguments') checkNote.textContent='已拒绝未列出的环境（invalid_arguments）。';
+        else if([401,403].includes(error.status)) {handle(error,signal);controls(false);}
+        else checkNote.textContent='未取得预期的参数校验结果，请重试。';
+      } finally {if(current(signal)) negative.disabled=!suite;}
+    }
+    function showReceipt(data) {
+      report.replaceChildren();
+      if(!data) {add(report,'p','暂无当前账号可查看的客户端验收记录。');return;}
+      add(report,'small',formatTime(data.checked_at*1000)+' · 运行 '+data.run_id);
+      for(const row of data.checks) add(report,'p',row.name+' · '+(status[row.status]||'未知')+' · '+row.detail);
+    }
+    function showRows(items) {
+      rows.replaceChildren();
+      if(!items.length) {add(rows,'p','暂无运行记录。');return;}
+      for(const row of items) {
+        if(!uuid.test(row.run_id)) continue;
+        button(rows,formatTime(row.created_at*1000)+' · '+(status[row.status]||'未知')+' · '+row.run_id,()=>load(row.run_id));
+      }
+    }
+    async function openArtifact(btn,run,item,signal) {
+      const expected='/api/ui-executions/web-check/artifact?id='+run.runner_id+'&item='+item;
+      if(!current(signal)||run.evidence?.[item]!==expected||!/^[a-f0-9]{32}$/.test(run.runner_id)) return;
+      btn.disabled=true;
+      try {
+        const response=await nativeFetch(expected,{headers:authHeaders(),cache:'no-store',redirect:'error',
+          signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
+        if(!response.ok) throw Object.assign(Error('artifact'),{status:response.status});
+        const image=item==='screenshot',type=image?'image/png':'application/zip',limit=(image?8:30)*1024*1024;
+        if(response.headers.get('content-type')?.split(';')[0]!==type || Number(response.headers.get('content-length'))>limit) throw Error('format');
+        const blob=await response.blob(); if(!blob.size||blob.size>limit) throw Error('size');
+        if(!current(signal)||!btn.isConnected) return;
+        const url=URL.createObjectURL(blob);
+        if(image) {
+          clearImage(); imageUrl=url; result.querySelector('img')?.remove();
+          const pic=add(result,'img'); pic.src=url;pic.alt='本次用例库检查截图';
+        } else {
+          const anchor=add(result,'a'); anchor.href=url; anchor.download='工具执行-'+run.run_id+'-trace.zip';
+          anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+          notice.textContent='已发起 trace 下载，请查看浏览器下载记录。';
+        }
+      } catch(error) {
+        if([401,403].includes(error.status)) {handle(error,signal);controls(false);}
+        else if(current(signal)) notice.textContent='证据读取失败，请刷新记录后重试。';
+      } finally {btn.disabled=false;}
+    }
+    async function readRun(id,signal) {
+      const run=await call('get_run',{run_id:id},signal);
+      if(!current(signal)) return;
+      if(run.run_id!==id) throw Error('run_id');
+      selected=id; clearImage();result.replaceChildren();
+      add(result,'h3','当前运行 · '+(status[run.status]||'状态未知'));
+      add(result,'small','运行编号 '+id);
+      add(result,'small','请求编号 '+run.request_id);
+      if(run.created_at) add(result,'p','提交 '+formatTime(run.created_at*1000)+(run.finished_at?' · 结束 '+formatTime(run.finished_at*1000):''));
+      if(Number.isInteger(run.total)) add(result,'p','接口返回 '+run.total+' 条已发布用例。');
+      if(run.runner_id) add(result,'small','浏览器检查编号 '+run.runner_id);
+      if(run.error_kind) {
+        const reasons={authentication:'账户登录或权限已变化',environment:'浏览器或服务环境不可用',evidence:'执行证据未能保存',
+          business:'页面显示与预期不符',browser_timeout:'浏览器检查超时',worker_timeout:'执行超过时限',
+          heavy_workload_busy:'平台正在执行其他任务',check_busy:'已有目录检查正在执行',worker_unavailable:'执行线程未启动',
+          service_restarted:'执行进程已停止',execution_disabled:'平台已暂停工具执行',invalid_runner_result:'执行器回执不完整'};
+        add(result,'p','执行原因 · '+(reasons[run.error_kind]||run.error_kind));
+      }
+      const links=add(result,'div');links.className='ui-design-actions';
+      for(const [item,label] of [['screenshot','查看截图'],['trace','下载 trace']]) {
+        if(run.evidence?.[item]) {const btn=button(links,label,()=>openArtifact(btn,run,item,signal));}
+      }
+      if(['queued','running'].includes(run.status)) timer=setTimeout(()=>{if(current(signal)) load(id);},4000);
+    }
+    async function load(id) {
+      if(!panel.open||!permitted()) return;
+      const signal=begin();
+      notice.textContent='正在读取套件和运行记录…';
+      try {
+        const [catalog,list,acceptance]=await Promise.all([
+          call('list_suites',{},signal),fetchData('/api/platform/mcp/runs',signal),
+          fetchData('/api/platform/mcp/acceptance',signal).catch(error=>{
+            if([401,403].includes(error.status)) throw error;
+            return null;
+          })]);
+        if(!current(signal)) return;
+        suite=catalog.suites.find(x=>x.suite_id==='published-catalog'&&x.environment==='platform');
+        suiteLabel.textContent=suite?suite.title+' · 在平台环境核对页面与接口的已发布用例数量。':'当前账号没有可用套件。';
+        showRows(list.runs);
+        if(acceptance) showReceipt(acceptance.report);
+        else report.textContent='客户端验收记录暂时无法读取，请刷新记录。';
+        const target=id||selected||list.runs[0]?.run_id;
+        result.replaceChildren();
+        if(target&&uuid.test(target)) await readRun(target,signal);
+        if(current(signal)) notice.textContent=pending?'上次提交尚待确认，可重试同一请求。':'';
+      } catch(error) {if(current(signal)){clearPrivate(); handle(error,signal);}}
+      finally {if(current(signal)) controls(false);}
+    }
+    function makeRequestId() {
+      const bytes=crypto.getRandomValues(new Uint8Array(16));
+      bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+      const hex=Array.from(bytes,x=>x.toString(16).padStart(2,'0')).join('');
+      return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
+    }
+    async function launch() {
+      if(start.disabled||!permitted()||!suite) return;
+      const signal=begin();
+      try {
+        if(!uuid.test(pending)) {pending=makeRequestId();sessionStorage.setItem(key,pending);}
+        notice.textContent='正在提交检查…';
+        const run=await call('run_suite',{suite_id:suite.suite_id,environment:suite.environment,request_id:pending},signal);
+        if(!current(signal)) return;
+        if(!uuid.test(run.run_id)||run.request_id!==pending) throw Error('receipt');
+        pending=null;sessionStorage.removeItem(key);
+        await load(run.run_id);
+      } catch(error) {
+        if(current(signal)&&error.status===404&&error.code==='run_not_found') {
+          pending=null;sessionStorage.removeItem(key);
+          clearPrivate();await load();
+          if(panel.open&&permitted()&&suite) notice.textContent='当前权限范围无法读取该请求。可重新发起检查。';
+        } else handle(error,signal);
+      } finally {if(current(signal)) controls(false);}
+    }
+    panel.ontoggle=()=>{if(panel.open) load();else {cancel();clearPrivate();notice.textContent='';}};
+    controls(false);
+    return ()=>{cancel();panel.remove();};
+  }
   function attach(page, current, context) {
     const attached=context(), active=new Set(), panels=[];
     let disposed=false;
@@ -93,6 +305,7 @@ window.UiPracticeResults = (() => {
       if(disposed) return;
       disposed=true; clearInterval(guard);
       for(const controller of active) controller.abort();
+      disposeTools();
       for(const panel of panels) panel.remove();
     }
     async function request(path, binary) {
@@ -154,7 +367,11 @@ window.UiPracticeResults = (() => {
       refresh.onclick=load;
     }
     const guard=setInterval(()=>{if(!permitted()) dispose();},500);
-    panelFor('replay','接口回放证据');panelFor('visual','视觉巡检对照');
+    const disposeTools=attachTools(page,()=>permitted()&&hasPermission('ui.view'));
+    if(hasPermission('platform.configure') && hasPermission('api.view') &&
+       (currentAccessProfile?.is_superuser===true || currentAccessProfile?.scope?.ui_apps==='*')) {
+      panelFor('replay','接口回放证据');panelFor('visual','视觉巡检对照');
+    }
     return dispose;
   }
   return {attach};

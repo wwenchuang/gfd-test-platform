@@ -4,6 +4,11 @@ import re
 from urllib.parse import unquote
 
 
+def _mcp_route(method, path):
+    return ((method == 'POST' and path == '/api/platform/mcp/call') or
+            (method in {'GET','HEAD'} and path in {'/api/platform/mcp/runs','/api/platform/mcp/acceptance'}))
+
+
 class AccessDenied(PermissionError):
     pass
 
@@ -219,6 +224,9 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
+        if _mcp_route(method, path):
+            # MCP checks the current owner and UI scope against the stored run.
+            return
         if self._draft_permission(method, path):
             # Private draft services verify the persisted owner and current app scope.
             return
@@ -337,6 +345,8 @@ class MainAccess:
 
     def permission_for(self, method, path, qs, body):
         from task_server.config import safe_bool
+        if _mcp_route(method, path):
+            return "ui.view"
         draft_permission = self._draft_permission(method, path)
         if draft_permission:
             return draft_permission
@@ -384,6 +394,8 @@ class MainAccess:
     def filter(self, path, payload):
         if not isinstance(payload, dict):
             return payload
+        if path == "/api/platform/mcp/runs":
+            return payload  # Service already filtered the history by owner and current scope.
         result = dict(payload)
         for key in ("jobs", "background_jobs", "runs", "reports"):
             if isinstance(result.get(key), list):
@@ -478,7 +490,7 @@ def prepare_request_access(handler, method, path, qs):
             handler._json({"ok": True, **filter_scope_options(profile, options)})
             return True
         body = {}
-        if method in {"POST", "PUT"} and not profile.get("is_superuser") and path != "/api/ui-video-sources/upload":
+        if method in {"POST", "PUT"} and not profile.get("is_superuser") and path not in {"/api/ui-video-sources/upload", "/api/platform/mcp/call"}:
             if not handler._body_size_allowed(path):
                 return True
             body = handler._body()

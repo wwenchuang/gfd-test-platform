@@ -33,7 +33,7 @@ def request_body_limit(path):
     """
     if path in {"/api/platform/requirement-design/source", "/api/platform/requirement-design/collection"}:
         return 3 * 1024 * 1024
-    if path == "/api/platform/requirement-design":
+    if path in {"/api/platform/requirement-design", "/api/platform/mcp/call"}:
         return 1024
     if path in {"/api/platform/week1-probes", "/api/platform/week1-probes/confirm", "/api/platform/week1-smoke", "/api/platform/week2-real", "/api/ui-executions/web-check"}:
         return 1024
@@ -107,7 +107,7 @@ class ResponseMixin:
         self.send_header("Content-Type", "application/json; charset=utf-8")
         # Authentication failures may precede access-control initialization.
         path = getattr(self, "_access_path", "") or urllib.parse.urlsplit(getattr(self, "path", "")).path
-        if (path.startswith(("/api/ui-executions", "/api/platform/requirement-design")) or path in (
+        if (path.startswith(("/api/ui-executions", "/api/platform/requirement-design", "/api/platform/mcp/")) or path in (
                     "/api/platform/practice-cleanup-evidence", "/api/platform/week2-real",
                     "/api/platform/practice-legacy-evidence")):
             self.send_header("Cache-Control", "private, no-store")

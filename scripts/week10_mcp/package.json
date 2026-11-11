@@ -1,0 +1,9 @@
+{
+  "name": "midscene-practice-week10-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=20"},
+  "scripts": {"test": "node --test contract.test.mjs"},
+  "dependencies": {"@modelcontextprotocol/sdk": "1.32.2", "zod": "4.6.7"}
+}

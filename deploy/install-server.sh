@@ -322,6 +322,22 @@ if [ -d "${SRC_DIR}/task_server" ]; then
   find "${APP_DIR}/task_server" -type f -exec chmod 0644 {} \;
 fi
 
+# Stdio runs independently with its own pinned npm dependencies.
+if [ -d "${SRC_DIR}/scripts/week10_mcp" ]; then
+  mcp_dir="${APP_DIR}/scripts/week10_mcp"
+  install -d -m 0755 "${mcp_dir}"
+  mcp_install_deps=0
+  if ! cmp -s "${SRC_DIR}/scripts/week10_mcp/package-lock.json" "${mcp_dir}/.installed-package-lock.json" || [ ! -f "${mcp_dir}/node_modules/@modelcontextprotocol/sdk/package.json" ]; then
+    mcp_install_deps=1
+  fi
+  for item in server.mjs host.mjs qwen.mjs acceptance.mjs contract.test.mjs test-peer.mjs package.json package-lock.json README.md; do
+    install -m 0644 "${SRC_DIR}/scripts/week10_mcp/${item}" "${mcp_dir}/${item}"
+  done
+  if [ "${mcp_install_deps}" -eq 1 ]; then
+    (cd "${mcp_dir}" && npm ci --ignore-scripts --no-audit --no-fund && cp package-lock.json .installed-package-lock.json)
+  fi
+fi
+
 # Keep the standalone Docker load Agent build context in the release directory.
 if [ -d "${SRC_DIR}/load_agent" ]; then
   rm -rf "${APP_DIR}/load_agent"

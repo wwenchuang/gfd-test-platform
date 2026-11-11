@@ -57,6 +57,8 @@ def _params(args, expected, optional=()):
 
 
 def register_routes(route_get,route_post):
+    from task_server.platform_mcp_http import register_routes as register_mcp_routes
+    register_mcp_routes(route_get, route_post)
     from task_server.requirement_collection_http import register_collection_routes
     register_collection_routes(route_get, route_post, _actor, _serve)
     from task_server.services import practice_result_view as practice
