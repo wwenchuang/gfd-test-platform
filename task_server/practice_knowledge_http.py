@@ -4,12 +4,13 @@ from task_server.services.business_line_service import PRIMARY_APP_PACKAGE, conf
 from task_server.services.ui_execution_contract import AccessDenied, require_ui_actor
 
 BASE = '/api/platform/requirement-design/knowledge'
+PERFORMANCE = '/api/platform/requirement-design/practice-results/performance'
 METHODS = ('keyword', 'vector')
 METRICS = ('recall_at_5', 'citation_support', 'unknown_refusal', 'access_refusal', 'zero_leak')
 
 
 def is_read_route(method, path):
-    return (method in ('GET', 'HEAD') and path in (BASE, BASE+'/evaluation') or
+    return (method in ('GET', 'HEAD') and path in (BASE, BASE+'/evaluation', PERFORMANCE, PERFORMANCE+'-evidence') or
             method == 'POST' and path == BASE+'/search')
 
 
@@ -67,6 +68,7 @@ def _report(allowed_apps):
 
 def register_routes(route_get, route_post):
     from task_server.requirement_design_http import _params, _serve
+    from task_server.services import practice_performance_view
 
     @route_get(BASE)
     def available(handler, qs):
@@ -95,3 +97,17 @@ def register_routes(route_get, route_post):
             _params(qs, ())
             return {'report': _report([app['id'] for app in apps])}
         _serve(handler, read, authorize=_apps)
+
+    @route_get(PERFORMANCE)
+    def performance(handler, qs):
+        def read(apps):
+            _params(qs, ())
+            return {'report': practice_performance_view.published([app['id'] for app in apps])}
+        _serve(handler, read, authorize=_apps)
+
+    @route_get(PERFORMANCE+'-evidence')
+    def performance_evidence(handler, qs):
+        def read(apps):
+            _params(qs, ('id',))
+            return practice_performance_view.evidence([app['id'] for app in apps], qs['id'])
+        _serve(handler, read, authorize=_apps, download=True)

@@ -2,6 +2,8 @@
 
 // A closed, versioned list: no user-provided target, route, query or method.
 const staticPaths = new Set([
+  '/js/ui-practice-results.9fbdac933ddbc27e.js',
+  '/js/ui-simple-entry.919ad092500b0901.js',
   '/js/ui-practice-knowledge.c623d72768bc3808.js',
   '/js/ui-practice-results.1e7171f9965b5742.js',
   '/js/ui-practice-results.24dfe47df69d40c1.js',

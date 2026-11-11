@@ -47,6 +47,50 @@ window.UiPracticeResults = (() => {
       }
     }
   }
+  function performanceReport(body,report,download) {
+    const environments={isolated:'隔离环境',qa:'QA 环境',local:'本地环境'};
+    const sources={generator:'负载机',server:'服务端',database:'数据库'};
+    const thresholds={p95_ms:'P95 ≤',p99_ms:'P99 ≤',error_pct:'错误率 ≤',
+      business_success_pct:'业务成功率 ≥',http_success_pct:'HTTP 成功率 ≥',tps_min:'吞吐量 ≥'};
+    function rate(count,total) {
+      return total ? Number((count*100/total).toFixed(2))+'%' : '无样本';
+    }
+    add(body,'h3',report.scenario);
+    add(body,'small',environments[report.environment]+' · '+formatTime(report.created_at));
+    add(body,'p',report.conditions);
+    const limits=Object.entries(report.thresholds).map(([key,value])=>
+      thresholds[key]+' '+value+(key.endsWith('_ms')?' ms':key.endsWith('_pct')?'%':' 次/秒'));
+    add(body,'p','业务验收阈值 · '+(limits.join('，')||'未设置'));
+    add(body,'h4','稳态 JTL 结果');
+    if(!report.stages.length) add(body,'p','尚无已发布的稳态样本。');
+    for(const row of report.stages) {
+      const group=add(body,'section');
+      add(group,'strong',(row.phase==='retest'?'复测':'初测')+' · '+row.threads+' 并发');
+      add(group,'p','升压 '+row.ramp_s+' 秒 · 预热 '+row.warmup_s+' 秒 · 稳态 '+row.steady_s+' 秒 · 实际耗时 '+row.elapsed_s+' 秒');
+      add(group,'p',row.samples+' 个样本 · 吞吐量 '+row.tps+' 次/秒 · P50 / P95 / P99 '+
+        (row.samples ? [row.p50_ms,row.p95_ms,row.p99_ms].join(' / ')+' ms' : '无样本'));
+      add(group,'p','HTTP 成功 '+row.http_successes+'/'+row.samples+'（'+rate(row.http_successes,row.samples)+'） · 业务断言成功 '+
+        row.business_successes+'/'+row.samples+'（'+rate(row.business_successes,row.samples)+'） · 错误率 '+rate(row.errors,row.samples));
+      if(row.error_counts) add(group,'small','传输错误 '+row.error_counts.transport+' · HTTP 错误 '+row.error_counts.http+' · 业务断言失败 '+row.error_counts.business);
+      const metrics=detail(group,'资源采样 · '+row.monitor.length+' 项');
+      if(!row.monitor.length) add(metrics,'p','该档未记录资源采样。');
+      for(const item of row.monitor) {
+        add(metrics,'p',sources[item.source]+' · '+item.metric+'（'+item.unit+'） · '+item.samples+
+          ' 次采样 · 最低 '+item.min+' · 均值 '+item.mean+' · 最高 '+item.max);
+      }
+      add(metrics,'small','JTL SHA-256 · '+row.jtl_sha256);
+    }
+    add(body,'h4','资源观测');
+    for(const [key,label] of Object.entries(sources)) add(body,'p',label+' · '+report.resources[key]);
+    add(body,'h4','适用范围与复测');
+    for(const note of report.limitations) add(body,'p',note);
+    add(body,'p','结束原因 · '+report.stop_reason);
+    add(body,'p','复测 · '+report.retest);
+    if(report.evidence) {
+      const button=add(body,'button','下载本次原始证据 ZIP'); button.type='button';
+      button.onclick=()=>download(button,report.evidence.sha256,report.evidence.bytes);
+    }
+  }
   function replay(body,report) {
     add(body,'p','完整回放 '+report.fully_replayed+' / '+report.total+' 条 · 待人工审核 '+report.manual_pending+' 条 · 已生成脚本 '+report.generated+' 条');
     if(Number.isInteger(report.replayed_assertions)) add(body,'p','复用历史响应核对 '+report.replayed_assertions+' 个断言，反向验证 '+report.negative_controls+' 个。');
@@ -634,17 +678,17 @@ window.UiPracticeResults = (() => {
       if (disposeKnowledge) disposeKnowledge();
       for(const panel of panels) panel.remove();
     }
-    async function request(path, binary) {
+    async function request(path, binaryType) {
       const controller=new AbortController(); active.add(controller);
       const timeout=setTimeout(()=>controller.abort(),20000);
       try {
         const res=await nativeFetch(base+path,{headers:authHeaders(),signal:controller.signal,cache:'no-store',redirect:'error'});
         if(!res.ok) {const err=Error('request'); err.status=res.status; throw err;}
-        if(binary) {
-          if(res.headers.get('Content-Type')?.split(';')[0]!=='image/png') throw Error('format');
-          const image=await res.blob();
-          if(image.size>8*1024*1024||!image.size) throw Error('size');
-          return image;
+        if(binaryType) {
+          if(res.headers.get('Content-Type')?.split(';')[0]!==binaryType) throw Error('format');
+          const blob=await res.blob();
+          if(blob.size>8*1024*1024||!blob.size) throw Error('size');
+          return blob;
         }
         const data=await res.json();
         if(!data.ok||!data.report) throw Error('format');
@@ -664,14 +708,19 @@ window.UiPracticeResults = (() => {
       const notice=add(panel,'p');notice.setAttribute('role','status');
       const body=add(panel,'div');let revision=0;
       function clear() {revision++;body.replaceChildren();}
-      async function download(button,id) {
+      async function download(button,id,bytes) {
         if(!permitted()||!/^[0-9a-f]{64}$/.test(id)) return;
         const version=revision;button.disabled=true;
         try {
-          const blob=await request((kind==='mobile'?'mobile-frame':'screenshot')+'?id='+id,true);
+          const zip=kind==='performance';
+          const endpoint=zip?'performance-evidence':kind==='mobile'?'mobile-frame':'screenshot';
+          const blob=await request(endpoint+'?id='+id,zip?'application/zip':'image/png');
+          if(zip && blob.size!==bytes) throw Error('size');
           if(!permitted()||revision!==version||!panel.open) return;
           const url=URL.createObjectURL(blob),anchor=document.createElement('a');
-          anchor.href=url; anchor.download=(kind==='mobile'?'手机回归-':'视觉对照-')+id.slice(0,12)+'.png';anchor.click();
+          anchor.href=url;
+          anchor.download=zip?'jmeter-evidence-'+id.slice(0,12)+'.zip':(kind==='mobile'?'手机回归-':'视觉对照-')+id.slice(0,12)+'.png';
+          anchor.click();
           setTimeout(()=>URL.revokeObjectURL(url),0);
         } catch(error) {
           if(permitted()&&revision===version) {clear();notice.textContent=message(error);}
@@ -683,7 +732,8 @@ window.UiPracticeResults = (() => {
         try {
           const report=await request(kind,false);
           if(!permitted()||version!==revision||!panel.open) return;
-          if(kind==='mobile') mobile(body,report,download);
+          if(kind==='performance') performanceReport(body,report,download);
+          else if(kind==='mobile') mobile(body,report,download);
           else if(kind==='replay') replay(body,report); else visual(body,report,download);
           notice.textContent='';
         } catch(error) {
@@ -700,6 +750,9 @@ window.UiPracticeResults = (() => {
     const apps=currentAccessProfile?.scope?.ui_apps;
     if(hasPermission('ui.view') && (currentAccessProfile?.is_superuser===true || apps==='*' ||
        (Array.isArray(apps) && apps.includes('com.kfb.model')))) panelFor('mobile','手机回归实测');
+    if(hasPermission('ui.view') && (apps==='*' || (Array.isArray(apps) && apps.includes('com.kfb.model')))) {
+      panelFor('performance','接口性能实测');
+    }
     if(hasPermission('platform.configure') && hasPermission('api.view') &&
        (currentAccessProfile?.is_superuser===true || currentAccessProfile?.scope?.ui_apps==='*')) {
       panelFor('replay','接口回放证据');panelFor('visual','视觉巡检对照');
