@@ -3,6 +3,9 @@ import re
 from .ui_video_coverage_resolution import has_return_gesture_evidence
 
 
+MAX_REPAIR_CALLS = 9
+
+
 def needs_reconciliation(events,frames):
     gesture=any(re.search(r'手势|侧滑|边缘.*返回',e['target']+' '+e['observation']) for e in events)
     return gesture or (len(frames)>60 and any('取消' in e['target'] for e in events) and any(
@@ -544,7 +547,7 @@ def _repair_coverage_impl(original,checked,frames,duration,root,cancelled,secret
     for frame in window:
         if not groups or positions[frame['frame_id']]!=positions[groups[-1][-1]['frame_id']]+1:groups.append([])
         groups[-1].append(frame)
-    if len(groups)>8 or len(window)>160 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
+    if len(groups)>MAX_REPAIR_CALLS or len(window)>160 or any(len(group)>40 for group in groups):raise ValueError('video_required_action_missing')
     _validate_repair_group_ownership(original+checked['events'],groups)
     result=copy.deepcopy(checked);resolutions=[];replacements=[];redundant_claims=[];redundant_tap_claims=[];frame_role_audit=[]
     all_ids={f['frame_id'] for f in window}
@@ -553,7 +556,7 @@ def _repair_coverage_impl(original,checked,frames,duration,root,cancelled,secret
     boundary={r for e in preserved if e['action'] in {'aiTap','aiInput','aiScroll','navigateBack','dismissKeyboard'} for r in e['frame_refs']}
     all_ids={f['frame_id'] for f in window}
     return_retry_only=len(groups)>=5 or bool(_overlap_retry and _overlap_retry.get('return_retry_only'))
-    calls_remaining=(len(groups)+1 if len(groups)>5 else 6) if return_retry_only else 4
+    calls_remaining=min(MAX_REPAIR_CALLS, max(6, len(groups)+1)) if return_retry_only else 4
     if _overlap_retry is not None:
         if len(groups)!=1:raise ValueError('video_required_action_missing')
         calls_remaining=_overlap_retry['remaining']
@@ -569,7 +572,7 @@ def _repair_coverage_impl(original,checked,frames,duration,root,cancelled,secret
         local_original=[original[i] for i in indexes['first_pass']]
         local_checked={**checked,'events':[checked['events'][i] for i in indexes['independent_review']]}
         # Reserve one call for each later gap; extra attempts share the same
-        # bounded ceiling; five to eight gaps share one return-specific retry.
+        # bounded ceiling. Nine groups use one call each without a spare retry.
         attempt_limit=min(2,calls_remaining-(len(groups)-group_index-1))
         if _overlap_retry is not None and trace.get('evidence'):trace['started']=True
         repaired=_repair_window(local_original,local_checked,group,duration,root,cancelled,secrets,ids,boundary&ids,context_frames=frames,attempt_limit=attempt_limit,motion_review_refs=motion_refs & ids,retry_return_gesture_only=return_retry_only,preserved_interactions=preserved,adjacent_boundary_refs=shared_tap_boundaries&ids)
