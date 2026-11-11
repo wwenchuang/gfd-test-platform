@@ -83,3 +83,12 @@ def test_whole_observation_does_not_hardcode_nameplate_return_path():
     prompt=render_ai_skill_prompt('ui_video_observe',{'review_mode':'full_flow_after_recovery'},version='v1')
     assert '不套用特定应用路径' in prompt
     assert '预览→3D摆放→文字字体编辑→详情→列表是返回路径' not in prompt
+
+
+def test_dialog_button_label_is_stable_between_probe_and_window():
+    from task_server.services.ai_skill_service import render_ai_skill_prompt
+
+    prompt = render_ai_skill_prompt('ui_video_observe', {'frames': []}, version='v1')
+    assert 'target 填按钮上实际可读的完整文字' in prompt
+    assert '弹窗标题、所属页面及点击后变化放在 observation' in prompt
+    assert '同名按钮' in prompt and 'uncertainties' in prompt
