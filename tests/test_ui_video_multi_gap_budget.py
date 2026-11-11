@@ -11,7 +11,7 @@ def fixture(count):
     return frames,events
 
 
-@pytest.mark.parametrize('count,limit',[(4,4),(5,6),(6,7),(8,9)])
+@pytest.mark.parametrize('count,limit',[(4,4),(5,6),(6,7),(8,9),(9,9)])
 def test_groups_are_globally_bounded_and_fully_preserved(monkeypatch,tmp_path,count,limit):
     frames,events=fixture(count);calls=[];checked={'events':copy.deepcopy(events),'uncertainties':[],'multiple_scenarios':False}
     def fake(original,local,group,*args,**kw):
@@ -27,8 +27,8 @@ def test_groups_are_globally_bounded_and_fully_preserved(monkeypatch,tmp_path,co
     assert result['events']==events and checked['events']==events
 
 
-def test_nine_groups_rejected_before_call(monkeypatch,tmp_path):
-    frames,events=fixture(9)
+def test_ten_groups_rejected_before_call(monkeypatch,tmp_path):
+    frames,events=fixture(10)
     monkeypatch.setattr(reconcile,'_repair_window',lambda *a,**k:pytest.fail('unexpected model call'))
     with pytest.raises(ValueError,match='video_required_action_missing'):
         reconcile._repair_coverage(events,{'events':events,'uncertainties':[],'multiple_scenarios':False},frames,11000,tmp_path,lambda:False,[],{e['frame_refs'][0] for e in events})

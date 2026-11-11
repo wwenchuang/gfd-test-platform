@@ -42,8 +42,9 @@ def _state_overlap_failure(error,document):
                type(f.get('timestamp_ms')) is not int or not 0<=f['timestamp_ms']<=duration for f in frames):return {}
         ids=[f['frame_id'] for f in frames];times={f['frame_id']:f['timestamp_ms'] for f in frames}
         if len(set(ids))!=len(ids) or [f['timestamp_ms'] for f in frames]!=sorted(f['timestamp_ms'] for f in frames):return {}
+        from task_server.services.ui_video_reconcile import MAX_REPAIR_CALLS
         group=evidence['group_frame_ids'];index=evidence['group_index'];count=evidence['group_count']
-        if (type(index) is not int or type(count) is not int or not 1<=index<=count<=8 or
+        if (type(index) is not int or type(count) is not int or not 1<=index<=count<=MAX_REPAIR_CALLS or
             type(group) is not list or not 1<=len(group)<=40 or
             any(type(r) is not str or r not in times for r in group) or len(set(group))!=len(group)):return {}
         start=ids.index(group[0])

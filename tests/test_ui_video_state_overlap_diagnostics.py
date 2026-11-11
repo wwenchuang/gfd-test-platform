@@ -76,7 +76,7 @@ def test_invalid_or_forged_state_overlap_never_persisted(mutation):
     if mutation=='too_many_frames':e['group_frame_ids']=[f'frame-{i:03d}' for i in range(1,42)]
     if mutation=='bad_event_index':e['preserved']['event_index']=120
     if mutation=='bool_index':e['group_index']=True
-    if mutation=='bad_group_count':e['group_count']=9
+    if mutation=='bad_group_count':e['group_count']=10
     if mutation=='group_not_contiguous':e['group_frame_ids']=['frame-004','frame-006']
     if mutation=='wrong_code':code='video_model_invalid'
     if mutation=='missing_duration':doc['media'].pop('duration_ms')
