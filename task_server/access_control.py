@@ -6,7 +6,7 @@ from urllib.parse import unquote
 
 def _mcp_route(method, path):
     return ((method == 'POST' and path == '/api/platform/mcp/call') or
-            (method in {'GET','HEAD'} and path in {'/api/platform/mcp/runs','/api/platform/mcp/acceptance'}))
+            (method in {'GET','HEAD'} and path in {'/api/platform/mcp/runs','/api/platform/mcp/acceptance','/api/platform/mcp/junit','/api/platform/mcp/recovery-drill'}))
 
 
 class AccessDenied(PermissionError):

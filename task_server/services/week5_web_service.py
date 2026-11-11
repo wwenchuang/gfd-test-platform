@@ -3,6 +3,7 @@ import hashlib
 import fcntl
 import json
 import os
+import re
 import signal
 import shutil
 import stat
@@ -99,34 +100,62 @@ def _scratch_within_limit(root):
         return False
 
 
-def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_catalog_count'):
-    if scenario not in SCENARIOS:
-        raise ValueError('invalid_scenario')
-    payload = json.dumps({'token':token, 'userId':owner, 'scenario':scenario}, separators=(',', ':')).encode()
+class Cancelled(Exception):
+    pass
+
+
+class ProcessControl:
+    """Per-call observations from the actual child, including negative POSIX signal codes."""
+
+    def __init__(self, cancel_requested):
+        self.cancel_requested = cancel_requested
+        self.stop_reason = None
+        self.worker_exit_code = None
+        self.node_version = None
+
+
+def _communicate(argv, env, payload, timeout, *, scratch=None, control=None):
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                env=env, start_new_session=True)
     first = True
-    deadline = time.monotonic() + _TIMEOUT_SECONDS
+    deadline = time.monotonic() + timeout
     try:
         while True:
+            if control is not None and control.cancel_requested():
+                control.stop_reason = 'cancelled'
+                raise Cancelled()
             if scratch is not None and not _scratch_within_limit(scratch):
+                if control is not None:
+                    control.stop_reason = 'resource_limit'
                 raise ResourceLimit('memory_storage_busy')
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError('browser_timeout')
+                if control is not None:
+                    control.stop_reason = 'timeout'
+                raise TimeoutError('worker_timeout')
             try:
                 stdout, _ = process.communicate(payload if first else None, timeout=min(.2, remaining))
-                break
+                return process.returncode, stdout
             except subprocess.TimeoutExpired:
                 first = False
-    except (TimeoutError, ResourceLimit):
+    except BaseException:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         process.communicate(timeout=3)
         raise
-    if process.returncode != 0 or len(stdout) > 4096:
+    finally:
+        if control is not None:
+            control.worker_exit_code = process.returncode
+
+
+def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_catalog_count', control=None):
+    if scenario not in SCENARIOS:
+        raise ValueError('invalid_scenario')
+    payload = json.dumps({'token':token, 'userId':owner, 'scenario':scenario}, separators=(',', ':')).encode()
+    exit_code, stdout = _communicate(argv, env, payload, _TIMEOUT_SECONDS, scratch=scratch, control=control)
+    if exit_code != 0 or len(stdout) > 4096:
         raise ValueError('browser_unavailable')
     result = json.loads(stdout)
     if (not isinstance(result, dict) or result.get('scenario') != scenario or result.get('version') != 1
@@ -135,6 +164,8 @@ def _bounded_process(argv, env, token, owner, *, scratch=None, scenario='ui_cata
         raise ValueError('invalid_browser_result')
     if result['status'] == 'passed' and (result['error_kind'] is not None or type(result.get('total')) is not int or result['total'] < 0):
         raise ValueError('invalid_browser_result')
+    if control is not None and isinstance(result.get('node_version'), str) and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', result['node_version']):
+        control.node_version = result['node_version']
     asset = result.get('asset')
     phase = result.get('phase')
     if phase is not None and phase not in ('initial','filter','empty','drill','workflow'):
@@ -203,7 +234,7 @@ def _load_private(path, limit):
         os.close(fd)
 
 
-def _execute(owner, token, scenario='ui_catalog_count'):
+def _execute(owner, token, scenario='ui_catalog_count', *, control=None):
     scratch = Path(_memory_temp())
     try:
         node = week1_smoke._configured_path('TASK_WEEK1_NODE', executable=True)
@@ -217,7 +248,7 @@ def _execute(owner, token, scenario='ui_catalog_count'):
             if not os.path.isabs(fontconfig) or not Path(fontconfig).is_file() or not os.access(fontconfig, os.R_OK):
                 raise ValueError('dependency_unavailable')
             env['FONTCONFIG_FILE'] = fontconfig
-        result = _bounded_process(_core_limited_args([node, str(_WORKER)]), env, token, owner, scratch=scratch, scenario=scenario)
+        result = _bounded_process(_core_limited_args([node, str(_WORKER)]), env, token, owner, scratch=scratch, scenario=scenario, control=control)
         if result['status'] == 'blocked':
             return result, b'', b''
         image = _load_private(scratch / 'screenshot.png', 8 * 1024 * 1024)
@@ -304,7 +335,7 @@ def _save_files(root, run_id, image, trace):
         raise
 
 
-def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, root=None, lease_path=None):
+def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, root=None, lease_path=None, control=None):
     if scenario not in SCENARIOS:
         raise ValueError('invalid_scenario')
     profile = _profile(owner, username, token)
@@ -321,7 +352,8 @@ def run(owner, username, token, *, scenario='ui_catalog_count', db_path=None, ro
         if not _check_quota(db_path, owner, 38 * 1024 * 1024, root):
             return dict(blocked, error_kind='evidence', detail='quota_exceeded')
         try:
-            result, image, trace = _execute(owner, token, scenario)
+            options = {'control':control} if control is not None else {}
+            result, image, trace = _execute(owner, token, scenario, **options)
         except TimeoutError:
             return dict(blocked, error_kind='environment', detail='browser_timeout')
         except Exception:

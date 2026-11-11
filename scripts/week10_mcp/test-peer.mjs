@@ -14,7 +14,7 @@ globalThis.fetch = async (url,options) => {
     result = {suites:[{suite_id:'published-catalog',environment:'platform',title:'已发布目录'}]};
   } else if (name === 'run_suite') {
     assert.equal(args.environment,'platform');
-    assert.equal(args.suite_id,'published-catalog');
+    assert.ok(['published-catalog','feedback-categories'].includes(args.suite_id));
     assert.deepEqual(Object.keys(args).sort(),['environment','request_id','suite_id']);
     if (!runs.has(args.request_id)) runs.set(args.request_id,{...args,run_id:id,status:'running'});
     result = runs.get(args.request_id);

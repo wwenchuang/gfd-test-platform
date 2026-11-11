@@ -69,6 +69,14 @@ cp -R "${SRC_DIR}/ai_skills" "${pkg_dir}/"
 if [ -d "${SRC_DIR}/task_server" ]; then
   cp -R "${SRC_DIR}/task_server" "${pkg_dir}/"
 fi
+if [ -f "${SRC_DIR}/scripts/week11_runner/recovery_drill.py" ]; then
+  install -d -m 0755 "${pkg_dir}/scripts/week11_runner"
+  install -m 0644 "${SRC_DIR}/scripts/week11_runner/recovery_drill.py" "${pkg_dir}/scripts/week11_runner/recovery_drill.py"
+fi
+if [ -f "${SRC_DIR}/schemas/run-result.json" ]; then
+  install -d -m 0755 "${pkg_dir}/schemas"
+  install -m 0644 "${SRC_DIR}/schemas/run-result.json" "${pkg_dir}/schemas/run-result.json"
+fi
 if [ -d "${SRC_DIR}/scripts/week10_mcp" ]; then
   mcp_src="${SRC_DIR}/scripts/week10_mcp"
   mcp_dest="${pkg_dir}/scripts/week10_mcp"

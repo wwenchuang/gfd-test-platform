@@ -88,7 +88,9 @@ window.UiPracticeResults = (() => {
   function attachTools(page, permitted) {
     const panel=detail(page,'工具执行');
     panel.className='ui-case-source-picker ui-practice-panel ui-requirement-design';
-    const suiteLabel=add(panel,'p','检查本平台已发布用例在网页中的显示，并保存执行截图和 trace。');
+    const suiteLabel=add(panel,'label','执行套件');
+    const picker=add(suiteLabel,'select'); picker.setAttribute('aria-label','执行套件');
+    const suiteNote=add(panel,'p');
     const actions=add(panel,'div'); actions.className='ui-design-actions';
     function button(parent,label,action) {
       const element=add(parent,'button',label);
@@ -97,6 +99,10 @@ window.UiPracticeResults = (() => {
     }
     const start=button(actions,'开始检查',()=>launch());
     const refresh=button(actions,'刷新记录',()=>load());
+    const discard=button(actions,'清除本地重试记录',()=>{
+      if(!permitted()||!pending||suite) return;
+      pending=null;sessionStorage.removeItem(key);load();
+    });
     const notice=add(panel,'p'); notice.setAttribute('role','status');
     const result=add(panel,'section');
     const history=detail(panel,'我的运行记录'), rows=add(history,'div');
@@ -104,10 +110,30 @@ window.UiPracticeResults = (() => {
     const negative=button(trace,'验证环境限制',()=>checkEnvironment());
     const checkNote=add(trace,'p');checkNote.setAttribute('role','status');
     const receipt=detail(panel,'MCP 客户端验收'), report=add(receipt,'div');
-    const status={queued:'排队中',running:'执行中',passed:'通过',failed:'失败',blocked:'受阻',timed_out:'超时',interrupted:'中断'};
+    const drill=detail(panel,'隔离故障恢复演练'), drillReport=add(drill,'div');
+    let drillRead=null;
+    const status={queued:'排队中',running:'执行中',passed:'通过',failed:'失败',blocked:'受阻',timed_out:'超时',interrupted:'中断',crashed:'执行器崩溃',cancelling:'正在取消',cancelled:'已取消'};
     const key='practice-mcp-request:'+currentAccessProfile.user_id;
     const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-    let pending=sessionStorage.getItem(key),selected='',suite=null,controller=null,timer=null,imageUrl=null;
+    function readPending() {
+      const saved=sessionStorage.getItem(key);
+      // Older clients only stored a request ID and always ran published-catalog.
+      if(uuid.test(saved)) return {request_id:saved,suite_id:'published-catalog',environment:'platform'};
+      try {
+        const value=JSON.parse(saved);
+        if(uuid.test(value?.request_id)&&typeof value.suite_id==='string'&&typeof value.environment==='string') return value;
+      } catch {}
+      return null;
+    }
+    let pending=readPending(),selected='',selectedSuite='',suites=[],suite=null,controller=null,timer=null,imageUrl=null;
+    const activeStatus=new Set(['queued','running','cancelling']);
+    const runnerLabel=runner=>({python:'Python',node:'Node.js'}[runner]||runner||'未记录');
+    function suiteChanged() {
+      suite=suites.find(item=>item.suite_id===picker.value);
+      suiteNote.textContent=suite?'执行器 '+runnerLabel(suite.runner)+' · 环境 '+suite.environment+(suite.drill?' · 故意触发失败以检查证据。':''):
+        pending?'原请求的套件当前不可用。':'当前账号没有可用套件。';
+    }
+    picker.onchange=()=>{suiteChanged();controls(false);};
     function clearImage() {
       if(imageUrl) URL.revokeObjectURL(imageUrl);
       imageUrl=null;
@@ -117,13 +143,16 @@ window.UiPracticeResults = (() => {
     }
     function clearPrivate() {
       clearImage();
-      for(const box of [result,rows,calls,report,checkNote]) box.replaceChildren();
-      suite=null; selected='';
+      for(const box of [result,rows,calls,report,checkNote,drillReport]) box.replaceChildren();
+      suites=[];suite=null;selected='';selectedSuite='';picker.replaceChildren();suiteNote.textContent='';
     }
     function controls(busy) {
-      start.textContent=pending?'重试同一请求':selected?'再运行一次':'开始检查';
+      discard.hidden=busy||!pending||!!suite||!suites.length;
+      picker.disabled=busy||!!pending||!suites.length;
+      start.textContent=pending?'重试同一请求':selectedSuite&&selectedSuite===suite?.suite_id?'再运行一次':'开始检查';
       start.disabled=busy||!suite; negative.disabled=busy||!suite; refresh.disabled=busy;
       rows.querySelectorAll('button').forEach(b=>{b.disabled=busy;});
+      const stop=result.querySelector('[data-cancel-run]');if(stop) stop.disabled=busy;
     }
     function begin() {
       cancel(); controller=new AbortController(); controls(true);
@@ -159,7 +188,7 @@ window.UiPracticeResults = (() => {
       if([401,403].includes(error.status)) {
         clearPrivate();notice.textContent='登录状态或权限已变化，请刷新页面。';
       } else if(error.code==='check_busy') {
-        notice.textContent='已有目录检查正在执行，请稍后重试同一请求。';
+        notice.textContent='已有检查正在执行，请稍后重试同一请求。';
       } else if(error.code==='execution_disabled') {
         notice.textContent='服务器尚未启用工具执行。可刷新记录查看已有结果。';
       } else {
@@ -186,23 +215,55 @@ window.UiPracticeResults = (() => {
       add(report,'small',formatTime(data.checked_at*1000)+' · 运行 '+data.run_id);
       for(const row of data.checks) add(report,'p',row.name+' · '+(status[row.status]||'未知')+' · '+row.detail);
     }
+    async function readDrill(signal) {
+      if(!signal||!current(signal)||!drill.open||drillRead?.signal===signal) return;
+      const request={signal};drillRead=request;
+      drillReport.textContent='正在读取恢复演练记录…';
+      try {
+        const {report:data}=await fetchData('/api/platform/mcp/recovery-drill',signal);
+        if(!current(signal)||!drill.open||drillRead!==request) return;
+        drillReport.replaceChildren();
+        if(!data) {add(drillReport,'p','暂无当前账号可查看的恢复演练记录。');return;}
+        add(drillReport,'p','隔离环境 · '+formatTime(data.checked_at*1000));
+        const names={worker_crash:'执行器崩溃',cancel:'运行取消',timeout:'执行超时',service_restart:'服务重启'};
+        for(const row of data.checks) {
+          const entry=detail(drillReport,(names[row.kind]||row.kind)+' · '+(row.verified?'恢复已核实':'恢复未核实'));
+          add(entry,'p',(status[row.before]||row.before)+' → '+(status[row.status]||row.status));
+          add(entry,'p','原因 '+row.error_kind+' · 进程退出码 '+(row.worker_exit_code??'未记录')+' · 耗时 '+row.duration_ms+' ms');
+          add(entry,'small','隔离运行编号 '+row.run_id);
+        }
+      } catch(error) {
+        if(!current(signal)||!drill.open||drillRead!==request) return;
+        if([401,403].includes(error.status)) {handle(error,signal);cancel();controls(false);}
+        else drillReport.textContent='恢复演练记录暂时无法读取，请刷新记录。';
+      }
+    }
+    drill.ontoggle=()=>{
+      if(drill.open) readDrill(controller?.signal);
+      else {drillRead=null;drillReport.replaceChildren();}
+    };
     function showRows(items) {
       rows.replaceChildren();
       if(!items.length) {add(rows,'p','暂无运行记录。');return;}
       for(const row of items) {
         if(!uuid.test(row.run_id)) continue;
-        button(rows,formatTime(row.created_at*1000)+' · '+(status[row.status]||'未知')+' · '+row.run_id,()=>load(row.run_id));
+        const title=suites.find(item=>item.suite_id===row.suite_id)?.title||row.suite_id;
+        button(rows,formatTime(row.created_at*1000)+' · '+title+' · '+(status[row.status]||'未知')+' · '+row.run_id,()=>load(row.run_id));
       }
     }
     async function openArtifact(btn,run,item,signal) {
-      const expected='/api/ui-executions/web-check/artifact?id='+run.runner_id+'&item='+item;
-      if(!current(signal)||run.evidence?.[item]!==expected||!/^[a-f0-9]{32}$/.test(run.runner_id)) return;
+      const junit=item==='junit', image=item==='screenshot';
+      const expected=junit?'/api/platform/mcp/junit?run_id='+run.run_id:
+        '/api/ui-executions/web-check/artifact?id='+run.runner_id+'&item='+item;
+      if(!current(signal)) return;
+      if(junit ? !uuid.test(run.run_id)||run.junit_url!==expected :
+        !/^[a-f0-9]{32}$/.test(run.runner_id)||run.evidence?.[item]!==expected) return;
       btn.disabled=true;
       try {
         const response=await nativeFetch(expected,{headers:authHeaders(),cache:'no-store',redirect:'error',
           signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
         if(!response.ok) throw Object.assign(Error('artifact'),{status:response.status});
-        const image=item==='screenshot',type=image?'image/png':'application/zip',limit=(image?8:30)*1024*1024;
+        const type=image?'image/png':junit?'application/xml':'application/zip',limit=(image?8:junit?2:30)*1024*1024;
         if(response.headers.get('content-type')?.split(';')[0]!==type || Number(response.headers.get('content-length'))>limit) throw Error('format');
         const blob=await response.blob(); if(!blob.size||blob.size>limit) throw Error('size');
         if(!current(signal)||!btn.isConnected) return;
@@ -211,38 +272,82 @@ window.UiPracticeResults = (() => {
           clearImage(); imageUrl=url; result.querySelector('img')?.remove();
           const pic=add(result,'img'); pic.src=url;pic.alt='本次用例库检查截图';
         } else {
-          const anchor=add(result,'a'); anchor.href=url; anchor.download='工具执行-'+run.run_id+'-trace.zip';
+          const anchor=add(result,'a'); anchor.href=url; anchor.download='工具执行-'+run.run_id+(junit?'-junit.xml':'-trace.zip');
           anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-          notice.textContent='已发起 trace 下载，请查看浏览器下载记录。';
+          notice.textContent='已发起 '+(junit?'JUnit XML':'trace')+' 下载，请查看浏览器下载记录。';
         }
       } catch(error) {
         if([401,403].includes(error.status)) {handle(error,signal);controls(false);}
         else if(current(signal)) notice.textContent='证据读取失败，请刷新记录后重试。';
       } finally {btn.disabled=false;}
     }
+    function showCases(items) {
+      if(!items?.length) return;
+      const section=add(result,'section');add(section,'h4','用例结果');
+      for(const row of items) {
+        add(section,'p',row.case_id+' · 第 '+row.attempt+' 次 · '+(status[row.status]||row.status));
+        add(section,'p','执行器 '+runnerLabel(row.runner)+' · 版本 '+(row.version||'未记录')+
+          ' · 耗时 '+(Number.isFinite(row.duration_ms)?row.duration_ms+' ms':'未记录'));
+        add(section,'p','用例退出码 '+(row.exit_code??'未记录')+' · 进程退出码 '+(row.worker_exit_code??'未记录'));
+        if(row.error_kind) add(section,'small','用例原因 · '+row.error_kind);
+        const e=row.evidence||{};
+        if(row.case_id==='ui_catalog_failure_drill'&&Number.isInteger(e.total)&&Number.isInteger(e.expected_total))
+          add(section,'p','接口返回 '+e.total+' 条 · 演练预期 '+e.expected_total+' 条');
+        if(row.case_id==='feedback_categories') {
+          const checks=['http_200','code_zero','data_list'].map(key=>e.checks?.[key]);
+          if(checks.every(value=>typeof value==='boolean')) add(section,'p','断言 '+checks.filter(Boolean).length+' / 3 通过');
+          if(Number.isInteger(e.http_status)) add(section,'p','HTTP '+e.http_status);
+          if(e.actual_code!=null||e.expected_code!=null) add(section,'p','业务码 '+(e.actual_code??'未记录')+' · 预期 '+(e.expected_code??'未记录'));
+          if(typeof e.data_is_list==='boolean') add(section,'p','响应数据为列表 · '+(e.data_is_list?'是':'否'));
+          if(e.request_id) add(section,'small','接口请求编号 '+e.request_id);
+        }
+      }
+    }
+    async function cancelRun(id) {
+      if(selected!==id||!permitted()) return;
+      const signal=begin();
+      notice.textContent='正在提交取消请求…';
+      try {
+        const run=await call('cancel_run',{run_id:id},signal);
+        if(!current(signal)) return;
+        if(run.run_id!==id) throw Error('run_id');
+        await load(id);
+      } catch(error) {
+        if(!current(signal)) return;
+        if([401,403].includes(error.status)) handle(error,signal);
+        else notice.textContent='尚未确认取消结果，请刷新记录查看当前状态。';
+      } finally {if(current(signal)) controls(false);}
+    }
     async function readRun(id,signal) {
       const run=await call('get_run',{run_id:id},signal);
       if(!current(signal)) return;
       if(run.run_id!==id) throw Error('run_id');
-      selected=id; clearImage();result.replaceChildren();
+      selected=id;selectedSuite=run.suite_id;clearImage();result.replaceChildren();
       add(result,'h3','当前运行 · '+(status[run.status]||'状态未知'));
+      const title=suites.find(item=>item.suite_id===run.suite_id)?.title||run.suite_id;
+      add(result,'p',title+' · '+run.environment);
       add(result,'small','运行编号 '+id);
       add(result,'small','请求编号 '+run.request_id);
       if(run.created_at) add(result,'p','提交 '+formatTime(run.created_at*1000)+(run.finished_at?' · 结束 '+formatTime(run.finished_at*1000):''));
-      if(Number.isInteger(run.total)) add(result,'p','接口返回 '+run.total+' 条已发布用例。');
+      if(run.suite_id==='published-catalog'&&Number.isInteger(run.total)) add(result,'p','接口返回 '+run.total+' 条已发布用例。');
       if(run.runner_id) add(result,'small','浏览器检查编号 '+run.runner_id);
       if(run.error_kind) {
         const reasons={authentication:'账户登录或权限已变化',environment:'浏览器或服务环境不可用',evidence:'执行证据未能保存',
-          business:'页面显示与预期不符',browser_timeout:'浏览器检查超时',worker_timeout:'执行超过时限',
+          business:'业务断言未通过',drill_assertion:'已捕获故障演练的目录数量差异',timeout:'执行超时',browser_timeout:'浏览器检查超时',worker_timeout:'执行超过时限',
           heavy_workload_busy:'平台正在执行其他任务',check_busy:'已有目录检查正在执行',worker_unavailable:'执行线程未启动',
-          service_restarted:'执行进程已停止',execution_disabled:'平台已暂停工具执行',invalid_runner_result:'执行器回执不完整'};
+          service_restarted:'执行进程已停止',execution_disabled:'平台已暂停工具执行',invalid_runner_result:'执行器回执不完整',cancelled:'发起人取消了本次执行',worker_crash:'执行进程异常退出'};
         add(result,'p','执行原因 · '+(reasons[run.error_kind]||run.error_kind));
       }
+      showCases(run.cases);
       const links=add(result,'div');links.className='ui-design-actions';
+      if(['queued','running'].includes(run.status)) button(links,'取消本次运行',()=>cancelRun(id)).dataset.cancelRun='';
+      if(run.junit_url) {
+        const btn=button(links,'下载 JUnit XML',()=>openArtifact(btn,run,'junit',signal));
+      }
       for(const [item,label] of [['screenshot','查看截图'],['trace','下载 trace']]) {
         if(run.evidence?.[item]) {const btn=button(links,label,()=>openArtifact(btn,run,item,signal));}
       }
-      if(['queued','running'].includes(run.status)) timer=setTimeout(()=>{if(current(signal)) load(id);},4000);
+      if(activeStatus.has(run.status)) timer=setTimeout(()=>{if(current(signal)) load(id);},4000);
     }
     async function load(id) {
       if(!panel.open||!permitted()) return;
@@ -256,15 +361,26 @@ window.UiPracticeResults = (() => {
             return null;
           })]);
         if(!current(signal)) return;
-        suite=catalog.suites.find(x=>x.suite_id==='published-catalog'&&x.environment==='platform');
-        suiteLabel.textContent=suite?suite.title+' · 在平台环境核对页面与接口的已发布用例数量。':'当前账号没有可用套件。';
+        const selection=pending?.suite_id||picker.value;
+        suites=catalog.suites;
+        picker.replaceChildren();
+        for(const item of suites) {
+          const option=add(picker,'option',item.title+' · '+runnerLabel(item.runner)+(item.drill?'（故障演练）':''));
+          option.value=item.suite_id;
+        }
+        if(pending||suites.some(item=>item.suite_id===selection)) picker.value=selection;
+        suiteChanged();
+        if(pending&&suite?.environment!==pending.environment) {suite=null;suiteNote.textContent='原请求的套件当前不可用。';}
         showRows(list.runs);
         if(acceptance) showReceipt(acceptance.report);
         else report.textContent='客户端验收记录暂时无法读取，请刷新记录。';
         const target=id||selected||list.runs[0]?.run_id;
         result.replaceChildren();
         if(target&&uuid.test(target)) await readRun(target,signal);
-        if(current(signal)) notice.textContent=pending?'上次提交尚待确认，可重试同一请求。':'';
+        if(current(signal)) {
+          notice.textContent=pending?(suite?'上次提交尚待确认，可重试同一请求。':'上次提交的套件当前不可用。清除本地重试记录后可选择其他套件。'):'';
+          if(drill.open) readDrill(signal);
+        }
       } catch(error) {if(current(signal)){clearPrivate(); handle(error,signal);}}
       finally {if(current(signal)) controls(false);}
     }
@@ -278,15 +394,21 @@ window.UiPracticeResults = (() => {
       if(start.disabled||!permitted()||!suite) return;
       const signal=begin();
       try {
-        if(!uuid.test(pending)) {pending=makeRequestId();sessionStorage.setItem(key,pending);}
+        if(!pending) {
+          pending={suite_id:suite.suite_id,environment:suite.environment,request_id:makeRequestId()};
+          sessionStorage.setItem(key,JSON.stringify(pending));
+        }
         notice.textContent='正在提交检查…';
-        const run=await call('run_suite',{suite_id:suite.suite_id,environment:suite.environment,request_id:pending},signal);
+        const run=await call('run_suite',pending,signal);
         if(!current(signal)) return;
-        if(!uuid.test(run.run_id)||run.request_id!==pending) throw Error('receipt');
+        if(!uuid.test(run.run_id)||run.request_id!==pending.request_id||run.suite_id!==pending.suite_id||run.environment!==pending.environment) throw Error('receipt');
         pending=null;sessionStorage.removeItem(key);
         await load(run.run_id);
       } catch(error) {
-        if(current(signal)&&error.status===404&&error.code==='run_not_found') {
+        if(current(signal)&&error.status===409&&error.code==='request_conflict') {
+          pending=null;sessionStorage.removeItem(key);
+          notice.textContent='请求编号已用于其他套件，请重新发起检查。';
+        } else if(current(signal)&&error.status===404&&error.code==='run_not_found') {
           pending=null;sessionStorage.removeItem(key);
           clearPrivate();await load();
           if(panel.open&&permitted()&&suite) notice.textContent='当前权限范围无法读取该请求。可重新发起检查。';

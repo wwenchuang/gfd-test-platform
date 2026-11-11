@@ -39,7 +39,12 @@ def test_real_sessions_dispatch_read_only_check_and_persist_evidence(identity_db
     outsider = auth.create_session_token('other')
     png = PNG
     trace = trace_bytes()
-    monkeypatch.setattr(week5_web_service,'_execute',lambda *args:(dict(WORKER,total=5),png,trace))
+    def browser(*args,control=None):
+        if control:
+            control.worker_exit_code=0
+            control.node_version='22.0.0'
+        return dict(WORKER,total=5),png,trace
+    monkeypatch.setattr(week5_web_service,'_execute',browser)
     server = app.ThreadingHTTPServer(('127.0.0.1',0),app.TaskHTTPHandler)
     thread = threading.Thread(target=server.serve_forever,daemon=True)
     thread.start()
@@ -64,6 +69,17 @@ def test_real_sessions_dispatch_read_only_check_and_persist_evidence(identity_db
         assert row['status']=='passed' and row['total']==5
         assert call(owner,'run_suite',args)[1]['result']==row
         assert request(server,'GET',base+'/runs',owner)[1]['runs']==[row]
+        import xml.etree.ElementTree as ET
+        status, content, headers = request(server,'GET',row['junit_url'],owner)
+        assert status == 200 and headers['Content-Type'].startswith('application/xml')
+        assert headers['Cache-Control'] == 'private, no-store'
+        suite = ET.fromstring(content)
+        case = suite.find('testcase')
+        assert suite.get('tests') == '1' and case.get('name') == row['cases'][0]['case_id']
+        props = {p.get('name'):p.get('value') for p in case.findall('properties/property')}
+        assert props['run_id'] == rid and props['attempt'] == '1'
+        assert request(server,'GET',row['junit_url'],outsider)[0] == 404
+        assert request(server,'GET',base+'/junit?run_id=nope',owner)[0] == 400
         assert request(server,'GET',base+'/runs',outsider)[1]['runs']==[]
         assert call(outsider,'get_run',{'run_id':rid})[0]==404
         for key,data in [('screenshot',png),('trace',trace)]:

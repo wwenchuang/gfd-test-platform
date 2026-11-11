@@ -29,11 +29,20 @@ test('SDK session discovers only closed tool schemas and rejects invalid fields 
   const begin = {suite_id:'published-catalog',environment:'platform',request_id:randomUUID()};
   for (const [name,args] of [
     ['run_suite',{...begin, environment:'production'}],
-    ['run_suite',{...begin, command:'example'}], ['list_suites',{unexpected:true}],
+    ['run_suite',{...begin, suite_id:'catalog-failure-drill'}], ['run_suite',{...begin, command:'example'}], ['list_suites',{unexpected:true}],
     ['run_suite',{...begin,request_id:'bad'}], ['get_run',{run_id:'bad'}],
   ]) {
     assert.equal((await client.callTool({name,arguments:args})).isError,true);
   }
+});
+
+test('SDK submits a feedback contract run with its original request ID', async t => {
+  const client=await session(t);
+  const args={suite_id:'feedback-categories',environment:'platform',request_id:randomUUID()};
+  const response=await client.callTool({name:'run_suite',arguments:args});
+  assert.ok(!response.isError);
+  assert.equal(response.structuredContent.suite_id,args.suite_id);
+  assert.equal(response.structuredContent.request_id,args.request_id);
 });
 
 test('SDK acceptance discovers, refuses, starts, replays, and reads terminal evidence', async t => {

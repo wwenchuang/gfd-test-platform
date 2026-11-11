@@ -184,6 +184,7 @@ async function main() {
     result.observed={auth:!!state.auth,availability:!!state.availability,catalog:!!state.catalog,static_count:state.staticCount,route_error:!!state.routeError};
     secret='';
   }
+  result.node_version = process.version;
   process.stdout.write(JSON.stringify(result));
 }
 main().catch(()=>{process.stdout.write(JSON.stringify({scenario:'ui_catalog_count',version:1,status:'blocked',error_kind:'environment'}));process.exitCode=1;});

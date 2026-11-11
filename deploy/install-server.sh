@@ -323,6 +323,14 @@ if [ -d "${SRC_DIR}/task_server" ]; then
 fi
 
 # Stdio runs independently with its own pinned npm dependencies.
+if [ -f "${SRC_DIR}/scripts/week11_runner/recovery_drill.py" ]; then
+  install -d -m 0755 "${APP_DIR}/scripts/week11_runner"
+  install -m 0644 "${SRC_DIR}/scripts/week11_runner/recovery_drill.py" "${APP_DIR}/scripts/week11_runner/recovery_drill.py"
+fi
+if [ -f "${SRC_DIR}/schemas/run-result.json" ]; then
+  install -d -m 0755 "${APP_DIR}/schemas"
+  install -m 0644 "${SRC_DIR}/schemas/run-result.json" "${APP_DIR}/schemas/run-result.json"
+fi
 if [ -d "${SRC_DIR}/scripts/week10_mcp" ]; then
   mcp_dir="${APP_DIR}/scripts/week10_mcp"
   install -d -m 0755 "${mcp_dir}"

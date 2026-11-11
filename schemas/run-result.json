@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Workbench terminal case result",
+  "description": "One case attempt from the owner-scoped get_run response. A new request has a new run ID and starts at attempt one. A replay of the request returns the same attempt.",
+  "type": "object",
+  "required": ["run_id", "case_id", "attempt", "runner", "status", "error_kind", "exit_code", "worker_exit_code", "duration_ms", "version", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {"type": "string", "format": "uuid"},
+    "case_id": {"enum": ["ui_catalog_count", "ui_catalog_failure_drill", "feedback_categories"]},
+    "attempt": {"type": "integer", "minimum": 1},
+    "runner": {"enum": ["python", "node"]},
+    "status": {"enum": ["passed", "failed", "blocked", "timed_out", "interrupted", "cancelled"]},
+    "error_kind": {"type": ["string", "null"]},
+    "exit_code": {"description": "Assertion outcome: 0 for passed, 1 for failed, null when unavailable.", "enum": [0, 1, null]},
+    "worker_exit_code": {"description": "Observed process return code, negative for signals on POSIX, or null when unavailable.", "type": ["integer", "null"]},
+    "duration_ms": {"description": "Elapsed time from worker claim to terminal record. Zero for an unclaimed run.", "type": "integer", "minimum": 0},
+    "version": {"description": "Observed Python or Node runtime version. Null when the historical run or stopped worker supplied no version.", "type": ["string", "null"]},
+    "evidence": {"description": "Suite-specific sanitized observations and authenticated screenshot or trace URLs, where available.", "type": "object"}
+  }
+}

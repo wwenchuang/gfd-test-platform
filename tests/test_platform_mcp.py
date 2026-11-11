@@ -53,6 +53,11 @@ class ToolApiTests(unittest.TestCase):
         self.runner = self.bind('task_server.services.week5_web_service.run', return_value={
             'scenario':'ui_catalog_count','version':1,'status':'passed','error_kind':None,'total':7,
             'id':'a' * 32,'artifacts':['screenshot','trace']})
+        def browser(*args, **kwargs):
+            kwargs['control'].worker_exit_code = 0
+            kwargs['control'].node_version = '22.0.0'
+            return self.runner.return_value
+        self.runner.side_effect = browser
         self.args = {'suite_id':'published-catalog','environment':'platform','request_id':str(uuid.uuid4())}
 
     def bind(self, path, **kwargs):
@@ -79,7 +84,7 @@ class ToolApiTests(unittest.TestCase):
     def test_discovery_and_scoped_policy(self):
         response, code = self.call('list_suites', {})
         self.assertEqual(code,200)
-        self.assertEqual([s['suite_id'] for s in response['result']['suites']], ['published-catalog'])
+        self.assertEqual([s['suite_id'] for s in response['result']['suites']], ['published-catalog','catalog-failure-drill'])
         access = MainAccess(self.profile, catalog=[])
         for method,path in self.routes:
             if '/mcp/' in path:
@@ -128,9 +133,87 @@ class ToolApiTests(unittest.TestCase):
         row = self.start()
         self.assertEqual((row['status'],row['total'],row['runner_id']),('passed',7,'a'*32))
         self.assertEqual(row['evidence']['trace'],'/api/ui-executions/web-check/artifact?id='+'a'*32+'&item=trace')
-        self.runner.assert_called_once_with('owner','user','token',scenario='ui_catalog_count')
+        self.assertEqual(self.runner.call_count,1)
+        self.assertEqual(self.runner.call_args.kwargs['scenario'],'ui_catalog_count')
         self.assertLessEqual(row['started_at'],row['finished_at'])
         self.assertNotIn(b'"token"', (self.directory/'platform-mcp.sqlite3').read_bytes())
+
+    def test_cancel_queued_job_never_starts_child(self):
+        row = self.start()
+        result, status = self.call('cancel_run', {'run_id':row['run_id']})
+        self.assertEqual(status, 200)
+        self.assertEqual(result['result']['status'], 'cancelled')
+        self.work()
+        self.runner.assert_not_called()
+        case, = self.start()['cases']
+        self.assertEqual((case['status'],case['worker_exit_code'],case['duration_ms']), ('cancelled',None,0))
+
+    def test_active_cancel_waits_for_confirmed_stop_and_checks_ownership(self):
+        from threading import Event, Thread
+        entered, proceed = Event(), Event()
+        def execute(suite, actor, cancel_requested):
+            entered.set()
+            self.assertTrue(proceed.wait(3))
+            self.assertTrue(cancel_requested())
+            return dict(runner='node',runner_version='22.0.0',status='cancelled',error_kind='cancelled',
+                        exit_code=None,worker_exit_code=-15,evidence={})
+        row = self.start()
+        with patch.object(self.tools, '_execute', side_effect=execute):
+            worker = Thread(target=self.work)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                self.profile['scope']={'ui_apps':['two']}
+                self.assertEqual(self.call('cancel_run',{'run_id':row['run_id']})[1], 404)
+                self.profile['scope']={'ui_apps':['one']}
+                result, code = self.call('cancel_run',{'run_id':row['run_id']})
+                self.assertEqual((code,result['result']['status']), (200,'cancelling'))
+                self.assertIsNone(result['result']['junit_url'])
+            finally:
+                proceed.set()
+                worker.join(3)
+        row = self.start()
+        self.assertEqual((row['status'],row['cases'][0]['worker_exit_code']), ('cancelled',-15))
+
+    def test_feedback_contract_conflict_scope_and_history(self):
+        with patch.object(self.tools, '_feedback_authorized', return_value=True):
+            run = self.start()
+            feedback_args = dict(self.args, suite_id='feedback-categories')
+            self.assertEqual(self.call('run_suite',feedback_args)[1],409)
+            self.work()
+            feedback_args['request_id'] = str(uuid.uuid4())
+            result, status = self.call('run_suite',feedback_args)
+            self.assertEqual(status,200)
+            rid = result['result']['run_id']
+            native = dict(runner='python', runner_version='3.11.7', status='passed', error_kind=None, exit_code=0,
+                          worker_exit_code=0,evidence={'http_status':200,'actual_code':0,'expected_code':0,'data_is_list':True})
+            with patch.object(self.tools,'_execute',return_value=native):
+                self.work()
+            row = self.call('get_run',{'run_id':rid})[0]['result']
+            case, = row['cases']
+            self.assertEqual((case['case_id'],case['runner'],case['version'],case['attempt']),('feedback_categories','python','3.11.7',1))
+            self.assertEqual((case['evidence'],case['run_id'],case['exit_code']), (native['evidence'],rid,0))
+            self.assertEqual(row['junit_url'],'/api/platform/mcp/junit?run_id='+rid)
+        self.assertEqual(self.call('get_run',{'run_id':rid})[1],404)
+        self.assertEqual([r['run_id'] for r in self.request('GET','runs')[0]['runs']], [run['run_id']])
+
+    def test_preupgrade_active_run_with_expired_deadline_recovers(self):
+        row = self.start()
+        with self.tools._db() as db:
+            db.execute('DELETE FROM run_cases WHERE run_id=?',(row['run_id'],))
+            db.execute("UPDATE runs SET status='running',deadline=0,started_at=1 WHERE run_id=?",(row['run_id'],))
+        self.assertEqual(self.start()['status'], 'timed_out')
+
+    def test_legacy_row_keeps_evidence_without_fabricating_worker_exit_or_version(self):
+        row = self.start()
+        with self.tools._db() as db:
+            db.execute("UPDATE runs SET status='passed',runner_id=?,total=36,started_at=10,finished_at=11 WHERE run_id=?",
+                       ('a'*32,row['run_id']))
+        state = self.start()
+        case, = state['cases']
+        self.assertIsNone(case['worker_exit_code'])
+        self.assertIsNone(case['version'])
+        self.assertEqual((case['run_id'],case['duration_ms'],case['evidence']['trace']), (row['run_id'],1000,state['evidence']['trace']))
 
     def test_other_user_and_changed_scope_cannot_read_result(self):
         row = self.start()
@@ -196,10 +279,40 @@ class ToolApiTests(unittest.TestCase):
         self.launch.assert_called_once()
 
     def test_timeout_from_fixed_runner_has_distinct_terminal_status(self):
-        self.runner.return_value={'scenario':'ui_catalog_count','version':1,'status':'blocked','error_kind':'environment','detail':'browser_timeout'}
+        def timeout(*args,control,**kwargs):
+            control.stop_reason='timeout'
+            control.worker_exit_code=-9
+            raise TimeoutError()
+        self.runner.side_effect=timeout
         self.start()
         self.work()
         self.assertEqual((self.start()['status'],self.start()['error_kind']),('timed_out','browser_timeout'))
+
+    def test_isolated_recovery_receipt_rejects_private_data_and_forged_outcomes(self):
+        self.assertEqual(self.request('GET','recovery-drill')[0]['report'],None)
+        checks = []
+        for kind,status,error,raw in [('cancel','cancelled','cancelled',-9),('worker_crash','interrupted','worker_crash',19),
+                                      ('timeout','timed_out','timeout',-9),('service_restart','interrupted','service_restarted',None)]:
+            checks.append(dict(kind=kind,run_id=str(uuid.uuid4()),before='running',status=status,error_kind=error,
+                               worker_exit_code=raw,duration_ms=10,verified=True))
+        report = dict(version=1,environment='isolated',checked_at=time.time(),checks=checks)
+        path = self.directory/'mcp-recovery-drill.json'
+        path.write_text(json.dumps(report))
+        path.chmod(0o600)
+        self.assertEqual(self.request('GET','recovery-drill')[0]['report'],report)
+        for bad in [dict(report,environment='production'),dict(report,checks=checks[:3]+checks[:1]),
+                    dict(report,checks=[dict(checks[0],status='passed')]+checks[1:]),
+                    dict(report,checks=[dict(checks[0],worker_exit_code=0)]+checks[1:]),dict(report,session='secret'), None]:
+            path.write_text(json.dumps(bad))
+            self.assertEqual(self.request('GET','recovery-drill')[1],503)
+        path.write_text(json.dumps(report))
+        path.chmod(0o644)
+        self.assertEqual(self.request('GET','recovery-drill')[1],503)
+        path.rename(self.directory/'private.json')
+        path.symlink_to(self.directory/'private.json')
+        self.assertEqual(self.request('GET','recovery-drill')[1],503)
+        self.session.return_value=None
+        self.assertEqual(self.request('GET','recovery-drill')[1],403)
 
     def test_receipt_checks_durable_run_and_owner_scope_and_rejects_symlink(self):
         row=self.start()

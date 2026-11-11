@@ -11,9 +11,9 @@ if (!token || /[\r\n]/.test(token)) {
 const server = new McpServer({name:'midscene-practice-week10', version:'1.0.0'});
 const uuid = z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/);
 const definitions = [
-  ['list_suites','List the allowed published QA suite and environment.',z.strictObject({})],
+  ['list_suites','List available business checks and their environment.',z.strictObject({})],
   ['run_suite','Start the selected QA suite. Reuse the request ID for every retry.',z.strictObject({
-    suite_id:z.literal('published-catalog'),environment:z.literal('platform'),request_id:uuid,
+    suite_id:z.enum(['published-catalog','feedback-categories']),environment:z.literal('platform'),request_id:uuid,
   })],
   ['get_run','Read status and evidence of your QA run.',z.strictObject({run_id:uuid})],
 ];
@@ -40,7 +40,10 @@ for (const [name,description,inputSchema] of definitions) {
       const body = await reply.json();
       if (body?.ok !== true || !body.result || typeof body.result !== 'object' || Array.isArray(body.result))
         return failure('platform_result_invalid');
-      return {content:[{type:'text',text:JSON.stringify(body.result)}],structuredContent:body.result};
+      const result = name === 'list_suites' && Array.isArray(body.result.suites)
+        ? {...body.result,suites:body.result.suites.filter(s => ['published-catalog','feedback-categories'].includes(s.suite_id))}
+        : body.result;
+      return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};
     } catch {
       return failure('platform_transport_failed');
     }
