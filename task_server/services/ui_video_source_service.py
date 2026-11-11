@@ -143,7 +143,8 @@ class VideoStore:
                 doc = {'source_id': identifier, 'owner_user_id': profile['user_id'], 'app_id': app,
                        'filename': Path(filename).name, 'size': length, 'status': 'queued', 'error': '',
                        'created_at': time.time(), 'goal': goal, 'actor': actor or {}, 'segments': [],
-                       'candidate_steps': [], 'uncertainties': [], 'draft_id': '', 'analysis_version': 1}
+                       'candidate_steps': [], 'uncertainties': [], 'draft_id': '', 'analysis_version': 1,
+                       'analysis_mode': 'first_pass'}
                 with self.db() as db: self._save(db, doc)
                 return doc
             except Exception:
@@ -188,11 +189,13 @@ class VideoStore:
                 doc.pop('failure_diagnostic',None)
                 from .ui_video_workspace import PRIVATE_FIELDS
                 for key in PRIVATE_FIELDS:doc.pop(key,None)
-                doc.update(status='queued',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],raw_events=[],first_pass_events=[],reconciliation_audit=None,raw_uncertainties=[],omitted_retries=[],print_recovery=None,response_review=[],input_recovery=[],analysis_progress={},analysis_version=doc['analysis_version']+1)
+                doc.pop('multiple_scenarios',None)
+                doc.pop('touch_ambiguities',None)
+                doc.update(status='queued',analysis_mode='first_pass',error='',error_code='',events=[],segments=[],candidate_steps=[],uncertainties=[],raw_events=[],first_pass_events=[],reconciliation_audit=None,raw_uncertainties=[],omitted_retries=[],print_recovery=None,response_review=[],input_recovery=[],analysis_progress={},analysis_version=doc['analysis_version']+1)
                 self._save(db,doc)
                 return doc
 
-    def transition(self, identifier, allowed, status, expected_version=None, *, expected_owner=None, expected_app=None, **fields):
+    def transition(self, identifier, allowed, status, expected_version=None, *, expected_owner=None, expected_app=None, require_visible=False, **fields):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT document FROM sources WHERE id=?', (identifier,)).fetchone()
@@ -201,7 +204,8 @@ class VideoStore:
             if doc['status'] not in allowed or (expected_version is not None and doc['analysis_version']!=expected_version): return None
             if ((expected_owner is not None and doc['owner_user_id']!=expected_owner) or
                 (expected_app is not None and doc['app_id']!=expected_app)):return None
-            doc.update(fields, status=status)
+            if require_visible and doc.get('history_removed'):return None
+            doc.update(fields, status=doc['status'] if status is None else status)
             self._save(db, doc)
             return doc
 
@@ -594,9 +598,67 @@ def owned_source(actor, identifier, app, permission='ui.view'):
     return store,profile,store.get(identifier,profile['user_id'],app)
 
 
+_FIRST_PASS_INTERACTIONS = {'aiTap', 'aiInput', 'aiScroll', 'dismissKeyboard', 'navigateBack'}
+
+
+def _first_pass_proposal(document):
+    from .ui_video_analysis import draft_proposal, validate_analysis
+    events = document.get('first_pass_events')
+    if (document['status'] not in {'failed', 'cancelled', 'interrupted', 'review_needed'} or
+            document.get('history_removed') or document.get('video_runtime_selection') or
+            (document['status']=='review_needed' and document.get('analysis_mode')!='first_pass') or
+            not isinstance(events,list) or not events):
+        raise ValueError('没有保存完整的初读步骤')
+    if document.get('multiple_scenarios'):
+        raise ValueError('包含多个独立场景，请分段后导入')
+    # Only the completed ordinary observation wrote first_pass_events. Progress
+    # raw_events may be partial or already replaced by an independent review.
+    media=document.get('media') or {}
+    if not isinstance(media.get('frames'),list) or type(media.get('duration_ms')) is not int:
+        raise ValueError('初读缺少原始画面证据')
+    checked=validate_analysis({'events':events,'uncertainties':[],'multiple_scenarios':False},
+                              media['frames'],media['duration_ms'],max_events=120)
+    actions=[]
+    questions=list(document.get('uncertainties',[]))+list(document.get('raw_uncertainties',[]))
+    for index,event in enumerate(checked['events']):
+        if event['action'] in _FIRST_PASS_INTERACTIONS:
+            actions.append(event)
+        else:
+            for question in event['uncertainties']:
+                questions.append(f"首读第 {index+1} 项（{event['start_ms']/1000:g} 秒）：{question}")
+    if not actions:
+        raise ValueError('初读仅包含画面状态，没有可导入的交互动作')
+    if len(actions)>50:
+        raise ValueError('交互动作超过草稿上限 50 步，请分段后导入')
+    questions.append('请对照完整初读逐步确认操作、画面状态与测试预期，补充结束检查。')
+    # Later-stage plans, retry policies and inferred executable semantics from a
+    # failed historical analysis do not belong to this first-read origin.
+    origin={k:document[k] for k in ('source_id','app_id','analysis_version','goal','media')}
+    origin.update(analysis_mode='first_pass',events=actions,first_pass_events=events,
+                  uncertainties=list(dict.fromkeys(questions)),title=document.get('display_name') or '录屏初读操作')
+    if document.get('touch_ambiguities'):
+        origin['touch_ambiguities']=document['touch_ambiguities']
+    proposal,snapshot=draft_proposal(origin)
+    snapshot['analysis_mode']='first_pass'
+    return proposal,snapshot
+
+
+def _first_pass_status(document):
+    try:
+        _first_pass_proposal(document)
+    except (ValueError,TypeError,KeyError) as error:
+        message=str(error)
+        if not message or message.isascii():message='初读未通过草稿的步骤或证据校验'
+        return False,message
+    return True,''
+
+
 def public_source(document):
     from .ui_video_workspace import PRIVATE_FIELDS
     out={k:v for k,v in document.items() if k not in {'actor','owner_user_id','baseline_examples'}|PRIVATE_FIELDS}
+    if document.get('analysis_mode')=='first_pass' or document.get('first_pass_events'):
+        out['first_pass_event_count']=len(document.get('first_pass_events') or [])
+        out['first_pass_importable'],out['first_pass_import_error']=_first_pass_status(document)
     summary=document.get('video_runtime_summary')
     if (isinstance(summary,dict) and summary.get('mode')=='video-perception-bank-v1' and
         all(type(summary.get(k)) is int and 0<=summary[k]<=bound for k,bound in
@@ -626,14 +688,20 @@ def import_video_draft(actor, identifier, app):
     store,profile,document=owned_source(actor,identifier,app,'ui.edit')
     # Once imported, retries always reopen the same immutable-origin draft.
     if document.get('draft_id'):return _store().get(document['draft_id'],profile['user_id'])
-    if document['status']!='ready':raise ValueError('video_not_ready')
-    proposal,snapshot=draft_proposal(document)
+    if document.get('history_removed'):raise ValueError('video_not_ready')
+    status=document['status']
+    if status=='ready':
+        proposal,snapshot=draft_proposal(document)
+    else:
+        try:proposal,snapshot=_first_pass_proposal(document)
+        except (ValueError,TypeError,KeyError):raise ValueError('video_not_ready') from None
     from .ui_video_execution_contract import compiler_options
     compiled=build_draft_yaml(proposal,app,**compiler_options(snapshot,app,proposal['steps']))
-    if not store.transition(identifier,{'ready'},'ready',retained=True):
+    scope={'expected_version':document['analysis_version'],'expected_owner':profile['user_id'],'expected_app':app}
+    if not store.transition(identifier,{status},status,retained=True,require_visible=True,**scope):
         raise ValueError('video_not_ready')
     draft=_store().create(profile,app,'来源：上传录屏，观察与推断未经手机验证。',recording_snapshot=snapshot,
                            recording_content={**proposal,'yaml_content':compiled['yaml_content'],'ready':False})
     # create is deterministic; concurrent imports return existing edited content.
-    store.transition(identifier,{'ready'},'ready',draft_id=draft['draft_id'])
+    store.transition(identifier,{status,'cancelled'},None,draft_id=draft['draft_id'],**scope)
     return draft

@@ -329,10 +329,17 @@ def analyze_video_source(store,identifier):
             stage='persist'
             document=store.transition(identifier,{'decoding'},'analyzing',expected_version=version,expected_owner=owner,expected_app=app,media=media)
             if not document:return
-            stage='baseline'
-            document['baseline_examples']=_top3_examples(app,document['goal'] or '录屏操作步骤')
+            first_pass=document.get('analysis_mode')=='first_pass'
+            if not first_pass:
+                stage='baseline'
+                document['baseline_examples']=_top3_examples(app,document['goal'] or '录屏操作步骤')
             stage='analysis'
+            window_count=0
             def progress(phase,completed,total,events):
+                nonlocal window_count
+                if first_pass and phase=='planning':
+                    window_count=total
+                    return
                 if cancelled():raise ValueError('video_cancelled')
                 store.transition(identifier,{'analyzing'},'analyzing',expected_version=version,expected_owner=owner,expected_app=app,
                     analysis_progress={'phase':phase,'completed':completed,'total':total},raw_events=events,
@@ -345,6 +352,17 @@ def analyze_video_source(store,identifier):
             with timing_session(identifier,version):
                 result=analyze_whole_frames(document,store.root/identifier,cancelled,progress)
             if cancelled():raise ValueError('video_cancelled')
+            if first_pass:
+                stage='reauthorize'
+                require_ui_actor(document['actor'],permission='ui.edit',app_id=app);_application(app)
+                stage='persist'
+                store.transition(identifier,{'analyzing'},'review_needed',expected_version=version,
+                    expected_owner=owner,expected_app=app,first_pass_events=result['events'],
+                    uncertainties=result['uncertainties'],multiple_scenarios=result['multiple_scenarios'],
+                    touch_ambiguities=result.get('touch_ambiguities',[]),raw_events=[],
+                    analysis_progress={'phase':'first_pass_complete','completed':window_count,'total':window_count},
+                    error='')
+                return
             from task_server.services.ui_video_business_inputs import recover_business_inputs
             stage='input_recovery'
             result=recover_business_inputs(result,document,store.root/identifier,cancelled)
@@ -426,7 +444,7 @@ def _analyze_runtime_source(store,identifier):
             current({'queued'})
             authorize()
             document=store.transition(identifier,{'queued'},'decoding',expected_version=version,
-                expected_owner=owner,expected_app=app,video_runtime_selection=selection)
+                expected_owner=owner,expected_app=app,analysis_mode=mode,video_runtime_selection=selection)
             if document is None:return
             check()
             workspace=create_analysis_workspace(store.root,document,version)

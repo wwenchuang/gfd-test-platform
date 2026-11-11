@@ -277,6 +277,8 @@ def test_worker_rejects_unimportable_scroll_before_ready(env,tmp_path,monkeypatc
     from task_server.services import ui_video_source_service as video,ui_video_analysis as analysis
     from task_server.workers import ui_video_worker as worker
     store=video.VideoStore(tmp_path/'videos');doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
+    # Reconstruct a queued source persisted before first-read became the default.
+    store.transition(doc['source_id'],{'queued'},'queued',analysis_mode=None)
     monkeypatch.setattr(worker,'decode_video',lambda *args:{'black':False,'static':False,'frames':[{'frame_id':'f','timestamp_ms':0}],'duration_ms':100})
     invalid={'action':'aiScroll','target':'个人页面列表','value':{'invented':True},'start_ms':0,'end_ms':0,'frame_refs':['f'],'observation':'个人页面显示帮助入口','evidence_kind':'inferred','uncertainties':[]}
     monkeypatch.setattr(analysis,'analyze_whole_frames',lambda *args:{'events':[invalid],'uncertainties':[],'multiple_scenarios':False})
@@ -372,6 +374,8 @@ def test_worker_diagnostics_are_stage_specific_and_never_include_exception_text(
     from task_server.services import ui_video_source_service as video,ui_video_analysis as analysis,ui_case_draft_service as drafts
     from task_server.workers import ui_video_worker as worker
     store=video.VideoStore(tmp_path/'videos');doc=store.upload(A,APP,'PRIVATE_FILENAME.mp4',io.BytesIO(b'video'),5,actor=A,goal='PRIVATE_GOAL')
+    # Reconstruct a queued source persisted before first-read became the default.
+    store.transition(doc['source_id'],{'queued'},'queued',analysis_mode=None)
     sentinel='sk-PRIVATE_TOKEN raw-model-response PRIVATE_VIDEO'
     class NoStringError(RuntimeError):
         def __str__(self):raise AssertionError('must not stringify exception')
@@ -466,8 +470,8 @@ def test_scroll_json_representation_rejects_unsafe_or_invalid_contract(value):
 
 from task_server.services.ai_skill_service import run_ai_skill as REAL_VIDEO_RUN_AI_SKILL
 
-@pytest.mark.parametrize('material,expected_status',[('passive_carousel','review_needed'),('touchless_navigation','ready')])
-def test_full_worker_distinguishes_passive_only_contract_from_touchless_navigation(env,tmp_path,monkeypatch,material,expected_status):
+@pytest.mark.parametrize('material',['passive_carousel','touchless_navigation'])
+def test_full_worker_distinguishes_passive_only_contract_from_touchless_navigation(env,tmp_path,monkeypatch,material):
     """Actual ffmpeg + skill prompt/schema; only provider response is simulated.
 
     Synthetic frames test transport/state handling, not real AI classification.
@@ -508,18 +512,18 @@ def test_full_worker_distinguishes_passive_only_contract_from_touchless_navigati
     monkeypatch.setenv('MIDSCENE_AI_SKILLS_USE_GATEWAY','1')
     worker.analyze_video_source(store,doc['source_id'])
     result=store.get(doc['source_id'],A['user_id'],APP)
-    assert calls==(['ui_video_observe'] if material=='passive_carousel' else ['ui_video_observe','ui_video_steps'])
-    assert result['status']==expected_status
+    assert calls==['ui_video_observe']
+    assert result['status']=='review_needed'
     assert result['media']['coverage_end_ms']==frame_count*1000 and not result['media']['static']
     assert result['draft_id']==''
     if material=='passive_carousel':
-        assert result['candidate_steps']==[] and result['events']==[]
+        assert not video.public_source(result)['first_pass_importable'] and result['first_pass_events']==[]
         assert result['uncertainties'] and not result.get('multiple_scenarios')
     else:
-        assert len(result['candidate_steps'])==1 and result['candidate_steps'][0]['evidence_kind']=='inferred'
-        assert len(result['raw_events'])==1 and 'raw_uncertainties' in result
-        from task_server.services.ui_video_analysis import draft_proposal
-        content,snapshot=draft_proposal(result)
+        assert len(result['first_pass_events'])==1 and result['first_pass_events'][0]['evidence_kind']=='inferred'
+        assert video.public_source(result)['first_pass_importable']
+        monkeypatch.setattr(video,'service_store',lambda:store)
+        with actor_context(A):content=video.import_video_draft(A,doc['source_id'],APP)
         assert all(step['review_state']=='needs_review' for step in content['steps'])
 
 

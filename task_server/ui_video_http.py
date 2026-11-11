@@ -58,8 +58,8 @@ def register_routes(route_get,route_post_prefix_before_body,route_get_regex,rout
             app=qs.get('app_id','');profile=require_ui_actor(None,permission='ui.view',app_id=app);_application(app)
             library=qs.get('view')=='library'
             docs=service_store().list(profile['user_id'],app,limit=1000 if library else 30)
-            fields={'source_id','app_id','filename','display_name','title','status','draft_id','analysis_version','created_at','updated_at','size'}
-            handler._json({'ok':True,'sources':[{k:v for k,v in public_source(d).items() if k in fields} if library else public_source(d) for d in docs]})
+            fields={'source_id','app_id','filename','display_name','title','status','draft_id','analysis_version','created_at','updated_at','size','analysis_mode','first_pass_event_count'}
+            handler._json({'ok':True,'sources':[{**{k:v for k,v in d.items() if k in fields},'first_pass_event_count':len(d.get('first_pass_events') or [])} if library else public_source(d) for d in docs]})
         except Exception as error:_error(handler,error)
 
     @route_post_regex(r'^/api/ui-video-sources/(uvs_[0-9a-f]{32})/rename$')

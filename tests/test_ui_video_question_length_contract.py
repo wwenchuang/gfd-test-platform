@@ -125,6 +125,7 @@ def test_unrepresentable_event_fails_source_with_clear_message(worker_env,monkey
     if runtime_mode:
         monkeypatch.setattr(runtime,'run_runtime',lambda *a,**kw:copy.deepcopy(result))
     else:
+        store.transition(source['source_id'],{'queued'},'queued',analysis_mode=None)
         monkeypatch.setattr(runtime,'selected',lambda *a:False)
         monkeypatch.setattr(analysis,'analyze_whole_frames',lambda *a:copy.deepcopy(result))
         monkeypatch.setattr(inputs,'recover_business_inputs',lambda result,*a:result)

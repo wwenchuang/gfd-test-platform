@@ -422,7 +422,7 @@ def test_failed_progress_cas_stops_before_more_work(worker_env,monkeypatch):
     assert not continued and store.get(doc['source_id'],'u',APP)['status']=='cancelled'
 
 
-def test_unselected_legacy_calls_are_unchanged_despite_public_flags(worker_env,monkeypatch):
+def test_unselected_first_read_stays_ordinary_despite_public_flags(worker_env,monkeypatch):
     worker,store,doc,_=worker_env;monkeypatch.delenv('UI_VIDEO_RUNTIME_QA_SOURCE_ID');calls=[]
     store.transition(doc['source_id'],{'queued'},'queued',video_runtime_selection={'mode':'video-perception-bank-v1'},goal='video-perception-bank-v1')
     def analyze(document,root,cancelled,progress):
@@ -431,7 +431,7 @@ def test_unselected_legacy_calls_are_unchanged_despite_public_flags(worker_env,m
     monkeypatch.setattr(analysis,'analyze_whole_frames',analyze);monkeypatch.setattr(inputs,'recover_business_inputs',recover)
     monkeypatch.setattr(runtime(),'run_runtime',lambda *a,**kw:pytest.fail('untrusted enrollment'))
     worker.analyze_video_source(store,doc['source_id'])
-    assert calls==[('analyze',store.root/doc['source_id']),('inputs',store.root/doc['source_id'])]
+    assert calls==[('analyze',store.root/doc['source_id'])]
     assert 'analysis_workspace_version' not in store.get(doc['source_id'],'u',APP)
 
 

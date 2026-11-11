@@ -86,6 +86,16 @@ def redact_touch_evidence(items, secrets):
     return result
 
 
+def _matches_review_source(source, draft):
+    snapshot=draft['source_snapshot']
+    if snapshot.get('analysis_mode')!='first_pass':
+        return source['status']=='ready'
+    return (source['status'] in {'review_needed','failed','interrupted','cancelled'} and
+            source.get('retained') and source.get('draft_id')==draft['draft_id'] and
+            bool(snapshot.get('first_pass_events')) and
+            source.get('first_pass_events')==snapshot['first_pass_events'])
+
+
 def _source_evidence(draft):
     """Require exact owner/app/version/source evidence and original frame bytes."""
     from .ui_video_source_service import VideoStore
@@ -96,7 +106,7 @@ def _source_evidence(draft):
         raise ValueError('video_touch_evidence_invalid')
     store=VideoStore(); identifier=snapshot['source_id']
     source=store.get(identifier,draft['owner_user_id'],draft['app_id'])
-    if (source['analysis_version']!=snapshot['analysis_version'] or source['status']!='ready' or
+    if (source['analysis_version']!=snapshot['analysis_version'] or not _matches_review_source(source,draft) or
         source.get('touch_ambiguities')!=items or source.get('media',{}).get('frames')!=snapshot['frames']):
         raise ValueError('video_touch_evidence_invalid')
     from .ui_video_workspace import resolve_frame_directory
@@ -140,7 +150,7 @@ def read_verified_touch_frame(draft,index):
     source=draft['source_snapshot'];store=VideoStore()
     doc=store.get(source['source_id'],draft['owner_user_id'],draft['app_id'])
     if (doc['analysis_version']!=source['analysis_version'] or doc.get('touch_ambiguities')!=items or
-        doc.get('media',{}).get('frames')!=source['frames'] or doc['status']!='ready'):
+        doc.get('media',{}).get('frames')!=source['frames'] or not _matches_review_source(doc,draft)):
         raise ValueError('video_touch_evidence_invalid')
     frame=items[index]['frame_id'];path=resolve_frame_directory(store.root,doc)/(frame+'.jpg')
     fd=os.open(path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0))
@@ -158,7 +168,7 @@ def read_verified_touch_frame(draft,index):
     if hashlib.sha256(data).hexdigest()!=items[index]['frame_sha256']:raise ValueError('video_touch_evidence_invalid')
     latest=store.get(source['source_id'],draft['owner_user_id'],draft['app_id'])
     if (latest['analysis_version']!=source['analysis_version'] or latest.get('touch_ambiguities')!=items or
-        latest.get('media',{}).get('frames')!=source['frames'] or latest['status']!='ready'):
+        latest.get('media',{}).get('frames')!=source['frames'] or not _matches_review_source(latest,draft)):
         raise ValueError('video_touch_evidence_invalid')
     return data
 

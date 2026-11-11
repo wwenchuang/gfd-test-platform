@@ -111,6 +111,8 @@ def test_worker_publishes_and_imports_recovered_values_without_manual_edit(env,t
     result['multiple_scenarios']=False
     store=video.VideoStore(tmp_path/'videos')
     source=store.upload(A,APP,'ordinary.mp4',io.BytesIO(b'video'),5,actor=A)
+    # Reconstruct a queued source persisted before first-read became the default.
+    store.transition(source['source_id'],{'queued'},'queued',analysis_mode=None)
     monkeypatch.setattr(worker,'decode_video',lambda *a:{**doc['media'],'black':False,'static':False})
     monkeypatch.setattr(analysis,'analyze_whole_frames',lambda *a:copy.deepcopy(result))
     monkeypatch.setattr(ui_video_windows,'load_assets',lambda *a:[])

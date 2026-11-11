@@ -143,6 +143,8 @@ def test_private_role_audit_survives_later_failure(env, monkeypatch, tmp_path):
     frames, first, reviewed = fixture.evidence()
     store=source.VideoStore(tmp_path/'videos')
     doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
+    # Reconstruct a queued source persisted before first-read became the default.
+    store.transition(doc['source_id'],{'queued'},'queued',analysis_mode=None)
     monkeypatch.setattr(worker,'decode_video',lambda *a:{'black':False,'static':False,'frames':frames,'duration_ms':195698})
     monkeypatch.setattr(windows,'observe_windows',lambda *a:({'events':first,'uncertainties':[],'multiple_scenarios':False},[]))
     monkeypatch.setattr(reconcile,'needs_reconciliation',lambda *a:True)
@@ -197,6 +199,8 @@ def test_audit_does_not_attach_to_replaced_source_version(env, monkeypatch, tmp_
     frames, first, reviewed = __import__('test_ui_video_boundary_feedback').evidence()
     store=source.VideoStore(tmp_path/'videos')
     doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
+    # Reconstruct a queued source persisted before first-read became the default.
+    store.transition(doc['source_id'],{'queued'},'queued',analysis_mode=None)
     monkeypatch.setattr(worker,'decode_video',lambda *a:{'black':False,'static':False,'frames':frames,'duration_ms':195698})
     monkeypatch.setattr(windows,'observe_windows',lambda *a:({'events':first,'uncertainties':[],'multiple_scenarios':False},[]))
     monkeypatch.setattr(reconcile,'needs_reconciliation',lambda *a:True)
@@ -221,6 +225,8 @@ def test_final_publication_requires_same_owner_and_app(env,monkeypatch,tmp_path,
     from task_server.workers import ui_video_worker as worker
     store=source.VideoStore(tmp_path/'videos')
     doc=store.upload(A,APP,'clip.mp4',io.BytesIO(b'video'),5,actor=A)
+    # Reconstruct a queued source persisted before first-read became the default.
+    store.transition(doc['source_id'],{'queued'},'queued',analysis_mode=None)
     frame={'frame_id':'frame-001','timestamp_ms':0}
     monkeypatch.setattr(worker,'decode_video',lambda *a:{'black':False,'static':False,'frames':[frame],'duration_ms':100})
     event={'action':'aiTap','target':'按钮','value':'','start_ms':0,'end_ms':0,'frame_refs':['frame-001'],

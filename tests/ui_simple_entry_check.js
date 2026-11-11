@@ -645,6 +645,54 @@ test('video candidate actions are presented in Chinese while import keeps origin
 });
 
 
+test('video first pass shows all saved events on the cancelled detail in time order without a retry',async t=>{
+ const f=await videoFixture(t);
+ const first_pass_events=Array.from({length:61},(_,i)=>({start_ms:i*1000,end_ms:i*1000+667,action:i<38?'aiTap':'aiAssert',
+   target:i===0?'<img src=x>':String(i),observation:'可见画面 '+i}));
+ const source={source_id:'cancelled-v16',filename:'姓名牌.mp4',status:'cancelled',analysis_version:16,first_pass_events:first_pass_events.reverse()};
+ f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ const timeline=f.q('[data-video-first-pass]');assert.ok(timeline);assert.equal(timeline.closest('details,[hidden]'),null);
+ const rows=Array.from(timeline.querySelectorAll('ol > li'));assert.equal(rows.length,61);
+ assert.match(rows[0].textContent,/0.000–0.667 秒.*点击.*<img src=x>.*可见画面 0/);assert.equal(timeline.querySelector('img'),null);
+ assert.match(rows[60].textContent,/60.000–60.667 秒.*状态.*60/);
+ assert.equal(f.q('[data-video-action="import"]'),null);assert.equal(f.calls.some(c=>c.options.method==='POST'),false);
+});
+test('video first pass marked importable opens editable draft only on click',async t=>{
+ const f=await videoFixture(t);let draft;
+ const source={source_id:'first-pass-result',filename:'clip.mp4',status:'review_needed',analysis_mode:'first_pass',first_pass_importable:true,
+   first_pass_events:[{action:'aiScroll',value:{direction:'up'},target:'列表',start_ms:0,end_ms:600,observation:'列表滑动'}]};
+ f.w.UiCaseDraft.mount=(node,options)=>{draft=options.initialDraft;return {dispose(){}};};
+ f.respond(path=>path.endsWith('/import')?{ok:true,draft:{draft_id:'first-draft',app_id:'a'}}:path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();assert.doesNotMatch(f.q('[data-video-list]').textContent,/需补充素材/);
+ f.q('[data-video-open]').click();await wait();
+ assert.doesNotMatch(f.q('[data-video-notice]').textContent,/请上传/);
+ assert.match(f.q('[data-video-first-pass]').textContent,/向上滑动/);assert.equal(f.q('[data-video-reselect]'),null);
+ assert.equal(f.calls.some(c=>c.options.method==='POST'),false);
+ f.q('[data-video-action="import"]').click();await wait();assert.equal(draft.draft_id,'first-draft');
+ assert.deepEqual(f.calls.filter(c=>c.options.method==='POST').map(c=>c.path),['/ui-video-sources/first-pass-result/import']);
+});
+test('video library refresh reads saved first-pass detail when a new result arrives',async t=>{
+ const f=await videoFixture(t);
+ let detail={source_id:'first-refresh',filename:'clip.mp4',status:'analyzing',analysis_version:1,updated_at:1,analysis_mode:'first_pass'};
+ let summary={...detail,first_pass_event_count:0};
+ f.respond(path=>path.includes(detail.source_id)?{ok:true,source:detail}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[summary]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ summary={...summary,status:'review_needed',updated_at:2,first_pass_event_count:1};
+ detail={...summary,first_pass_importable:true,first_pass_events:[{action:'aiTap',target:'选择文件',start_ms:125,end_ms:225}]};
+ f.q('[data-video-refresh]').click();await wait();
+ assert.match(f.q('[data-video-first-pass]')?.textContent||'',/选择文件/);assert.ok(f.q('[data-video-action="import"]'));
+});
+test('video first pass blocked from import still shows all observations and reason',async t=>{
+ const f=await videoFixture(t);
+ const source={source_id:'first-pass-blocked',status:'review_needed',analysis_mode:'first_pass',first_pass_importable:false,first_pass_import_error:'缺少可编辑步骤',
+   first_pass_events:[{action:'aiWaitFor',target:'等待成功页面',start_ms:250,end_ms:250,observation:'成功页面自动出现'}]};
+ f.respond(path=>path.includes(source.source_id)?{ok:true,source}:path.startsWith('/ui-video-sources?')?{ok:true,sources:[source]}:undefined);
+ f.app('a');await wait();f.q('[data-video-open]').click();await wait();
+ assert.match(f.q('[data-video-detail]').textContent,/缺少可编辑步骤/);assert.match(f.q('[data-video-first-pass]').textContent,/成功页面自动出现/);
+ assert.equal(f.q('[data-video-reselect]'),null);assert.equal(f.q('[data-video-action="import"]'),null);
+});
+
 test('video upload without an application explains the missing field and focuses it',async t=>{
  const f=await videoFixture(t);let uploads=0;f.w.nativeFetch=async()=>{uploads++;};
  Object.defineProperty(f.q('[data-video-file]'),'files',{value:[new f.w.File(['video'],'clip.mp4')]});

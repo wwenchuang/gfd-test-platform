@@ -538,6 +538,8 @@ def _analyze_whole_frames(document, root, cancelled, progress=None):
     from .ui_video_windows import observe_windows
     observation_timeout_retry_budget={'used':False}
     observed,known_secrets=observe_windows(frames,duration,root,cancelled,progress,None,(),observation_timeout_retry_budget)
+    if document.get('analysis_mode')=='first_pass':
+        return observed
     first_touch_ambiguities=copy.deepcopy(observed.get('touch_ambiguities',[]))
     first_pass=copy.deepcopy(observed['events'])
     first_root_questions=list(observed['uncertainties'])
@@ -1198,7 +1200,7 @@ def draft_proposal(document):
         if re.search('删除|移除',event['target']) and re.search(r'\d{12,}|\d{4}[-/]\d{2}[-/]\d{2}',event['target']) and not event.get('selection'):
             add_event('删除目标包含录屏中的一次性编号或日期，请改为选取本次测试对象；特定对象用例请确认数据仍存在。')
         if re.search('删除|支付|付款|打印|下单',event['target']): add_event('含删除/支付/打印等有副作用动作，请核对测试数据与授权后再手工试跑')
-    if steps and steps[-1]['action']!='aiAssert' and len(steps)<50:
+    if document.get('analysis_mode')!='first_pass' and steps and steps[-1]['action']!='aiAssert' and len(steps)<50:
         event=snapshot['events'][-1]
         if event['expected_candidate']['text']:
             check_id=str(uuid.uuid4());event['expected_check_step_id']=check_id
