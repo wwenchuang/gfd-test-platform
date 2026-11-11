@@ -121,7 +121,7 @@ def _communicate(argv, env, payload, timeout, *, scratch=None, control=None):
     deadline = time.monotonic() + timeout
     try:
         while True:
-            if control is not None and control.cancel_requested():
+            if control is not None and control.cancel_requested() and process.poll() is None:
                 control.stop_reason = 'cancelled'
                 raise Cancelled()
             if scratch is not None and not _scratch_within_limit(scratch):
@@ -138,12 +138,19 @@ def _communicate(argv, env, payload, timeout, *, scratch=None, control=None):
                 return process.returncode, stdout
             except subprocess.TimeoutExpired:
                 first = False
-    except BaseException:
+    except BaseException as error:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        process.communicate(timeout=3)
+        except PermissionError:
+            if process.poll() is None:
+                raise
+        stdout, _ = process.communicate(timeout=3)
+        # A natural completion racing cancellation retains its actual business result.
+        if isinstance(error, Cancelled) and process.returncode != -signal.SIGKILL:
+            control.stop_reason = None
+            return process.returncode, stdout
         raise
     finally:
         if control is not None:

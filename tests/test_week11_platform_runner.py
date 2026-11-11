@@ -2,6 +2,7 @@ import json
 import http.server
 import tempfile
 import threading
+import time
 from pathlib import Path
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -78,6 +79,22 @@ class PlatformRunnerTests(unittest.TestCase):
         with self.assertRaises(runner.Cancelled):
             web._communicate([sys.executable, '-c', 'import time;time.sleep(20)'], {}, b'', 5, control=control)
         self.assertEqual(control.worker_exit_code, -signal.SIGKILL)
+
+    def test_completed_child_keeps_its_observed_exit_if_cancel_arrives_late(self):
+        runner = self.runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            complete = Path(tmp) / 'done'
+            def late_cancel():
+                for _ in range(100):
+                    if complete.exists():
+                        time.sleep(.04)
+                        return True
+                    time.sleep(.01)
+                self.fail('child did not finish')
+            control = runner.ProcessControl(late_cancel)
+            code = 'import pathlib,sys;print("complete",flush=True);pathlib.Path(sys.argv[1]).touch()'
+            rc, stdout = web._communicate([sys.executable, '-c', code, str(complete)], {}, b'', 3, control=control)
+        self.assertEqual((rc, stdout.strip(), control.stop_reason), (0, b'complete', None))
 
     def test_worker_timeout_preserves_signal_and_classification(self):
         runner = self.runner()
