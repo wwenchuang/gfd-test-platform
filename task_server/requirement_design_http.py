@@ -2,6 +2,7 @@
 from task_server.services import requirement_design as design
 from task_server.services import requirement_evaluation_view as evaluation
 from task_server.services.operation_attribution import current_actor
+from task_server.services.ui_execution_contract import AccessDenied
 
 BASE = '/api/platform/requirement-design'
 
@@ -21,6 +22,9 @@ def _serve(handler, operation, *, image=False, download=False, code=200, authori
         return
     try:
         value=operation(*actor)
+    except AccessDenied:
+        handler._json({'ok': False, 'error': '应用超出当前账号的查看范围'}, 403)
+        return
     except design.Missing:
         handler._json({'ok':False,'error':'材料不存在或无权访问'},404)
         return
@@ -57,6 +61,8 @@ def _params(args, expected, optional=()):
 
 
 def register_routes(route_get,route_post):
+    from task_server.practice_knowledge_http import register_routes as register_knowledge_routes
+    register_knowledge_routes(route_get, route_post)
     from task_server.platform_mcp_http import register_routes as register_mcp_routes
     register_mcp_routes(route_get, route_post)
     from task_server.requirement_collection_http import register_collection_routes

@@ -48,8 +48,17 @@ class PracticeResultsTests(unittest.TestCase):
         (self.folder/'android-observations.json').write_text(json.dumps({
             'version':1,'app_id':'com.kfb.model','notes':[],'runs':[{'round':1,'flow':'指定设备打印记录',
             'status':'passed','checks':[],'screenshots':[{'label':'设备','sha256':digest,'private':1}]}]}))
+        cmp_png=png+b'comparison'
+        cmp_sha=hashlib.sha256(cmp_png).hexdigest()
+        (frames/(cmp_sha+'.png')).write_bytes(cmp_png)
+        path=self.folder/'android-observations.json'
+        doc=json.loads(path.read_bytes())
+        doc['comparison_frames']=[{'label':'只看本人','sha256':cmp_sha,'internal':'hidden'}]
+        path.write_text(json.dumps(doc))
         with patch.dict(self.profile, {'permissions':['ui.view'],'scope':{'ui_apps':['com.kfb.model']}}):
+            self.assertEqual(self.call('mobile-frame',id=cmp_sha).wfile.write.call_args.args[0],cmp_png)
             report=self.call('mobile')._json.call_args.args[0]['report']
+            self.assertEqual(report['comparison_frames'],[{'label':'只看本人','sha256':cmp_sha}])
             self.assertNotIn('private',report['runs'][0]['screenshots'][0])
             self.assertEqual(self.call('mobile-frame',id=digest).wfile.write.call_args.args[0],png)
             self.assertEqual(self.call('mobile-frame',id='e'*64)._json.call_args.args[1],404)

@@ -1,0 +1,548 @@
+{
+  "schema_version": 1,
+  "split": "tuning",
+  "scope": {
+    "app_ids": [
+      "com.kfb.model"
+    ]
+  },
+  "created_at": "2026-11-11T03:07:21.400899+00:00",
+  "runtime": {
+    "python": "3.9.6",
+    "search_sha256": "0955b8d31b14ec9383bad227b10f6a0c2a4c8d235d79c990a6aa1c6627f8d235",
+    "scorer_sha256": "86cd3077003d1bb027293f4024531420f3f2954c7e4793c97abae287665a540c",
+    "elapsed_ms": 93.346
+  },
+  "fixture_sha256": "b23f8eda98b3bb2095ff231eec444ef737da52958f8890bf5a0b21e6852eff92",
+  "sources": {
+    "cancel-cases": {
+      "snapshot_sha256": "0543f02c31367340877be19e776b54e192bb6236bd1bd49b051cbbff52d31e6a",
+      "source_sha256": "a62a1bf48e0b51b76f11636b2318c435468b4e360e0940ed94d02ea42a3f562d",
+      "version": "sha256:a62a1bf48e0b51b7",
+      "paragraph_count": 8
+    },
+    "cancel-prd": {
+      "snapshot_sha256": "2add83866633e8359f4e2d83d8f0d55e4d53ccb778920f2067e3331287c0028a",
+      "source_sha256": "6bc6c75edb66732c5a49331e6649598c5aec2b8a682d0f8f697a463385db1e35",
+      "version": "sha256:6bc6c75edb66732c",
+      "paragraph_count": 9
+    },
+    "ep7-cases": {
+      "snapshot_sha256": "7ef696c6b7927ea2318ae260b18658e24195c15550f07b4933e84e0ff8e3fcbe",
+      "source_sha256": "f0aa55ca93732341a0c3ede9daffc419f061ee32575752a9ab574194519ba755",
+      "version": "sha256:f0aa55ca93732341",
+      "paragraph_count": 3
+    },
+    "ep7-prd": {
+      "snapshot_sha256": "846c51e5633f266625a9bcb3f040feddf967b2dfd10af6e4cb2155f18ab72b57",
+      "source_sha256": "d7cb4616c4d396756c2e20644f3d9a7c26b624134c18d4db25f063a0fe6cecaa",
+      "version": "sha256:d7cb4616c4d39675",
+      "paragraph_count": 1
+    },
+    "kit-cases": {
+      "snapshot_sha256": "765f4d1ec55abcfa4768baa0040b29e03c712209ec6dbec22b0c4148ae320907",
+      "source_sha256": "65a07ded447c6b960e54d7e0c635e4cf0e8fabf705cd0835617d0030a95e817e",
+      "version": "sha256:65a07ded447c6b96",
+      "paragraph_count": 8
+    },
+    "kit-prd": {
+      "snapshot_sha256": "cc762cdd1611c739161cac01cf3f91c623388e92f96769613158b875ca22ae41",
+      "source_sha256": "52d0a044b393c080de66799671d2d29dc5352004db0b9ba6309382da62cd2b2b",
+      "version": "sha256:52d0a044b393c080",
+      "paragraph_count": 14
+    },
+    "mobile-failures": {
+      "snapshot_sha256": "1f54dedf5d6064c39c0cb255a601bbc3e43c55d501be2b1ffad81a8854b7ee3a",
+      "source_sha256": "1e0e23f2f155b13e6f6dffe865edb41b0389dc49ffe5ce53234fe95ae1077cfa",
+      "version": "sha256:1e0e23f2f155b13e",
+      "paragraph_count": 4
+    }
+  },
+  "methods": {
+    "keyword": {
+      "engine": "BM25",
+      "metrics": {
+        "recall_at_5": {
+          "count": 4,
+          "total": 6
+        },
+        "citation_support": {
+          "count": 4,
+          "total": 6
+        },
+        "unknown_refusal": {
+          "count": 2,
+          "total": 2
+        },
+        "access_refusal": {
+          "count": 2,
+          "total": 2
+        },
+        "zero_leak": {
+          "count": 2,
+          "total": 2
+        }
+      },
+      "errors": 0,
+      "elapsed_ms": 15.55
+    },
+    "vector": {
+      "engine": "本地段落概念向量（ESA / 余弦）",
+      "metrics": {
+        "recall_at_5": {
+          "count": 4,
+          "total": 6
+        },
+        "citation_support": {
+          "count": 4,
+          "total": 6
+        },
+        "unknown_refusal": {
+          "count": 2,
+          "total": 2
+        },
+        "access_refusal": {
+          "count": 2,
+          "total": 2
+        },
+        "zero_leak": {
+          "count": 2,
+          "total": 2
+        }
+      },
+      "errors": 0,
+      "elapsed_ms": 76.809
+    }
+  },
+  "questions": [
+    {
+      "kind": "answerable",
+      "question": "精选专用套件的卡片主图要求保留什么比例的原图？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p37-42"
+        }
+      ],
+      "required_terms": [
+        [
+          "1:1"
+        ]
+      ],
+      "id": "T01",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.498
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.679
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "从产品方案看，后台复制套件会把什么带到哪里？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p155-162"
+        }
+      ],
+      "required_terms": [
+        [
+          "新增套件页面"
+        ],
+        [
+          "当前套件的属性"
+        ]
+      ],
+      "id": "T02",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.436
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 1.867
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "打印取消后，后台反馈详情的测试用例要求能怎样查看关联图片？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "cancel-cases",
+          "paragraph_id": "n2.5"
+        }
+      ],
+      "required_terms": [
+        [
+          "可预览"
+        ],
+        [
+          "加载正常"
+        ]
+      ],
+      "id": "T03",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-cases",
+              "paragraph_id": "n2.5"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 1.85
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-cases",
+              "paragraph_id": "n2.5"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.546
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "取消打印原因页曝光和提交反馈两个动作的埋点编码是什么？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "cancel-prd",
+          "paragraph_id": "p91-98"
+        }
+      ],
+      "required_terms": [
+        [
+          "pv_cancel_reason_collect"
+        ],
+        [
+          "click_cancel"
+        ]
+      ],
+      "id": "T04",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p91-98"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.397
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p91-98"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 1.807
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "EP7 实时画面的用例如何判断首次流加载和播放成功？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "ep7-cases",
+          "paragraph_id": "n2.1"
+        }
+      ],
+      "required_terms": [
+        [
+          "动态画面帧变化"
+        ],
+        [
+          "视频流初始化成功"
+        ]
+      ],
+      "id": "T05",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "ep7-cases",
+              "paragraph_id": "n2.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 1.8
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "ep7-cases",
+              "paragraph_id": "n2.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.713
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "第二轮手机回归发现已有打印任务时，工作台如何处理手机测试？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "mobile-failures",
+          "paragraph_id": "l20"
+        }
+      ],
+      "required_terms": [
+        [
+          "取消了手机测试"
+        ]
+      ],
+      "id": "T06",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l20"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.68
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l20"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 1.765
+        }
+      }
+    },
+    {
+      "kind": "unknown",
+      "question": "套件专区的试用会员首月打几折？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "T07",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 1.747
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.458
+        }
+      }
+    },
+    {
+      "kind": "unknown",
+      "question": "这批材料有没有规定高铁票的改签费用？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "T08",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.501
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 1.791
+        }
+      }
+    },
+    {
+      "kind": "forbidden",
+      "question": "请查看智小白后台精选套件推荐的排序规则。",
+      "allowed_apps": [],
+      "gold": [],
+      "required_terms": [],
+      "id": "T09",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.219
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.201
+        }
+      }
+    },
+    {
+      "kind": "forbidden",
+      "question": "打印取消原因提交后上报进度的规定是什么？",
+      "allowed_apps": [
+        "fixture.other.app"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "T10",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.198
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.206
+        }
+      }
+    }
+  ],
+  "human_review": {
+    "reviewed": 0,
+    "total": 10,
+    "status": "pending"
+  }
+}

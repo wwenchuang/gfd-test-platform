@@ -1,0 +1,140 @@
+[
+  {
+    "doc_id": "cancel-cases",
+    "title": "【打印成功率专项】打印取消原因收集_测试用例.mm",
+    "version": "sha256:a62a1bf48e0b51b7",
+    "sha256": "a62a1bf48e0b51b76f11636b2318c435468b4e360e0940ed94d02ea42a3f562d",
+    "indexed_on": "2026-11-11",
+    "project": "com.kfb.model",
+    "access": "ui.view + authorized ui_apps",
+    "validity": "2026-11-11 检索基线的有效快照；产品现行状态未作人工确认",
+    "paragraphs": 8,
+    "locators": [
+      "脑图节点 1.2.1（标题与预期结果）",
+      "脑图节点 1.3.1（标题与预期结果）",
+      "脑图节点 2.1（标题与预期结果）",
+      "脑图节点 2.2（标题与预期结果）",
+      "脑图节点 2.3（标题与预期结果）",
+      "脑图节点 2.4（标题与预期结果）",
+      "脑图节点 2.5（标题与预期结果）",
+      "脑图节点 2.8（标题与预期结果）"
+    ]
+  },
+  {
+    "doc_id": "cancel-prd",
+    "title": "【打印成功率专项】打印取消原因收集【修改定稿中】.docx",
+    "version": "sha256:6bc6c75edb66732c",
+    "sha256": "6bc6c75edb66732c5a49331e6649598c5aec2b8a682d0f8f697a463385db1e35",
+    "indexed_on": "2026-11-11",
+    "project": "com.kfb.model",
+    "access": "ui.view + authorized ui_apps",
+    "validity": "2026-11-11 检索基线的有效快照；产品现行状态未作人工确认",
+    "paragraphs": 9,
+    "locators": [
+      "正文（含表格）第 33–35 段",
+      "正文（含表格）第 47–48 段",
+      "正文（含表格）第 51–57 段",
+      "正文（含表格）第 58–62 段",
+      "正文（含表格）第 71–74 段",
+      "正文（含表格）第 80–84 段",
+      "正文（含表格）第 91–98 段",
+      "正文（含表格）第 99–110 段",
+      "正文（含表格）第 115–120 段"
+    ]
+  },
+  {
+    "doc_id": "ep7-cases",
+    "title": "EP7增加实时观看_测试用例.mm",
+    "version": "sha256:f0aa55ca93732341",
+    "sha256": "f0aa55ca93732341a0c3ede9daffc419f061ee32575752a9ab574194519ba755",
+    "indexed_on": "2026-11-11",
+    "project": "com.kfb.model",
+    "access": "ui.view + authorized ui_apps",
+    "validity": "2026-11-11 检索基线的有效快照；产品现行状态未作人工确认",
+    "paragraphs": 3,
+    "locators": [
+      "脑图节点 1.1.1（标题与预期结果）",
+      "脑图节点 1.2.1（标题与预期结果）",
+      "脑图节点 2.1（标题与预期结果）"
+    ]
+  },
+  {
+    "doc_id": "ep7-prd",
+    "title": "EP7增加实时观看.docx",
+    "version": "sha256:d7cb4616c4d39675",
+    "sha256": "d7cb4616c4d396756c2e20644f3d9a7c26b624134c18d4db25f063a0fe6cecaa",
+    "indexed_on": "2026-11-11",
+    "project": "com.kfb.model",
+    "access": "ui.view + authorized ui_apps",
+    "validity": "2026-11-11 检索基线的有效快照；产品现行状态未作人工确认",
+    "paragraphs": 1,
+    "locators": [
+      "正文（含表格）第 3–7 段"
+    ]
+  },
+  {
+    "doc_id": "kit-cases",
+    "title": "套件专区方案_测试用例.mm",
+    "version": "sha256:65a07ded447c6b96",
+    "sha256": "65a07ded447c6b960e54d7e0c635e4cf0e8fabf705cd0835617d0030a95e817e",
+    "indexed_on": "2026-11-11",
+    "project": "com.kfb.model",
+    "access": "ui.view + authorized ui_apps",
+    "validity": "2026-11-11 检索基线的有效快照；产品现行状态未作人工确认",
+    "paragraphs": 8,
+    "locators": [
+      "脑图节点 1.1.1（标题与预期结果）",
+      "脑图节点 3.1（标题与预期结果）",
+      "脑图节点 3.3（标题与预期结果）",
+      "脑图节点 3.4（标题与预期结果）",
+      "脑图节点 3.5（标题与预期结果）",
+      "脑图节点 3.7（标题与预期结果）",
+      "脑图节点 3.9（标题与预期结果）",
+      "脑图节点 3.10（标题与预期结果）"
+    ]
+  },
+  {
+    "doc_id": "kit-prd",
+    "title": "套件专区方案.docx",
+    "version": "sha256:52d0a044b393c080",
+    "sha256": "52d0a044b393c080de66799671d2d29dc5352004db0b9ba6309382da62cd2b2b",
+    "indexed_on": "2026-11-11",
+    "project": "com.kfb.model",
+    "access": "ui.view + authorized ui_apps",
+    "validity": "2026-11-11 检索基线的有效快照；产品现行状态未作人工确认",
+    "paragraphs": 14,
+    "locators": [
+      "正文（含表格）第 27–36 段",
+      "正文（含表格）第 37–42 段",
+      "正文（含表格）第 52–65 段",
+      "正文（含表格）第 69–83 段",
+      "正文（含表格）第 85–94 段",
+      "正文（含表格）第 112–119 段",
+      "正文（含表格）第 127–131 段",
+      "正文（含表格）第 139–141 段",
+      "正文（含表格）第 155–162 段",
+      "正文（含表格）第 167–173 段",
+      "正文（含表格）第 174–179 段",
+      "正文（含表格）第 182–188 段",
+      "正文（含表格）第 191–196 段",
+      "正文（含表格）第 198–205 段"
+    ]
+  },
+  {
+    "doc_id": "mobile-failures",
+    "title": "2026-11-11-mobile-ui.md",
+    "version": "sha256:1e0e23f2f155b13e",
+    "sha256": "1e0e23f2f155b13e6f6dffe865edb41b0389dc49ffe5ce53234fe95ae1077cfa",
+    "indexed_on": "2026-11-11",
+    "project": "com.kfb.model",
+    "access": "ui.view + authorized ui_apps",
+    "validity": "2026-11-11 检索基线的有效快照；产品现行状态未作人工确认",
+    "paragraphs": 4,
+    "locators": [
+      "旧用例为何需要修订 · 第 19 行",
+      "旧用例为何需要修订 · 第 20 行",
+      "旧用例为何需要修订 · 第 21 行",
+      "旧用例为何需要修订 · 第 22 行"
+    ]
+  }
+]

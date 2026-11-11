@@ -2,6 +2,8 @@
 
 // A closed, versioned list: no user-provided target, route, query or method.
 const staticPaths = new Set([
+  '/js/ui-practice-knowledge.c623d72768bc3808.js',
+  '/js/ui-practice-results.1e7171f9965b5742.js',
   '/js/ui-practice-results.24dfe47df69d40c1.js',
   '/js/ui-practice-results.636f0e1b73ee9516.js',
   '/js/ui-practice-results.161ad13198453172.js',
@@ -18,7 +20,7 @@ const staticPaths = new Set([
   '/js/ui-simple-entry.4066b05157b7ed35.js', '/js/ui-simple-entry.4e7bbb6db84a5b84.js',
   '/css/ui-case-draft.98c46b5734c85379.css',
   ...['operation-history','app','round5','ui-simple','platform-workbench','ui-workbench','ui-case-draft'].map(name=>`/css/${name}.css`),
-  ...['utils','error-handler','empty-states','loading-manager','form-steps','state','auth','identity-management','operation-history','navigation','agent-workbench','agent-status','device-recorder','cases','execution','reports','ai-repair','model-config','yaml-editor','pending-actions','ui-execution-replay','ui-batch-view','ui-batch-report','ui-test-home','ui-case-draft','ui-practice-results','ui-simple-entry','app'].map(name=>`/js/${name}.js`),
+  ...['utils','error-handler','empty-states','loading-manager','form-steps','state','auth','identity-management','operation-history','navigation','agent-workbench','agent-status','device-recorder','cases','execution','reports','ai-repair','model-config','yaml-editor','pending-actions','ui-execution-replay','ui-batch-view','ui-batch-report','ui-test-home','ui-case-draft','ui-practice-results','ui-practice-knowledge','ui-simple-entry','app'].map(name=>`/js/${name}.js`),
 ]);
 const apiPaths = new Set(['/api/auth/me', '/api/ui-executions/availability']);
 

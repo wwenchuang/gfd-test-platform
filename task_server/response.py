@@ -31,6 +31,8 @@ def request_body_limit(path):
     The legacy raw report endpoint is streamed to disk and may use the larger
     upload limit. JSON and base64 chunk endpoints stay on the normal limit.
     """
+    if path == "/api/platform/requirement-design/knowledge/search":
+        return 8192
     if path in {"/api/platform/requirement-design/source", "/api/platform/requirement-design/collection"}:
         return 3 * 1024 * 1024
     if path in {"/api/platform/requirement-design", "/api/platform/mcp/call", "/api/platform/mcp/diagnose"}:

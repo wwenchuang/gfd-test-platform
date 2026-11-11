@@ -1,0 +1,1549 @@
+{
+  "schema_version": 1,
+  "split": "holdout",
+  "scope": {
+    "app_ids": [
+      "com.kfb.model"
+    ]
+  },
+  "created_at": "2026-11-11T03:07:47.995571+00:00",
+  "runtime": {
+    "python": "3.9.6",
+    "search_sha256": "77fc8c8bd8b6a462619c47ccd21aabc74ebacc104e922d35e7aa5e5ae490b216",
+    "scorer_sha256": "86cd3077003d1bb027293f4024531420f3f2954c7e4793c97abae287665a540c",
+    "elapsed_ms": 329.76
+  },
+  "fixture_sha256": "573cf858cf29bdaa2284a46bffad445b9f479ee3ac4dc1315001a05672b47743",
+  "sources": {
+    "cancel-cases": {
+      "snapshot_sha256": "0543f02c31367340877be19e776b54e192bb6236bd1bd49b051cbbff52d31e6a",
+      "source_sha256": "a62a1bf48e0b51b76f11636b2318c435468b4e360e0940ed94d02ea42a3f562d",
+      "version": "sha256:a62a1bf48e0b51b7",
+      "paragraph_count": 8
+    },
+    "cancel-prd": {
+      "snapshot_sha256": "2add83866633e8359f4e2d83d8f0d55e4d53ccb778920f2067e3331287c0028a",
+      "source_sha256": "6bc6c75edb66732c5a49331e6649598c5aec2b8a682d0f8f697a463385db1e35",
+      "version": "sha256:6bc6c75edb66732c",
+      "paragraph_count": 9
+    },
+    "ep7-cases": {
+      "snapshot_sha256": "7ef696c6b7927ea2318ae260b18658e24195c15550f07b4933e84e0ff8e3fcbe",
+      "source_sha256": "f0aa55ca93732341a0c3ede9daffc419f061ee32575752a9ab574194519ba755",
+      "version": "sha256:f0aa55ca93732341",
+      "paragraph_count": 3
+    },
+    "ep7-prd": {
+      "snapshot_sha256": "846c51e5633f266625a9bcb3f040feddf967b2dfd10af6e4cb2155f18ab72b57",
+      "source_sha256": "d7cb4616c4d396756c2e20644f3d9a7c26b624134c18d4db25f063a0fe6cecaa",
+      "version": "sha256:d7cb4616c4d39675",
+      "paragraph_count": 1
+    },
+    "kit-cases": {
+      "snapshot_sha256": "765f4d1ec55abcfa4768baa0040b29e03c712209ec6dbec22b0c4148ae320907",
+      "source_sha256": "65a07ded447c6b960e54d7e0c635e4cf0e8fabf705cd0835617d0030a95e817e",
+      "version": "sha256:65a07ded447c6b96",
+      "paragraph_count": 8
+    },
+    "kit-prd": {
+      "snapshot_sha256": "cc762cdd1611c739161cac01cf3f91c623388e92f96769613158b875ca22ae41",
+      "source_sha256": "52d0a044b393c080de66799671d2d29dc5352004db0b9ba6309382da62cd2b2b",
+      "version": "sha256:52d0a044b393c080",
+      "paragraph_count": 14
+    },
+    "mobile-failures": {
+      "snapshot_sha256": "1f54dedf5d6064c39c0cb255a601bbc3e43c55d501be2b1ffad81a8854b7ee3a",
+      "source_sha256": "1e0e23f2f155b13e6f6dffe865edb41b0389dc49ffe5ce53234fe95ae1077cfa",
+      "version": "sha256:1e0e23f2f155b13e",
+      "paragraph_count": 4
+    }
+  },
+  "methods": {
+    "keyword": {
+      "engine": "BM25",
+      "metrics": {
+        "recall_at_5": {
+          "count": 16,
+          "total": 20
+        },
+        "citation_support": {
+          "count": 16,
+          "total": 20
+        },
+        "unknown_refusal": {
+          "count": 5,
+          "total": 5
+        },
+        "access_refusal": {
+          "count": 5,
+          "total": 5
+        },
+        "zero_leak": {
+          "count": 5,
+          "total": 5
+        }
+      },
+      "errors": 0,
+      "elapsed_ms": 64.326
+    },
+    "vector": {
+      "engine": "本地段落概念向量（ESA / 余弦）",
+      "metrics": {
+        "recall_at_5": {
+          "count": 16,
+          "total": 20
+        },
+        "citation_support": {
+          "count": 16,
+          "total": 20
+        },
+        "unknown_refusal": {
+          "count": 5,
+          "total": 5
+        },
+        "access_refusal": {
+          "count": 5,
+          "total": 5
+        },
+        "zero_leak": {
+          "count": 5,
+          "total": 5
+        }
+      },
+      "errors": 0,
+      "elapsed_ms": 265.005
+    }
+  },
+  "questions": [
+    {
+      "kind": "answerable",
+      "question": "基础套件包关联了好几个模型，运营改动后台的顺序后，用户端会发生什么变化？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p182-188"
+        }
+      ],
+      "required_terms": [
+        [
+          "拖拽"
+        ],
+        [
+          "App 前端模型展示顺序"
+        ]
+      ],
+      "id": "H01",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p182-188"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 3.359
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p182-188"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.637
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "精选的通用套件封面应如何裁切，卡片上的模型信息有哪些？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p27-36"
+        }
+      ],
+      "required_terms": [
+        [
+          "中间截取 4:3"
+        ],
+        [
+          "关联模型图片"
+        ],
+        [
+          "关联模型个数"
+        ]
+      ],
+      "id": "H02",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p167-173"
+            }
+          ],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.677
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p167-173"
+            }
+          ],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.561
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "全部套件页顶部按什么划分类别？请给出两种例子。",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p52-65"
+        }
+      ],
+      "required_terms": [
+        [
+          "玩法能力"
+        ],
+        [
+          "磁吸"
+        ],
+        [
+          "拼装"
+        ]
+      ],
+      "id": "H03",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.585
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.461
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "从我的套件进入详情后，用户如何查看盒内物品，底部购买按钮显示什么？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p85-94"
+        }
+      ],
+      "required_terms": [
+        [
+          "弹窗"
+        ],
+        [
+          "套件包含内容"
+        ],
+        [
+          "再次购买"
+        ]
+      ],
+      "id": "H04",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.992
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.888
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "平板买套件时无法拉起微信，接下来怎样进入购买流程？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p127-131"
+        }
+      ],
+      "required_terms": [
+        [
+          "手机扫码"
+        ],
+        [
+          "小程序购买"
+        ]
+      ],
+      "id": "H05",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p127-131"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.579
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p127-131"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 11.167
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "新增套件的详情展示是否必填？图片和视频最多可以放几个？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p167-173"
+        }
+      ],
+      "required_terms": [
+        [
+          "非必填"
+        ],
+        [
+          "最多六个"
+        ]
+      ],
+      "id": "H06",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p167-173"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 11.161
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p167-173"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.763
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "品类套件包在后台可以关联哪些业务对象？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p174-179"
+        }
+      ],
+      "required_terms": [
+        [
+          "关联工具、主题、模型"
+        ]
+      ],
+      "id": "H07",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.492
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.526
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "“全部套件”的默认展示顺序如何决定，权重的默认值是什么？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-prd",
+          "paragraph_id": "p198-205"
+        }
+      ],
+      "required_terms": [
+        [
+          "数字越小越靠前"
+        ],
+        [
+          "默认 1"
+        ]
+      ],
+      "id": "H08",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p198-205"
+            },
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p182-188"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.229
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p198-205"
+            },
+            {
+              "document_id": "kit-prd",
+              "paragraph_id": "p182-188"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.437
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "查扫码购买的测试用例，二维码过期和扫码成功分别需要核对什么？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-cases",
+          "paragraph_id": "n3.5"
+        }
+      ],
+      "required_terms": [
+        [
+          "失效提示"
+        ],
+        [
+          "刷新机制"
+        ],
+        [
+          "结果反馈"
+        ]
+      ],
+      "id": "H09",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-cases",
+              "paragraph_id": "n3.5"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.564
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-cases",
+              "paragraph_id": "n3.5"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.328
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "按首页入口的测试用例，点套件专区图标后应跳转到哪里？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "kit-cases",
+          "paragraph_id": "n3.1"
+        }
+      ],
+      "required_terms": [
+        [
+          "跳转至套件专区首页"
+        ]
+      ],
+      "id": "H10",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-cases",
+              "paragraph_id": "n3.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.514
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "kit-cases",
+              "paragraph_id": "n3.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.599
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "App 取消打印的问题描述可以选多个吗，问题图片是否必传？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "cancel-prd",
+          "paragraph_id": "p51-57"
+        }
+      ],
+      "required_terms": [
+        [
+          "可进行多选"
+        ],
+        [
+          "非必传"
+        ]
+      ],
+      "id": "H11",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p51-57"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.582
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p51-57"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.67
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "用户在打印机上取消后又提交了评论，打印记录中的评价入口应怎样变化？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "cancel-prd",
+          "paragraph_id": "p58-62"
+        }
+      ],
+      "required_terms": [
+        [
+          "打印评价入口不再展示"
+        ]
+      ],
+      "id": "H12",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p58-62"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.769
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p58-62"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.567
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "取消原因的数据方案把打印进度划为哪四档，与哪个机型的现状对齐？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "cancel-prd",
+          "paragraph_id": "p33-35"
+        }
+      ],
+      "required_terms": [
+        [
+          "<10%"
+        ],
+        [
+          "10-30%"
+        ],
+        [
+          "30-80%"
+        ],
+        [
+          "≥80%"
+        ],
+        [
+          "EP3 PLUS"
+        ]
+      ],
+      "id": "H13",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p33-35"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.83
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p33-35"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.684
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "用户看到打印已取消弹窗后选择先不反馈或告诉我们，对应的事件编码分别是什么？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "cancel-prd",
+          "paragraph_id": "p99-110"
+        }
+      ],
+      "required_terms": [
+        [
+          "click_dismiss_without_feedback"
+        ],
+        [
+          "click_tell_us"
+        ]
+      ],
+      "id": "H14",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p99-110"
+            },
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p58-62"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.278
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p99-110"
+            },
+            {
+              "document_id": "cancel-prd",
+              "paragraph_id": "p58-62"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.512
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "取消打印原因里，按输入框测试用例粘贴第201个字符后，长度和字符应该如何处理？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "cancel-cases",
+          "paragraph_id": "n1.3.1"
+        }
+      ],
+      "required_terms": [
+        [
+          "201字符"
+        ],
+        [
+          "截断或禁止输入"
+        ],
+        [
+          "仍为200"
+        ]
+      ],
+      "id": "H15",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-cases",
+              "paragraph_id": "n1.3.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.478
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-cases",
+              "paragraph_id": "n1.3.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.546
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "取消打印的测试用例对平板弹窗在分屏状态下的可见性和焦点有什么预期？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "cancel-cases",
+          "paragraph_id": "n2.1"
+        }
+      ],
+      "required_terms": [
+        [
+          "仍可见"
+        ],
+        [
+          "可点击"
+        ],
+        [
+          "焦点可捕获"
+        ]
+      ],
+      "id": "H16",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-cases",
+              "paragraph_id": "n2.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.588
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "cancel-cases",
+              "paragraph_id": "n2.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.472
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "EP7 产品方案删去设备界面原来的哪一栏？打印中如何唤醒新画面？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "ep7-prd",
+          "paragraph_id": "p3-7"
+        }
+      ],
+      "required_terms": [
+        [
+          "延时视频同步制作中"
+        ],
+        [
+          "点击唤醒"
+        ]
+      ],
+      "id": "H17",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "ep7-prd",
+              "paragraph_id": "p3-7"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.687
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "ep7-prd",
+              "paragraph_id": "p3-7"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.416
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "EP7 用例检查旧延时视频区域时，除了文字消失还要排除哪些占位或显示异常？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "ep7-cases",
+          "paragraph_id": "n1.1.1"
+        }
+      ],
+      "required_terms": [
+        [
+          "异常空白"
+        ],
+        [
+          "错位"
+        ],
+        [
+          "残影"
+        ],
+        [
+          "占位"
+        ]
+      ],
+      "id": "H18",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "ep7-cases",
+              "paragraph_id": "n1.1.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.616
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "ep7-cases",
+              "paragraph_id": "n1.1.1"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.393
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "智小白手机首轮报告里，旧模型生成记录停在哪个页面，失败原因是什么？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "mobile-failures",
+          "paragraph_id": "l19"
+        }
+      ],
+      "required_terms": [
+        [
+          "创作首页"
+        ],
+        [
+          "等待旧入口超时"
+        ]
+      ],
+      "id": "H19",
+      "results": {
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l19"
+            },
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l20"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.624
+        },
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l19"
+            },
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l20"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.471
+        }
+      }
+    },
+    {
+      "kind": "answerable",
+      "question": "修订后的收藏、打印记录和创作记录分别保存为哪一版 Midscene 草稿？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [
+        {
+          "document_id": "mobile-failures",
+          "paragraph_id": "l21"
+        }
+      ],
+      "required_terms": [
+        [
+          "收藏第 4 版"
+        ],
+        [
+          "打印记录第 4 版"
+        ],
+        [
+          "创作记录第 5 版"
+        ]
+      ],
+      "id": "H20",
+      "results": {
+        "vector": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l21"
+            },
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l22"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.729
+        },
+        "keyword": {
+          "status": "cited",
+          "top5": [
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l21"
+            },
+            {
+              "document_id": "mobile-failures",
+              "paragraph_id": "l22"
+            }
+          ],
+          "recall_hits": 1,
+          "citation_supported": true,
+          "refused": false,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.411
+        }
+      }
+    },
+    {
+      "kind": "unknown",
+      "question": "套件商品从购买日起几天内可以无理由退货？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "H21",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.261
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.667
+        }
+      }
+    },
+    {
+      "kind": "unknown",
+      "question": "取消打印反馈中，每张问题图片的上传大小上限是多少 MB？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "H22",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.66
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.586
+        }
+      }
+    },
+    {
+      "kind": "unknown",
+      "question": "EP7 实时画面的编码格式和最低支持帧率是多少？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "H23",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.142
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.356
+        }
+      }
+    },
+    {
+      "kind": "unknown",
+      "question": "这次旧用例修订的人工评审总工时有多少分钟？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "H24",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 10.501
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 2.214
+        }
+      }
+    },
+    {
+      "kind": "unknown",
+      "question": "成都到哈尔滨的下一班航班几点起飞？",
+      "allowed_apps": [
+        "com.kfb.model"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "H25",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 1.767
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 9.354
+        }
+      }
+    },
+    {
+      "kind": "forbidden",
+      "question": "基础套件包后台允许关联多个模型吗？",
+      "allowed_apps": [],
+      "gold": [],
+      "required_terms": [],
+      "id": "H26",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.214
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.197
+        }
+      }
+    },
+    {
+      "kind": "forbidden",
+      "question": "取消打印中的问题详细描述最多有多少字？",
+      "allowed_apps": [
+        "fixture.other.app"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "H27",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.196
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.193
+        }
+      }
+    },
+    {
+      "kind": "forbidden",
+      "question": "EP7 用例怎么确认实时画面视频播放器已开始播放？",
+      "allowed_apps": [
+        "fixture.other.app"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "H28",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.197
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.191
+        }
+      }
+    },
+    {
+      "kind": "forbidden",
+      "question": "那次手机回归旧模型生成记录停在哪个页面？",
+      "allowed_apps": [],
+      "gold": [],
+      "required_terms": [],
+      "id": "H29",
+      "results": {
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.19
+        },
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.195
+        }
+      }
+    },
+    {
+      "kind": "forbidden",
+      "question": "全部套件卡片包含的六项要素是什么？",
+      "allowed_apps": [
+        "fixture.other.app"
+      ],
+      "gold": [],
+      "required_terms": [],
+      "id": "H30",
+      "results": {
+        "vector": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.209
+        },
+        "keyword": {
+          "status": "unknown",
+          "top5": [],
+          "recall_hits": 0,
+          "citation_supported": false,
+          "refused": true,
+          "leaked": false,
+          "error": null,
+          "elapsed_ms": 0.199
+        }
+      }
+    }
+  ],
+  "human_review": {
+    "reviewed": 0,
+    "total": 30,
+    "status": "pending"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "document_id": "ep7-prd",
+  "title": "EP7增加实时观看.docx",
+  "kind": "PRD",
+  "app_id": "com.kfb.model",
+  "version": "sha256:d7cb4616c4d39675",
+  "source_sha256": "d7cb4616c4d396756c2e20644f3d9a7c26b624134c18d4db25f063a0fe6cecaa",
+  "paragraphs": [
+    {
+      "paragraph_id": "p3-7",
+      "locator": "正文（含表格）第 3–7 段",
+      "excerpt": "目标:\nEP7当前设备界面，删除原先”延时视频同步制作中“栏，增加实时画面视频播放器\n具体方案：\n打印中实时画面，点击唤醒"
+    }
+  ]
+}

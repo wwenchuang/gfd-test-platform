@@ -121,13 +121,20 @@ def mobile_observations():
                 raise files.Unavailable()
             row['screenshots'].append(files._fields(frame, 'sha256 label'))
         visible['runs'].append(row)
+    visible['comparison_frames'] = []
+    for frame in _rows({'frames': doc.get('comparison_frames', [])}, 'frames'):
+        if not isinstance(frame.get('sha256'), str) or not _DIGEST.fullmatch(frame['sha256']):
+            raise files.Unavailable()
+        visible['comparison_frames'].append(files._fields(frame, 'sha256 label'))
     return visible
 
 
 def mobile_frame(digest):
     if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
         raise ValueError('截图标识无效')
-    if not any(pic['sha256'] == digest for row in mobile_observations()['runs'] for pic in row['screenshots']):
+    report = mobile_observations()
+    frames = report['comparison_frames'] + [pic for row in report['runs'] for pic in row['screenshots']]
+    if not any(pic['sha256'] == digest for pic in frames):
         raise design.Missing()
     data = files._published_bytes(digest + '.png', subdirectories=('android-observations',), limit=1024 * 1024)
     if not data.startswith(b'\x89PNG\r\n\x1a\n') or hashlib.sha256(data).hexdigest() != digest:

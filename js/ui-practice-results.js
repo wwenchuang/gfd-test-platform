@@ -27,6 +27,13 @@ window.UiPracticeResults = (() => {
     add(body,'h3','智小白3D '+report.build+' · '+report.device);
     add(body,'p',formatTime(report.measured_at)+' · 真机只读检查 '+runs.filter(x=>x.status==='passed').length+'/'+runs.length+' 通过');
     for(const note of report.notes) add(body,'p',note);
+    if(report.comparison_frames?.length) {
+      const evidence=detail(body,'查看打印记录筛选对照截图');
+      for(const frame of report.comparison_frames) {
+        const btn=add(evidence,'button','下载'+frame.label);btn.type='button';
+        btn.onclick=()=>download(btn,frame.sha256);
+      }
+    }
     for(const flow of new Set(runs.map(row=>row.flow))) {
       const results=runs.filter(row=>row.flow===flow);
       const group=detail(body,flow+' · '+results.filter(x=>x.status==='passed').length+'/'+results.length+' 通过');
@@ -624,6 +631,7 @@ window.UiPracticeResults = (() => {
       disposed=true; clearInterval(guard);
       for(const controller of active) controller.abort();
       disposeTools();
+      if (disposeKnowledge) disposeKnowledge();
       for(const panel of panels) panel.remove();
     }
     async function request(path, binary) {
@@ -687,6 +695,8 @@ window.UiPracticeResults = (() => {
     }
     const guard=setInterval(()=>{if(!permitted()) dispose();},500);
     const disposeTools=attachTools(page,()=>permitted()&&hasPermission('ui.view'));
+    const disposeKnowledge=hasPermission('ui.view') && window.UiPracticeKnowledge
+      ? window.UiPracticeKnowledge.attach(page,()=>permitted()&&hasPermission('ui.view')) : null;
     const apps=currentAccessProfile?.scope?.ui_apps;
     if(hasPermission('ui.view') && (currentAccessProfile?.is_superuser===true || apps==='*' ||
        (Array.isArray(apps) && apps.includes('com.kfb.model')))) panelFor('mobile','手机回归实测');

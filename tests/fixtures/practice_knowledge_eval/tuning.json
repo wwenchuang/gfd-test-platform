@@ -1,0 +1,166 @@
+[
+  {
+    "kind": "answerable",
+    "question": "精选专用套件的卡片主图要求保留什么比例的原图？",
+    "allowed_apps": [
+      "com.kfb.model"
+    ],
+    "gold": [
+      {
+        "document_id": "kit-prd",
+        "paragraph_id": "p37-42"
+      }
+    ],
+    "required_terms": [
+      [
+        "1:1"
+      ]
+    ],
+    "id": "T01"
+  },
+  {
+    "kind": "answerable",
+    "question": "从产品方案看，后台复制套件会把什么带到哪里？",
+    "allowed_apps": [
+      "com.kfb.model"
+    ],
+    "gold": [
+      {
+        "document_id": "kit-prd",
+        "paragraph_id": "p155-162"
+      }
+    ],
+    "required_terms": [
+      [
+        "新增套件页面"
+      ],
+      [
+        "当前套件的属性"
+      ]
+    ],
+    "id": "T02"
+  },
+  {
+    "kind": "answerable",
+    "question": "打印取消后，后台反馈详情的测试用例要求能怎样查看关联图片？",
+    "allowed_apps": [
+      "com.kfb.model"
+    ],
+    "gold": [
+      {
+        "document_id": "cancel-cases",
+        "paragraph_id": "n2.5"
+      }
+    ],
+    "required_terms": [
+      [
+        "可预览"
+      ],
+      [
+        "加载正常"
+      ]
+    ],
+    "id": "T03"
+  },
+  {
+    "kind": "answerable",
+    "question": "取消打印原因页曝光和提交反馈两个动作的埋点编码是什么？",
+    "allowed_apps": [
+      "com.kfb.model"
+    ],
+    "gold": [
+      {
+        "document_id": "cancel-prd",
+        "paragraph_id": "p91-98"
+      }
+    ],
+    "required_terms": [
+      [
+        "pv_cancel_reason_collect"
+      ],
+      [
+        "click_cancel"
+      ]
+    ],
+    "id": "T04"
+  },
+  {
+    "kind": "answerable",
+    "question": "EP7 实时画面的用例如何判断首次流加载和播放成功？",
+    "allowed_apps": [
+      "com.kfb.model"
+    ],
+    "gold": [
+      {
+        "document_id": "ep7-cases",
+        "paragraph_id": "n2.1"
+      }
+    ],
+    "required_terms": [
+      [
+        "动态画面帧变化"
+      ],
+      [
+        "视频流初始化成功"
+      ]
+    ],
+    "id": "T05"
+  },
+  {
+    "kind": "answerable",
+    "question": "第二轮手机回归发现已有打印任务时，工作台如何处理手机测试？",
+    "allowed_apps": [
+      "com.kfb.model"
+    ],
+    "gold": [
+      {
+        "document_id": "mobile-failures",
+        "paragraph_id": "l20"
+      }
+    ],
+    "required_terms": [
+      [
+        "取消了手机测试"
+      ]
+    ],
+    "id": "T06"
+  },
+  {
+    "kind": "unknown",
+    "question": "套件专区的试用会员首月打几折？",
+    "allowed_apps": [
+      "com.kfb.model"
+    ],
+    "gold": [],
+    "required_terms": [],
+    "id": "T07"
+  },
+  {
+    "kind": "unknown",
+    "question": "这批材料有没有规定高铁票的改签费用？",
+    "allowed_apps": [
+      "com.kfb.model"
+    ],
+    "gold": [],
+    "required_terms": [],
+    "id": "T08"
+  },
+  {
+    "kind": "forbidden",
+    "question": "请查看智小白后台精选套件推荐的排序规则。",
+    "allowed_apps": [],
+    "gold": [],
+    "required_terms": [],
+    "id": "T09"
+  },
+  {
+    "kind": "forbidden",
+    "question": "打印取消原因提交后上报进度的规定是什么？",
+    "allowed_apps": [
+      "fixture.other.app"
+    ],
+    "gold": [],
+    "required_terms": [],
+    "id": "T10"
+  }
+]

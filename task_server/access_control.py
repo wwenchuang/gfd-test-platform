@@ -3,6 +3,8 @@
 import re
 from urllib.parse import unquote
 
+from task_server.practice_knowledge_http import is_read_route as is_knowledge_read_route
+
 
 def _mcp_route(method, path):
     return ((method == 'POST' and path in {'/api/platform/mcp/call','/api/platform/mcp/diagnose'}) or
@@ -224,8 +226,8 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
-        if _mcp_route(method, path):
-            # MCP checks the current owner and UI scope against the stored run.
+        if _mcp_route(method, path) or is_knowledge_read_route(method, path):
+            # These services verify the current actor and authorized scope before reading data.
             return
         if self._draft_permission(method, path):
             # Private draft services verify the persisted owner and current app scope.
@@ -347,7 +349,7 @@ class MainAccess:
         from task_server.config import safe_bool
         if method == 'POST' and path == '/api/platform/mcp/diagnose':
             return 'ui.execute'
-        if _mcp_route(method, path):
+        if _mcp_route(method, path) or is_knowledge_read_route(method, path):
             return "ui.view"
         draft_permission = self._draft_permission(method, path)
         if draft_permission:
