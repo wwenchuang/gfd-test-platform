@@ -45,6 +45,19 @@ class KitRegressionReportTests(unittest.TestCase):
                                      observed='缺少数据', evidence='检查记录')], defects=[], knowledge=[],
                         limitations=['待人工确认'], raw='PRIVATE')
 
+    def test_recent_lists_published_reports_in_date_order_and_checks_scope(self):
+        handler = Mock()
+        self.file.write_text(json.dumps(self.doc))
+        mobile = {'measured_at':'2026-11-12T08:00:00+08:00'}
+        with patch('task_server.services.practice_result_view.mobile_observations', return_value=mobile):
+            self.routes[knowledge.RECENT_REPORTS](handler, {})
+        rows = handler._json.call_args.args[0]['reports']
+        self.assertEqual([r['kind'] for r in rows], ['mobile','kit-regression'])
+        self.assertTrue(all(set(row) == {'kind','title','date'} for row in rows))
+        self.profile['scope']['ui_apps'] = []
+        self.routes[knowledge.RECENT_REPORTS](handler, {})
+        self.assertEqual(handler._json.call_args.args[1], 403)
+
     def call(self, suffix='', **params):
         self.assertIn(BASE + suffix, self.routes, 'missing kit regression route')
         handler = Mock()

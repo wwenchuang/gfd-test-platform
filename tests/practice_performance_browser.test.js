@@ -29,6 +29,7 @@ test('a scoped viewer opens real report sections, downloads the approved evidenc
     const req = route.request(), url = new URL(req.url());
     if (url.pathname === '/') return route.fulfill({contentType:'text/html; charset=utf-8',body:html});
     if (url.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',url.pathname)});
+    if (url.pathname.endsWith('/practice-results/recent')) return route.fulfill({json:{ok:true,reports:[]}});
     assert.equal(req.method(),'GET');
     assert.equal(req.headers().authorization,'Bearer fixture');
     calls++;
@@ -53,7 +54,7 @@ test('a scoped viewer opens real report sections, downloads the approved evidenc
   await panel.getByText('仅限单机',{exact:true}).waitFor();
   const download = page.waitForEvent('download');
   await panel.getByRole('button',{name:'下载本次原始证据 ZIP'}).click();
-  assert.equal((await download).suggestedFilename(), 'jmeter-evidence-'+digest.slice(0,12)+'.zip');
+  assert.equal((await download).suggestedFilename(), '接口性能实测-2026-11-11.zip');
   status = 403;
   await panel.getByRole('button',{name:'刷新结果'}).click();
   await panel.getByText('登录状态或权限已变化',{exact:false}).waitFor();

@@ -39,6 +39,7 @@ async function setup(t,diagnose=async id=>({json:{ok:true,diagnosis:diagnosis(id
     const req=route.request(),url=new URL(req.url()),api=url.pathname.split('/').pop();
     if(url.pathname==='/') return route.fulfill({contentType:'text/html; charset=utf-8',body:generate?html.replace("p==='ui.view'","['ui.view','ui.execute'].includes(p)"):html});
     if(url.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',url.pathname)});
+    if (url.pathname.endsWith('/practice-results/recent')) return route.fulfill({json:{ok:true,reports:[]}});
     assert.equal(req.headers().authorization,'Bearer fixture');
     let json={ok:true};
     if(!authorized) return route.fulfill({status:403,json:{ok:false,code:'unauthorized'}});

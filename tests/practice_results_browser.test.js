@@ -16,6 +16,7 @@ test('workbench opens per-case evidence, downloads authenticated PNG and discard
     const req=route.request(),u=new URL(req.url());
     if(u.pathname==='/') return route.fulfill({contentType:'text/html; charset=utf-8',body:html});
     if(u.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',u.pathname)});
+    if (u.pathname.endsWith('/practice-results/recent')) return route.fulfill({json:{ok:true,reports:[]}});
     if(!u.pathname.includes('/practice-results/')) return route.fulfill({json:{ok:true}});
     assert.equal(req.headers().authorization,'Bearer fixture');
     if(u.pathname.endsWith('/screenshot')){

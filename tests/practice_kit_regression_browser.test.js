@@ -25,14 +25,16 @@ test('suite regression shows source, linked checks, outstanding items and verifi
   const ticket={id:'KIT-'+'c'.repeat(24),title:'构建差异',type:'构建或配置待查',status:'已登记 · 待核对',
     run_id:report.run_id,observation_id:'field-01',created_at:report.created_at,observed:'独立原件中的观测',evidence:'原件证据'};
   report.defects=[{...ticket,observed:'报告回读摘要'}];
-  let status=200, ticketReads=0;
+  let status=200, ticketReads=0, downloadAttempts=0;
   await page.route('http://127.0.0.1/**', async route => {
     const req=route.request(), url=new URL(req.url());
     if(url.pathname==='/') return route.fulfill({contentType:'text/html; charset=utf-8',body:html});
     if(url.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',url.pathname)});
     assert.equal(req.method(),'GET');
     assert.equal(req.headers().authorization,'Bearer fixture');
+    if(url.pathname.endsWith('/recent')) return route.fulfill({json:{ok:true,reports:[{kind:'kit-regression',title:'套件专区回归报告',date:report.created_at}]}});
     if(url.pathname.endsWith('/kit-regression-evidence')) {
+      if(++downloadAttempts===1) return route.fulfill({status:503,body:''});
       assert.equal(url.searchParams.get('id'),digest);
       return route.fulfill({contentType:'application/zip',body:Buffer.from('test')});
     }
@@ -46,7 +48,7 @@ test('suite regression shows source, linked checks, outstanding items and verifi
   });
   await page.goto('http://127.0.0.1/');
   const title=page.getByText('套件专区需求回归',{exact:true});
-  await title.click();
+  await page.getByRole('region',{name:'最近的回归报告'}).getByRole('button',{name:'套件专区回归报告 · 11月11日'}).click();
   const panel=page.locator('details').filter({has:title}).first();
   await panel.getByText('暂不能确认可以发版',{exact:true}).waitFor();
   assert.equal(await panel.getByText(report.requirement,{exact:true}).isVisible(),false);
@@ -60,9 +62,13 @@ test('suite regression shows source, linked checks, outstanding items and verifi
   assert.equal(ticketReads,1);
   await panel.getByText('技术详情与证据',{exact:true}).click();
   await panel.getByText('人工审核待办',{exact:true}).waitFor();
-  const download=page.waitForEvent('download');
   await panel.getByRole('button',{name:'下载回归证据 ZIP'}).click();
-  assert.equal((await download).suggestedFilename(),'kit-regression-evidence-'+digest.slice(0,12)+'.zip');
+  await panel.getByText('下载失败，请重试。',{exact:true}).waitFor();
+  assert.equal(await panel.getByText('人工审核待办',{exact:true}).isVisible(),true);
+  assert.equal(await panel.getByText('独立原件中的观测',{exact:false}).isVisible(),true);
+  const download=page.waitForEvent('download');
+  await panel.getByRole('button',{name:'重新下载'}).click();
+  assert.equal((await download).suggestedFilename(),'套件专区回归报告-2026-11-11.zip');
   status=403;
   await panel.getByRole('button',{name:'刷新结果'}).click();
   await panel.getByText('登录状态或权限已变化',{exact:false}).waitFor();

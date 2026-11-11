@@ -126,7 +126,7 @@ window.UiPracticeResults = (() => {
     for(const text of report.limitations) add(tech,'p',text);
     if(report.evidence) {
       const button=add(body,'button','下载回归证据 ZIP');button.type='button';
-      button.onclick=()=>download(button,report.evidence.sha256,report.evidence.bytes);
+      button.onclick=()=>download(button,report.evidence.sha256,report.evidence.bytes,report.created_at);
     }
   }
   function performanceReport(body,report,download) {
@@ -170,7 +170,7 @@ window.UiPracticeResults = (() => {
     add(body,'p','复测 · '+report.retest);
     if(report.evidence) {
       const button=add(body,'button','下载本次原始证据 ZIP'); button.type='button';
-      button.onclick=()=>download(button,report.evidence.sha256,report.evidence.bytes);
+      button.onclick=()=>download(button,report.evidence.sha256,report.evidence.bytes,report.created_at);
     }
   }
   function replay(body,report) {
@@ -751,10 +751,11 @@ window.UiPracticeResults = (() => {
   function attach(page, current, context) {
     const attached=context(), active=new Set(), panels=[];
     let disposed=false;
+    let recent;
     function permitted() {return !disposed && current() && attached===context();}
     function dispose() {
       if(disposed) return;
-      disposed=true; clearInterval(guard);
+      disposed=true; clearInterval(guard);recent?.remove();
       for(const controller of active) controller.abort();
       disposeTools();
       if (disposeKnowledge) disposeKnowledge();
@@ -810,9 +811,17 @@ window.UiPracticeResults = (() => {
           }
         } finally {button.disabled=false;}
       }
-      async function download(button,id,bytes) {
+      async function download(button,id,bytes,createdAt) {
         if(!permitted()||!/^[0-9a-f]{64}$/.test(id)) return;
-        const version=revision;button.disabled=true;
+        const version=revision;
+        const label=button.dataset.downloadLabel || button.textContent;
+        button.dataset.downloadLabel=label;
+        let feedback=button.nextElementSibling;
+        if(!feedback?.hasAttribute('data-download-feedback')) {
+          feedback=document.createElement('span');feedback.dataset.downloadFeedback='';
+          feedback.setAttribute('role','status');button.after(feedback);
+        }
+        feedback.textContent='';button.disabled=true;
         try {
           const zip=kind==='performance'||kind==='kit-regression';
           const endpoint=zip?kind+'-evidence':kind==='mobile'?'mobile-frame':'screenshot';
@@ -821,12 +830,25 @@ window.UiPracticeResults = (() => {
           if(!permitted()||revision!==version||!panel.open) return;
           const url=URL.createObjectURL(blob),anchor=document.createElement('a');
           anchor.href=url;
-          const prefix=zip?(kind==='performance'?'jmeter-evidence-':'kit-regression-evidence-'):(kind==='mobile'?'手机回归-':'视觉对照-');
-          anchor.download=prefix+id.slice(0,12)+(zip?'.zip':'.png');
+          if(zip) {
+            const date=new Date(createdAt).toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'});
+            const title=kind==='performance'?'接口性能实测':'套件专区回归报告';
+            anchor.download=title+'-'+date+'.zip';
+          } else {
+            anchor.download=(kind==='mobile'?'手机回归-':'视觉对照-')+id.slice(0,12)+'.png';
+          }
           anchor.click();
+          button.textContent=label;
           setTimeout(()=>URL.revokeObjectURL(url),0);
         } catch(error) {
-          if(permitted()&&revision===version) {clear();notice.textContent=message(error);}
+          if(permitted() && revision===version) {
+            if(error.status===401 || error.status===403) {
+              clear();recent?.remove();notice.textContent=message(error);
+            } else {
+              feedback.textContent='下载失败，请重试。';
+              button.textContent='重新下载';
+            }
+          }
         } finally {button.disabled=false;}
       }
       async function load(alignReport=false) {
@@ -847,16 +869,50 @@ window.UiPracticeResults = (() => {
       }
       panel.ontoggle=()=>{if(panel.open) load(kind==='kit-regression'); else {clear();refresh.disabled=false;notice.textContent='';}};
       refresh.onclick=()=>load();
+      return panel;
     }
     const guard=setInterval(()=>{if(!permitted()) dispose();},500);
     const disposeTools=attachTools(page,()=>permitted()&&hasPermission('ui.view'));
     const disposeKnowledge=hasPermission('ui.view') && window.UiPracticeKnowledge
       ? window.UiPracticeKnowledge.attach(page,()=>permitted()&&hasPermission('ui.view')) : null;
     const apps=currentAccessProfile?.scope?.ui_apps;
+    const reportPanels={};
     if(hasPermission('ui.view') && (currentAccessProfile?.is_superuser===true || apps==='*' ||
-       (Array.isArray(apps) && apps.includes('com.kfb.model')))) panelFor('mobile','手机回归实测');
+       (Array.isArray(apps) && apps.includes('com.kfb.model')))) reportPanels.mobile=panelFor('mobile','手机回归实测');
     if(hasPermission('ui.view') && (apps==='*' || (Array.isArray(apps) && apps.includes('com.kfb.model')))) {
-      panelFor('kit-regression','套件专区需求回归');
+      reportPanels['kit-regression']=panelFor('kit-regression','套件专区需求回归');
+      recent=document.createElement('section');
+      recent.className='ui-practice-evidence';
+      recent.setAttribute('aria-label','最近的回归报告');
+      page.querySelector('.ui-practice-tasks').after(recent);
+      add(recent,'h2','最近的回归报告');
+      const links=add(recent,'div');links.className='ui-design-actions';
+      async function loadRecent() {
+        links.replaceChildren();
+        const notice=add(links,'span','正在读取报告…');notice.setAttribute('role','status');
+        try {
+          const reports=await request('recent',false,'reports');
+          if(!permitted() || !recent.isConnected) return;
+          notice.textContent=reports.length?'':'暂无已发布的回归报告。';
+          for(const entry of reports) {
+            const panel=reportPanels[entry.kind];
+            if(!panel) continue;
+            const date=new Date(entry.date).toLocaleDateString('zh-CN',{month:'long',day:'numeric',timeZone:'Asia/Shanghai'});
+            const button=add(links,'button',entry.title+' · '+date);button.type='button';
+            button.onclick=()=>{
+              if(!permitted()) return;
+              panel.open=true;
+              panel.querySelector('summary').focus({preventScroll:true});
+              panel.scrollIntoView({block:'start'});
+            };
+          }
+        } catch(error) {
+          if(!permitted() || !recent.isConnected) return;
+          notice.textContent=message(error);
+          const retry=add(links,'button','重新读取');retry.type='button';retry.onclick=loadRecent;
+        }
+      }
+      loadRecent();
       panelFor('performance','接口性能实测');
     }
     if(hasPermission('platform.configure') && hasPermission('api.view') &&

@@ -23,6 +23,7 @@ test('workbench searches with the current app, shows citations, abstains and cle
     const req = route.request(), url = new URL(req.url());
     if (url.pathname === '/') return route.fulfill({contentType:'text/html; charset=utf-8', body:html});
     if (url.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',url.pathname)});
+    if (url.pathname.endsWith('/practice-results/recent')) return route.fulfill({json:{ok:true,reports:[]}});
     assert.equal(req.headers().authorization, 'Bearer fixture');
     const name = url.pathname.split('/').pop();
     calls.push(name);

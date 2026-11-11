@@ -1,4 +1,6 @@
 """Viewing the curated app knowledge corpus and the published retrieval evaluation."""
+from datetime import datetime
+
 from task_server.services import requirement_evaluation_view as evaluation
 from task_server.services.business_line_service import PRIMARY_APP_PACKAGE, configured_test_applications
 from task_server.services.ui_execution_contract import AccessDenied, require_ui_actor
@@ -6,12 +8,13 @@ from task_server.services.ui_execution_contract import AccessDenied, require_ui_
 BASE = '/api/platform/requirement-design/knowledge'
 PERFORMANCE = '/api/platform/requirement-design/practice-results/performance'
 KIT_REGRESSION = '/api/platform/requirement-design/practice-results/kit-regression'
+RECENT_REPORTS = '/api/platform/requirement-design/practice-results/recent'
 METHODS = ('keyword', 'vector')
 METRICS = ('recall_at_5', 'citation_support', 'unknown_refusal', 'access_refusal', 'zero_leak')
 
 
 def is_read_route(method, path):
-    reads = (BASE, BASE+'/evaluation', PERFORMANCE, PERFORMANCE+'-evidence', KIT_REGRESSION, KIT_REGRESSION+'-evidence',
+    reads = (RECENT_REPORTS, BASE, BASE+'/evaluation', PERFORMANCE, PERFORMANCE+'-evidence', KIT_REGRESSION, KIT_REGRESSION+'-evidence',
              KIT_REGRESSION+'-ticket')
     return (method in ('GET', 'HEAD') and path in reads or
             method == 'POST' and path == BASE+'/search')
@@ -72,6 +75,28 @@ def _report(allowed_apps):
 def register_routes(route_get, route_post):
     from task_server.requirement_design_http import _params, _serve
     from task_server.services import practice_kit_regression_view, practice_performance_view
+
+    @route_get(RECENT_REPORTS)
+    def recent_reports(handler, qs):
+        from task_server.services import practice_result_view, requirement_design
+
+        def read(apps):
+            _params(qs, ())
+            app_ids = [app['id'] for app in apps]
+            entries = []
+            for kind, title, loader, date_field in (
+                ('kit-regression', '套件专区回归报告', lambda: practice_kit_regression_view.published(app_ids), 'created_at'),
+                ('mobile', '智小白 3D 手机回归报告', practice_result_view.mobile_observations, 'measured_at'),
+            ):
+                try:
+                    report = loader()
+                except (requirement_design.Missing, AccessDenied):
+                    continue
+                entries.append(dict(kind=kind, title=title, date=report[date_field]))
+            entries.sort(key=lambda entry: datetime.fromisoformat(entry['date'].replace('Z', '+00:00')).timestamp(),
+                         reverse=True)
+            return {'reports': entries}
+        _serve(handler, read, authorize=_apps)
 
     @route_get(BASE)
     def available(handler, qs):

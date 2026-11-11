@@ -27,6 +27,7 @@ test('workbench retries the original request after reload, reads a run and its p
     const req=route.request(), url=new URL(req.url());
     if(url.pathname==='/') return route.fulfill({contentType:'text/html; charset=utf-8',body:html});
     if(url.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',url.pathname)});
+    if (url.pathname.endsWith('/practice-results/recent')) return route.fulfill({json:{ok:true,reports:[]}});
     assert.equal(req.headers().authorization,'Bearer fixture');
     if(!access) return route.fulfill({status:403,json:{ok:false}});
     if(url.pathname.endsWith('/runs')) return route.fulfill({json:{ok:true,runs:history}});
@@ -110,6 +111,7 @@ test('Python suite retries after reload, cancels the selected run, polls the ter
     const req=route.request(),url=new URL(req.url());
     if(url.pathname==='/') return route.fulfill({contentType:'text/html; charset=utf-8',body:html});
     if(url.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',url.pathname)});
+    if (url.pathname.endsWith('/practice-results/recent')) return route.fulfill({json:{ok:true,reports:[]}});
     assert.equal(req.headers().authorization,'Bearer fixture');
     if(url.pathname.endsWith('/runs')) return route.fulfill({json:{ok:true,runs:run?[run]:[]}});
     if(url.pathname.endsWith('/acceptance')) return route.fulfill({json:{ok:true,report:null}});
@@ -185,6 +187,7 @@ test('history presents feedback assertions, drill differences and observed worke
     const req=route.request(),url=new URL(req.url());
     if(url.pathname==='/') return route.fulfill({contentType:'text/html; charset=utf-8',body:html});
     if(url.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',url.pathname)});
+    if (url.pathname.endsWith('/practice-results/recent')) return route.fulfill({json:{ok:true,reports:[]}});
     assert.equal(req.headers().authorization,'Bearer fixture');
     if(url.pathname.endsWith('/runs')) return route.fulfill({json:{ok:true,runs:records}});
     if(url.pathname.endsWith('/recovery-drill')) return route.fulfill({status:recoveryStatus,json:recoveryStatus===200?
@@ -228,6 +231,7 @@ test('an old catalog request remains retryable while an unavailable pending suit
     const req=route.request(),url=new URL(req.url());
     if(url.pathname==='/') return route.fulfill({contentType:'text/html; charset=utf-8',body:html});
     if(url.pathname.startsWith('/js/')) return route.fulfill({path:path.join(__dirname,'..',url.pathname)});
+    if (url.pathname.endsWith('/practice-results/recent')) return route.fulfill({json:{ok:true,reports:[]}});
     if(url.pathname.endsWith('/runs')) return route.fulfill({json:{ok:true,runs:[]}});
     if(url.pathname.endsWith('/acceptance')) return route.fulfill({json:{ok:true,report:null}});
     const {name,arguments:args}=req.postDataJSON();
