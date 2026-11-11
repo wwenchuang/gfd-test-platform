@@ -69,6 +69,19 @@ def test_real_sessions_dispatch_read_only_check_and_persist_evidence(identity_db
         assert row['status']=='passed' and row['total']==5
         assert call(owner,'run_suite',args)[1]['result']==row
         assert request(server,'GET',base+'/runs',owner)[1]['runs']==[row]
+        assert request(server,'GET',base+'/report',None)[0]==401
+        assert request(server,'GET',base+'/report?run_id='+rid,owner)[0]==400
+        assert request(server,'POST',base+'/diagnose',owner,{'run_id':rid})[0]==403
+        assert request(server,'POST',base+'/diagnose',None,{'run_id':rid})[0]==401
+        facts=request(server,'GET',base+'/report',owner)
+        assert facts[0]==200 and facts[1]['report']['metrics']['counts']['passed']==1
+        assert request(server,'GET',base+'/diagnosis',owner)[0]==400
+        assert request(server,'GET',base+'/diagnosis?run_id=bad',owner)[0]==400
+        assert request(server,'GET',base+'/diagnosis?run_id='+rid,outsider)[0]==404
+        detail=request(server,'GET',base+'/diagnosis?run_id='+rid,owner)
+        assert detail[0]==200 and detail[2]['Cache-Control']=='private, no-store'
+        assert detail[1]['diagnosis']['bundle']['run_id']==rid
+        assert detail[1]['diagnosis']['evaluation']['accuracy'] is None
         import xml.etree.ElementTree as ET
         status, content, headers = request(server,'GET',row['junit_url'],owner)
         assert status == 200 and headers['Content-Type'].startswith('application/xml')

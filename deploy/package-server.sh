@@ -69,6 +69,12 @@ cp -R "${SRC_DIR}/ai_skills" "${pkg_dir}/"
 if [ -d "${SRC_DIR}/task_server" ]; then
   cp -R "${SRC_DIR}/task_server" "${pkg_dir}/"
 fi
+if [ -f "${SRC_DIR}/scripts/week12_triage/review.py" ]; then
+  install -d -m 0755 "${pkg_dir}/scripts/week12_triage"
+  for item in review.py fixtures.py; do
+    install -m 0644 "${SRC_DIR}/scripts/week12_triage/${item}" "${pkg_dir}/scripts/week12_triage/${item}"
+  done
+fi
 if [ -f "${SRC_DIR}/scripts/week11_runner/recovery_drill.py" ]; then
   install -d -m 0755 "${pkg_dir}/scripts/week11_runner"
   install -m 0644 "${SRC_DIR}/scripts/week11_runner/recovery_drill.py" "${pkg_dir}/scripts/week11_runner/recovery_drill.py"

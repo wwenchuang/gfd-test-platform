@@ -85,6 +85,113 @@ window.UiPracticeResults = (() => {
       }
     }
   }
+  function showRunReport(box,data,onSelect) {
+    add(box,'p','最近 '+data.history_count+' 次可见运行 · 统计窗口 '+data.window_limit+' 次 · 进行中 '+data.active_runs+' 次 · 故障演练 '+data.drill_runs+' 次');
+    const metrics=data.metrics,counts=metrics.counts,duration=metrics.duration;
+    add(box,'small','业务统计包含已结束的正式用例，故障演练单列。');
+    if(counts) add(box,'p','业务用例 '+counts.total+' 项 · 通过 '+counts.passed+' · 失败 '+counts.failed+' · 跳过 '+counts.skipped+' · 执行异常 '+counts.errors);
+    if(duration) add(box,'p','耗时样本 '+duration.sample_count+' 次 · 总耗时 '+(duration.total_ms??'未记录')+' ms · 平均耗时 '+(duration.mean_ms==null?'样本不足':duration.mean_ms+' ms'));
+    for(const [key,title] of [['first_pass_rate','首次通过率'],['final_pass_rate','最终通过率'],['retry_recovery_rate','重试恢复率'],['flake_rate','重试中首败末过占比']]) {
+      const m=metrics[key];
+      const value=Number.isFinite(m.value)?Number(m.value.toFixed(2))+'%':'样本不足';
+      const line=add(box,'p',title+'　'+value+'（'+m.numerator+' / '+m.denominator+'）');
+      if(m.note) add(line,'small',' · '+m.note);
+    }
+    const timedRecoveries=data.incidents.filter(row=>Number.isFinite(row.recovery_ms));
+    add(box,'p','平均恢复时间　'+(Number.isFinite(metrics.average_recovery_ms)?metrics.average_recovery_ms+' ms':'样本不足')+'（有效恢复样本 '+timedRecoveries.length+' 组）');
+    const definitions=detail(box,'指标口径');
+    for(const note of data.methodology||[]) add(definitions,'p',note);
+    function runButton(parent,id,label) {
+      const b=add(parent,'button',label);b.type='button';b.onclick=()=>onSelect(id);
+    }
+    const incidents=detail(box,'失败分组（'+data.incidents.length+'）');
+    if(!data.incidents.length) add(incidents,'p','当前窗口没有符合分组条件的失败。');
+    for(const row of data.incidents) {
+      const group=detail(incidents,row.case_id+' · '+(row.error_kind||'待核实')+' · '+(row.status==='recovered'?'已恢复':'未恢复')+' · '+row.occurrences+' 次');
+      add(group,'p','首次失败 '+formatTime(row.opened_at*1000)+' · 最近失败 '+formatTime(row.last_failed_at*1000));
+      if(row.recovered_at) add(group,'p','恢复 '+formatTime(row.recovered_at*1000)+' · 恢复耗时 '+(row.recovery_ms==null?'未记录':row.recovery_ms+' ms'));
+      for(const id of row.run_ids) runButton(group,id,'查看失败运行 '+id);
+      if(row.recovery_run_id) runButton(group,row.recovery_run_id,'查看恢复运行 '+row.recovery_run_id);
+    }
+    const gold=data.gold_candidates||[], goldList=detail(box,'人工标注候选（'+gold.length+' / 20）');
+    add(goldList,'p','当前窗口可供人工标注的正式失败 '+gold.length+' 条。');
+    for(const row of gold) runButton(goldList,row.run_id,row.case_title+' · '+row.error_kind+' · '+row.run_id);
+    const candidates=data.runs.filter(row=>['failed','blocked','timed_out','interrupted'].includes(row.status));
+    if(candidates.length) {
+      const list=detail(box,'待分析运行（'+candidates.length+'）');
+      for(const row of candidates) runButton(list,row.run_id,(row.is_drill?'演练 · ':'')+row.suite_id+' · '+row.run_id);
+    }
+  }
+  const factLabels={
+    'run.id':'运行编号','run.suite':'套件','run.status':'运行状态','run.environment':'执行环境','run.drill':'故障演练',
+    'case.id':'用例编号','case.status':'用例状态','case.attempt':'执行序号','case.runner':'执行器','case.error_kind':'错误分类',
+    'case.exit_code':'用例退出码','case.worker_exit_code':'进程退出码','case.duration_ms':'执行耗时（ms）','case.version':'执行器版本',
+    'observed.http_status':'HTTP 状态','observed.actual_code':'实测业务码','observed.expected_code':'预期业务码',
+    'observed.data_is_list':'响应数据为列表','observed.http_200':'HTTP 状态码 200 断言','observed.code_zero':'业务码为零断言',
+    'observed.data_list':'列表结构断言','observed.total':'实测数量','observed.expected_total':'预期数量',
+    'artifact.screenshot':'截图','artifact.trace':'trace'
+  };
+  function showDiagnosis(box,data,id,addGeneration) {
+    const {bundle,draft,review,evaluation}=data;
+    if(data.run_id!==id||bundle?.run_id!==id||draft?.run_id!==id) throw Error('run_id');
+    const facts=bundle.facts;
+    const factText=key=>(factLabels[key]||key)+' · '+facts[key];
+    function evidence(parent,refs) {
+      if(refs.length) add(parent,'p','证据 '+refs.map(ref=>ref+'（'+factText(ref)+'）').join('、'));
+    }
+    if(bundle.is_drill) add(box,'p','本次为故障演练。');
+    const headline=['case.error_kind','observed.http_status','observed.actual_code','observed.expected_code','observed.total','observed.expected_total'].filter(key=>Object.hasOwn(facts,key));
+    if(headline.length) add(box,'p',headline.map(factText).join('　'));
+    const factList=detail(box,'执行事实（'+Object.keys(facts).length+'）');
+    add(factList,'p','开始 '+formatTime(bundle.started_at*1000)+' · 结束 '+formatTime(bundle.finished_at*1000));
+    if(bundle.coverage) {
+      const c=bundle.coverage;
+      add(factList,'p','本摘要展示 '+c.attempts_included+' / '+c.attempts_observed+' 次执行'+(c.truncated?'，仅含最后一次。':'。'));
+      if(c.raw_logs_included===false&&c.source_logs_truncated==null) add(factList,'p','来源为结构化用例结果。原始日志未采集，源日志截断情况未知。');
+    }
+    for(const key of Object.keys(facts)) add(factList,'p',factText(key));
+    add(box,'h4','模型建议');
+    if(!review||review.status==='not_generated') add(box,'p','尚无本次运行的模型建议。');
+    else if(review.status==='unavailable'&&review.run_id===id) add(box,'p','本次模型调用已记录，未取得可用建议。');
+    else if(review.status!=='ready'||review.run_id!==id) add(box,'p','本次运行的模型建议暂时无法读取。');
+    else {
+      const candidate=review.classification==='candidate'?review.candidate_cause:null;
+      const statements=candidate?[...review.observations,candidate]:review.observations;
+      const grounded=statements.every(row=>Array.isArray(row.evidence_ids)&&row.evidence_ids.length&&row.evidence_ids.every(ref=>Object.hasOwn(facts,ref)));
+      if(!grounded) add(box,'p','模型建议的证据引用无法核对。');
+      else {
+        const categories={product:'产品',script:'脚本',data:'数据',environment:'环境',model:'模型',unknown:'待确认'};
+        add(box,'p',(review.classification==='unknown'?'归因待确认':'候选归因 · '+(categories[review.category]||'待确认'))+' · 严重程度待人工评估');
+        for(const row of review.observations) {add(box,'p',row.text);evidence(box,row.evidence_ids);}
+        if(candidate) {add(box,'strong','候选原因');add(box,'p',candidate.text);evidence(box,candidate.evidence_ids);}
+        if(review.verification_action) add(box,'p','建议核查 · '+review.verification_action);
+      }
+    }
+    if(!review||review.status==='not_generated') addGeneration(box);
+    if(review?.run_id===id&&review.status!=='not_generated') {
+      const audit=detail(box,'模型调用记录');
+      if(review.requested_model) add(audit,'p','请求模型 '+review.requested_model+' · 返回模型 '+(review.model||'未返回'));
+      if(Number.isInteger(review.provider_calls)) add(audit,'p','供应商调用 '+review.provider_calls+' 次 · 耗时 '+(review.duration_ms==null?'未记录':review.duration_ms+' ms'));
+      add(audit,'p','总 Token '+(review.usage?.total_tokens??'未返回')+(review.billing_status==='unverified'?' · 账单金额未核实':''));
+    }
+    const draftBox=detail(box,'缺陷草稿');add(draftBox,'h4',draft.title);
+    for(const [key,label] of [['facts','已知事实'],['reproduction','复现步骤'],['expected','预期结果'],['actual','实际结果'],['to_confirm','待确认']]) {
+      if(!draft[key]?.length) continue;
+      add(draftBox,'strong',label);const list=add(draftBox,key==='reproduction'?'ol':'ul');
+      for(const text of draft[key]) add(list,'li',text);
+    }
+    const draftRefs=(draft.refs||[]).filter(ref=>Object.hasOwn(facts,ref));
+    if(draftRefs.length) evidence(detail(draftBox,'草稿证据引用'),draftRefs);
+    if(evaluation) {
+      add(box,'p','人工已标注 '+evaluation.human_labeled+' / '+evaluation.gold_target+' 条 · '+
+        (evaluation.accuracy==null?'归因准确率待评估':'归因准确率 '+evaluation.accuracy+'%'));
+      if(evaluation.fixtures?.length) {
+        const drills=detail(box,'隔离归因验证（'+evaluation.fixtures.length+'）');
+        const names={http_500:'HTTP 500',auth_expired:'登录过期',page_renamed:'页面更名',model_timeout:'模型超时'};
+        for(const row of evaluation.fixtures) add(drills,'p',(names[row.id]||row.id)+' · 预期 '+row.expected+' · 规则结果 '+row.observed+' · '+(row.verified?'一致':'有差异'));
+      }
+    }
+  }
   function attachTools(page, permitted) {
     const panel=detail(page,'工具执行');
     panel.className='ui-case-source-picker ui-practice-panel ui-requirement-design';
@@ -106,12 +213,24 @@ window.UiPracticeResults = (() => {
     const notice=add(panel,'p'); notice.setAttribute('role','status');
     const result=add(panel,'section');
     const history=detail(panel,'我的运行记录'), rows=add(history,'div');
+    const summary=readingPanel(panel,'运行报告','/api/platform/mcp/report',(box,response)=>{
+      showRunReport(box,response.report,async id=>{
+        if(!uuid.test(id)) return;
+        const loaded=await load(id);
+        if(loaded===id&&selected===id&&panel.open&&permitted()) {
+          const analysis=result.querySelector('[data-failure-analysis]');
+          if(analysis) analysis.open=true;
+          result.scrollIntoView({block:'start'});
+        }
+      });
+    });
     const trace=detail(panel,'本次网页工具调用'), calls=add(trace,'ol');
     const negative=button(trace,'验证环境限制',()=>checkEnvironment());
     const checkNote=add(trace,'p');checkNote.setAttribute('role','status');
     const receipt=detail(panel,'MCP 客户端验收'), report=add(receipt,'div');
     const drill=detail(panel,'隔离故障恢复演练'), drillReport=add(drill,'div');
     let drillRead=null;
+    const generationRequests=new Map(), generationNotes=new Map(), generationLifetime=new AbortController();
     const status={queued:'排队中',running:'执行中',passed:'通过',failed:'失败',blocked:'受阻',timed_out:'超时',interrupted:'中断',crashed:'执行器崩溃',cancelling:'正在取消',cancelled:'已取消'};
     const key='practice-mcp-request:'+currentAccessProfile.user_id;
     const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -143,6 +262,7 @@ window.UiPracticeResults = (() => {
     }
     function clearPrivate() {
       clearImage();
+      summary.clear();
       for(const box of [result,rows,calls,report,checkNote,drillReport]) box.replaceChildren();
       suites=[];suite=null;selected='';selectedSuite='';picker.replaceChildren();suiteNote.textContent='';
     }
@@ -161,9 +281,9 @@ window.UiPracticeResults = (() => {
     function current(signal) {
       return !signal.aborted && panel.open && permitted() && controller?.signal===signal;
     }
-    async function fetchData(path,signal,body) {
+    async function fetchData(path,signal,body,timeout=20000) {
       const options={headers:authHeaders(body?{'Content-Type':'application/json'}:{}),cache:'no-store',redirect:'error',
-        signal:AbortSignal.any([signal,AbortSignal.timeout(20000)])};
+        signal:AbortSignal.any([signal,AbortSignal.timeout(timeout)])};
       if(body) {options.method='POST';options.body=JSON.stringify(body);}
       const response=await nativeFetch(path,options),data=await response.json();
       if(!response.ok||data.ok!==true) throw Object.assign(Error('request'),{status:response.status,code:data.code});
@@ -208,6 +328,57 @@ window.UiPracticeResults = (() => {
         else if([401,403].includes(error.status)) {handle(error,signal);controls(false);}
         else checkNote.textContent='未取得预期的参数校验结果，请重试。';
       } finally {if(current(signal)) negative.disabled=!suite;}
+    }
+    function readingPanel(parent,title,path,render) {
+      const section=detail(parent,title),body=add(section,'div');let pendingRead=null;
+      function clear() {pendingRead=null;body.replaceChildren();}
+      async function read(signal,force=false) {
+        if(!signal||!current(signal)||!section.open||(!force&&pendingRead?.signal===signal)) return;
+        const request={signal};pendingRead=request;
+        const visible=()=>section.isConnected&&section.open&&current(signal)&&pendingRead===request;
+        body.textContent='正在读取'+title+'…';
+        try {
+          const response=await fetchData(path,signal);
+          if(!visible()) return;
+          const content=document.createDocumentFragment();
+          render(content,response,{signal,visible,refresh:()=>read(signal,true)});body.replaceChildren(content);
+        } catch(error) {
+          if(!visible()) return;
+          if([401,403].includes(error.status)) {handle(error,signal);cancel();controls(false);}
+          else body.textContent=title+'暂时无法读取，请刷新记录。';
+        }
+      }
+      section.ontoggle=()=>{if(section.open) read(controller?.signal);else clear();};
+      return {section,clear,read};
+    }
+    function generationButton(box,id,view) {
+      if(!hasPermission('ui.execute')) return;
+      const btn=button(box,'用千问分析本次失败',submit);
+      add(box,'small','点击会消耗一次模型调用。');
+      const note=add(box,'p');note.setAttribute('role','status');
+      note.textContent=generationNotes.get(id)||'';
+      async function watch(request) {
+        btn.disabled=true;note.textContent='千问分析中…';
+        const status=await request;
+        if(!view.visible()) return;
+        if(status===401||status===403) {handle({status},view.signal);cancel();controls(false);}
+        else view.refresh();
+      }
+      function submit() {
+        if(btn.disabled||!view.visible()||!hasPermission('ui.execute')||generationRequests.has(id)) return;
+        // A submitted call can outlive an open panel. Reopening only observes its result.
+        const request=fetchData('/api/platform/mcp/diagnose',generationLifetime.signal,{run_id:id},40000)
+          .then(()=>200,error=>error.status||0).then(status=>{
+            generationRequests.delete(id);
+            const messages={200:'已收到模型调用回执。',409:'已有分析正在进行。',429:'当前调用额度已用尽或服务繁忙。'};
+            generationNotes.set(id,messages[status]||'分析请求未获得有效回执，请刷新记录核对。');
+            return status;
+          });
+        generationRequests.set(id,request);
+        watch(request);
+      }
+      const existing=generationRequests.get(id);
+      if(existing) watch(existing);
     }
     function showReceipt(data) {
       report.replaceChildren();
@@ -347,6 +518,11 @@ window.UiPracticeResults = (() => {
       for(const [item,label] of [['screenshot','查看截图'],['trace','下载 trace']]) {
         if(run.evidence?.[item]) {const btn=button(links,label,()=>openArtifact(btn,run,item,signal));}
       }
+      if(['failed','blocked','timed_out','interrupted'].includes(run.status)) {
+        const analysis=readingPanel(result,'失败分析','/api/platform/mcp/diagnosis?run_id='+id,
+          (box,response,view)=>showDiagnosis(box,response.diagnosis,id,parent=>generationButton(parent,id,view)));
+        analysis.section.dataset.failureAnalysis='';
+      }
       if(activeStatus.has(run.status)) timer=setTimeout(()=>{if(current(signal)) load(id);},4000);
     }
     async function load(id) {
@@ -380,6 +556,8 @@ window.UiPracticeResults = (() => {
         if(current(signal)) {
           notice.textContent=pending?(suite?'上次提交尚待确认，可重试同一请求。':'上次提交的套件当前不可用。清除本地重试记录后可选择其他套件。'):'';
           if(drill.open) readDrill(signal);
+          if(summary.section.open) summary.read(signal);
+          return selected;
         }
       } catch(error) {if(current(signal)){clearPrivate(); handle(error,signal);}}
       finally {if(current(signal)) controls(false);}
@@ -417,7 +595,7 @@ window.UiPracticeResults = (() => {
     }
     panel.ontoggle=()=>{if(panel.open) load();else {cancel();clearPrivate();notice.textContent='';}};
     controls(false);
-    return ()=>{cancel();panel.remove();};
+    return ()=>{generationLifetime.abort();cancel();panel.remove();};
   }
   function attach(page, current, context) {
     const attached=context(), active=new Set(), panels=[];

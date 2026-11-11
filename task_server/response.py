@@ -33,7 +33,7 @@ def request_body_limit(path):
     """
     if path in {"/api/platform/requirement-design/source", "/api/platform/requirement-design/collection"}:
         return 3 * 1024 * 1024
-    if path in {"/api/platform/requirement-design", "/api/platform/mcp/call"}:
+    if path in {"/api/platform/requirement-design", "/api/platform/mcp/call", "/api/platform/mcp/diagnose"}:
         return 1024
     if path in {"/api/platform/week1-probes", "/api/platform/week1-probes/confirm", "/api/platform/week1-smoke", "/api/platform/week2-real", "/api/ui-executions/web-check"}:
         return 1024

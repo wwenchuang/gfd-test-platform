@@ -8,7 +8,7 @@ from task_server.services.operation_attribution import current_actor
 BASE = '/api/platform/mcp'
 
 
-def _serve(handler, qs, operation, field, *, xml=False):
+def _serve(handler, qs, operation, field, *, xml=False, run_query=False):
     actor = current_actor()
     token = auth.bearer_token(handler.headers)
     session = auth.verify_session_token(token)
@@ -17,9 +17,9 @@ def _serve(handler, qs, operation, field, *, xml=False):
         handler._json({'ok':False,'code':'unauthorized','error':'需要有效的个人登录会话'},403)
         return
     try:
-        if xml and set(qs) != {'run_id'}:
+        if (xml or run_query) and set(qs) != {'run_id'}:
             raise tools.ToolError(400,'invalid_arguments','需要运行编号')
-        if not xml and qs:
+        if not (xml or run_query) and qs:
             raise tools.ToolError(400,'invalid_arguments','此接口不接受查询参数')
         result = operation((session['user_id'],session['user'],token))
     except tools.ToolError as exc:
@@ -65,3 +65,34 @@ def register_routes(route_get, route_post):
     @route_get(BASE+'/recovery-drill')
     def recovery_drill(handler, qs):
         _serve(handler, qs, tools.recovery_drill, 'report')
+
+
+    @route_get(BASE+'/report')
+    def report(handler, qs):
+        from task_server.services.workbench_triage import report as factual_report
+        _serve(handler, qs, factual_report, 'report')
+
+    @route_get(BASE+'/diagnosis')
+    def diagnosis(handler, qs):
+        def describe(actor):
+            from task_server.services import workbench_triage as triage, workbench_triage_model as model
+            run_id = tools._uuid(qs['run_id'])
+            bundle = triage.evidence_bundle(actor,run_id)
+            state = bundle['facts'].get('case.status')
+            draft = triage.defect_draft(actor,run_id) if state in ('failed','blocked','timed_out','interrupted') else None
+            return {'run_id':run_id,'bundle':bundle,'draft':draft,
+                    'review':model.read_review(actor,bundle),'evaluation':model.read_evaluation(actor)}
+        _serve(handler, qs, describe, 'diagnosis', run_query=True)
+
+    @route_post(BASE+'/diagnose')
+    def generate_diagnosis(handler, qs):
+        def run(actor):
+            from task_server.services.workbench_triage_model import generate_for_workbench
+            try:
+                body = handler._body()
+            except (json.JSONDecodeError, RecursionError):
+                raise tools.ToolError(400,'invalid_arguments','请求必须是有效 JSON 对象') from None
+            if not isinstance(body,dict) or set(body) != {'run_id'}:
+                raise tools.ToolError(400,'invalid_arguments','只接受本次运行编号')
+            return generate_for_workbench(actor,tools._uuid(body['run_id']))
+        _serve(handler, qs, run, 'review')

@@ -88,7 +88,12 @@ class ToolApiTests(unittest.TestCase):
         access = MainAccess(self.profile, catalog=[])
         for method,path in self.routes:
             if '/mcp/' in path:
-                access.check(method,path)
+                if path.endswith('/diagnose'):
+                    with self.assertRaises(AccessDenied):
+                        access.check(method,path)
+                    MainAccess(dict(self.profile,permissions=['ui.view','ui.execute']),catalog=[]).check(method,path)
+                else:
+                    access.check(method,path)
                 with self.assertRaises(AccessDenied):
                     MainAccess({},catalog=[]).check(method,path)
         self.assertEqual(request_body_limit('/api/platform/mcp/call'),1024)

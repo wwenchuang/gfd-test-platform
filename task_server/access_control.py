@@ -5,8 +5,8 @@ from urllib.parse import unquote
 
 
 def _mcp_route(method, path):
-    return ((method == 'POST' and path == '/api/platform/mcp/call') or
-            (method in {'GET','HEAD'} and path in {'/api/platform/mcp/runs','/api/platform/mcp/acceptance','/api/platform/mcp/junit','/api/platform/mcp/recovery-drill'}))
+    return ((method == 'POST' and path in {'/api/platform/mcp/call','/api/platform/mcp/diagnose'}) or
+            (method in {'GET','HEAD'} and path in {'/api/platform/mcp/runs','/api/platform/mcp/acceptance','/api/platform/mcp/junit','/api/platform/mcp/recovery-drill','/api/platform/mcp/report','/api/platform/mcp/diagnosis'}))
 
 
 class AccessDenied(PermissionError):
@@ -345,6 +345,8 @@ class MainAccess:
 
     def permission_for(self, method, path, qs, body):
         from task_server.config import safe_bool
+        if method == 'POST' and path == '/api/platform/mcp/diagnose':
+            return 'ui.execute'
         if _mcp_route(method, path):
             return "ui.view"
         draft_permission = self._draft_permission(method, path)
@@ -490,7 +492,7 @@ def prepare_request_access(handler, method, path, qs):
             handler._json({"ok": True, **filter_scope_options(profile, options)})
             return True
         body = {}
-        if method in {"POST", "PUT"} and not profile.get("is_superuser") and path not in {"/api/ui-video-sources/upload", "/api/platform/mcp/call"}:
+        if method in {"POST", "PUT"} and not profile.get("is_superuser") and path not in {"/api/ui-video-sources/upload", "/api/platform/mcp/call", "/api/platform/mcp/diagnose"}:
             if not handler._body_size_allowed(path):
                 return True
             body = handler._body()
