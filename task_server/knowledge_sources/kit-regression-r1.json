@@ -1,0 +1,15 @@
+{
+  "document_id": "kit-regression-r1",
+  "title": "套件回归 R1：基础套件关联模型顺序实测",
+  "kind": "回归记录",
+  "app_id": "com.kfb.model",
+  "version": "kit-e2e-20261111-r1",
+  "source_sha256": "80d2f7216a1b6bf11054ae6f64fcb92534b8d0ccd930e409a32626375b16c7cf",
+  "paragraphs": [
+    {
+      "paragraph_id": "config-and-order",
+      "locator": "kit-e2e-20261111-r1 · web/api-observed.json 第3项；ui/retest.json",
+      "excerpt": "套件回归 R1：家用 QA 后台当前基础套件样本已下架，关联 3 个模型。详情接口 modelSns 与 modelItems 的三个标识逐项相等，后台编辑页的名称、标识和顺序与响应一致。此观测不证明 App 排序同步。在 Android 2.0.1（55）的受测账号，首页两次均进入主题专区，未能到达套件详情；构建、灰度和账号适用范围待核对。"
+    }
+  ]
+}

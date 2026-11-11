@@ -5,12 +5,15 @@ from task_server.services.ui_execution_contract import AccessDenied, require_ui_
 
 BASE = '/api/platform/requirement-design/knowledge'
 PERFORMANCE = '/api/platform/requirement-design/practice-results/performance'
+KIT_REGRESSION = '/api/platform/requirement-design/practice-results/kit-regression'
 METHODS = ('keyword', 'vector')
 METRICS = ('recall_at_5', 'citation_support', 'unknown_refusal', 'access_refusal', 'zero_leak')
 
 
 def is_read_route(method, path):
-    return (method in ('GET', 'HEAD') and path in (BASE, BASE+'/evaluation', PERFORMANCE, PERFORMANCE+'-evidence') or
+    reads = (BASE, BASE+'/evaluation', PERFORMANCE, PERFORMANCE+'-evidence', KIT_REGRESSION, KIT_REGRESSION+'-evidence',
+             KIT_REGRESSION+'-ticket')
+    return (method in ('GET', 'HEAD') and path in reads or
             method == 'POST' and path == BASE+'/search')
 
 
@@ -68,7 +71,7 @@ def _report(allowed_apps):
 
 def register_routes(route_get, route_post):
     from task_server.requirement_design_http import _params, _serve
-    from task_server.services import practice_performance_view
+    from task_server.services import practice_kit_regression_view, practice_performance_view
 
     @route_get(BASE)
     def available(handler, qs):
@@ -98,16 +101,27 @@ def register_routes(route_get, route_post):
             return {'report': _report([app['id'] for app in apps])}
         _serve(handler, read, authorize=_apps)
 
-    @route_get(PERFORMANCE)
-    def performance(handler, qs):
-        def read(apps):
-            _params(qs, ())
-            return {'report': practice_performance_view.published([app['id'] for app in apps])}
-        _serve(handler, read, authorize=_apps)
+    def register_report(path, view):
+        @route_get(path)
+        def report(handler, qs):
+            def read(apps):
+                _params(qs, ())
+                return {'report': view.published([app['id'] for app in apps])}
+            _serve(handler, read, authorize=_apps)
 
-    @route_get(PERFORMANCE+'-evidence')
-    def performance_evidence(handler, qs):
+        @route_get(path+'-evidence')
+        def evidence(handler, qs):
+            def read(apps):
+                _params(qs, ('id',))
+                return view.evidence([app['id'] for app in apps], qs['id'])
+            _serve(handler, read, authorize=_apps, download=True)
+
+    register_report(PERFORMANCE, practice_performance_view)
+    register_report(KIT_REGRESSION, practice_kit_regression_view)
+
+    @route_get(KIT_REGRESSION+'-ticket')
+    def kit_ticket(handler, qs):
         def read(apps):
             _params(qs, ('id',))
-            return practice_performance_view.evidence([app['id'] for app in apps], qs['id'])
-        _serve(handler, read, authorize=_apps, download=True)
+            return {'ticket': practice_kit_regression_view.ticket([app['id'] for app in apps], qs['id'])}
+        _serve(handler, read, authorize=_apps)

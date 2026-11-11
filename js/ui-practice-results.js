@@ -2,7 +2,7 @@
 window.UiPracticeResults = (() => {
   const base = '/api/platform/requirement-design/practice-results/';
   const statusNames = {complete:'完整回放',partial:'部分回放',missing:'缺少证据',verified:'已验证',
-    passed:'通过',failed:'失败',blocked:'受阻',pending:'待人工审核'};
+    passed:'通过',failed:'失败',blocked:'受阻',not_run:'未执行',pending:'待人工审核'};
   const stageNames = {main:'主断言',pre:'前置',cleanup:'清理'};
   const methods = {ai:'AI 视觉',control:'确定性定位',deterministic:'确定性定位',baseline:'确定性定位',playwright:'确定性定位'};
   const reasons = {model_mislocated:'模型命中了其他控件',invalid_location:'模型返回的位置无效',model_no_location:'模型未找到控件',
@@ -45,6 +45,51 @@ window.UiPracticeResults = (() => {
           btn.onclick=()=>download(btn,frame.sha256);
         }
       }
+    }
+  }
+  function kitRegression(body,report,download,verifyTicket) {
+    add(body,'h3',report.requirement);
+    add(body,'small','运行编号 '+report.run_id+' · '+formatTime(report.created_at));
+    add(body,'p',report.summary);
+    add(body,'h4','用例生成 · '+report.generation.status);
+    add(body,'p',report.generation.observed);
+    add(body,'small','生成证据 · '+report.generation.evidence);
+    for(const row of report.cases) {
+      const item=detail(body,row.id+' · '+row.title);
+      add(item,'p','需求来源 · '+row.source);
+      add(item,'p','预期结果 · '+row.expected);
+    }
+    for(const [channel,label] of [['ui','UI 检查'],['api','接口检查']]) {
+      const rows=report.checks.filter(row=>row.channel===channel);
+      add(body,'h4',label);
+      if(!rows.length) add(body,'p','尚无已发布的'+label+'记录。');
+      for(const row of rows) {
+        const item=detail(body,row.id+' · '+row.title+' · '+statusNames[row.status]);
+        add(item,'p','关联用例 · '+row.case_id);
+        add(item,'p',row.observed);
+        add(item,'small','证据 · '+row.evidence);
+      }
+    }
+    for(const [key,label] of [['defects','缺陷'],['knowledge','知识沉淀']]) {
+      add(body,'h4',label);
+      if(!report[key].length) add(body,'p','尚无已发布的'+label+'记录。');
+      for(const row of report[key]) {
+        const item=detail(body,row.id+' · '+row.title+' · '+row.status);
+        add(item,'p',row.observed);
+        add(item,'small','证据 · '+row.evidence);
+        if(key==='defects' && row.type) {
+          add(item,'p','工单类型 · '+row.type);
+          const button=add(item,'button','核对独立工单');button.type='button';
+          const result=add(item,'div');result.setAttribute('role','status');
+          button.onclick=()=>verifyTicket(row.id,report.run_id,button,result);
+        }
+      }
+    }
+    if(report.limitations.length) add(body,'h4','覆盖边界与待办');
+    for(const text of report.limitations) add(body,'p',text);
+    if(report.evidence) {
+      const button=add(body,'button','下载回归证据 ZIP');button.type='button';
+      button.onclick=()=>download(button,report.evidence.sha256,report.evidence.bytes);
     }
   }
   function performanceReport(body,report,download) {
@@ -678,7 +723,7 @@ window.UiPracticeResults = (() => {
       if (disposeKnowledge) disposeKnowledge();
       for(const panel of panels) panel.remove();
     }
-    async function request(path, binaryType) {
+    async function request(path, binaryType, field='report') {
       const controller=new AbortController(); active.add(controller);
       const timeout=setTimeout(()=>controller.abort(),20000);
       try {
@@ -691,8 +736,8 @@ window.UiPracticeResults = (() => {
           return blob;
         }
         const data=await res.json();
-        if(!data.ok||!data.report) throw Error('format');
-        return data.report;
+        if(!data.ok||!data[field]) throw Error('format');
+        return data[field];
       } finally {clearTimeout(timeout); active.delete(controller);}
     }
     function message(error) {
@@ -708,18 +753,39 @@ window.UiPracticeResults = (() => {
       const notice=add(panel,'p');notice.setAttribute('role','status');
       const body=add(panel,'div');let revision=0;
       function clear() {revision++;body.replaceChildren();}
+      async function verifyTicket(id,runId,button,result) {
+        if(!permitted()||!/^KIT-[0-9a-f]{24}$/.test(id)) return;
+        const version=revision;
+        button.disabled=true;result.textContent='正在核对工单原件…';
+        try {
+          const ticket=await request('kit-regression-ticket?id='+id,false,'ticket');
+          if(!permitted()||revision!==version||!panel.open) return;
+          if(ticket.id!==id||ticket.run_id!==runId) throw Error('ticket');
+          result.replaceChildren();
+          add(result,'p','独立工单 · '+ticket.type+' · '+ticket.status);
+          add(result,'small','登记时间 '+formatTime(ticket.created_at)+' · 观察编号 '+ticket.observation_id);
+          add(result,'p',ticket.observed);
+          add(result,'p','原件证据 · '+ticket.evidence);
+        } catch(error) {
+          if(permitted()&&revision===version) {
+            if(error.status===401||error.status===403) {clear();notice.textContent=message(error);}
+            else result.textContent=message(error);
+          }
+        } finally {button.disabled=false;}
+      }
       async function download(button,id,bytes) {
         if(!permitted()||!/^[0-9a-f]{64}$/.test(id)) return;
         const version=revision;button.disabled=true;
         try {
-          const zip=kind==='performance';
-          const endpoint=zip?'performance-evidence':kind==='mobile'?'mobile-frame':'screenshot';
+          const zip=kind==='performance'||kind==='kit-regression';
+          const endpoint=zip?kind+'-evidence':kind==='mobile'?'mobile-frame':'screenshot';
           const blob=await request(endpoint+'?id='+id,zip?'application/zip':'image/png');
           if(zip && blob.size!==bytes) throw Error('size');
           if(!permitted()||revision!==version||!panel.open) return;
           const url=URL.createObjectURL(blob),anchor=document.createElement('a');
           anchor.href=url;
-          anchor.download=zip?'jmeter-evidence-'+id.slice(0,12)+'.zip':(kind==='mobile'?'手机回归-':'视觉对照-')+id.slice(0,12)+'.png';
+          const prefix=zip?(kind==='performance'?'jmeter-evidence-':'kit-regression-evidence-'):(kind==='mobile'?'手机回归-':'视觉对照-');
+          anchor.download=prefix+id.slice(0,12)+(zip?'.zip':'.png');
           anchor.click();
           setTimeout(()=>URL.revokeObjectURL(url),0);
         } catch(error) {
@@ -732,7 +798,8 @@ window.UiPracticeResults = (() => {
         try {
           const report=await request(kind,false);
           if(!permitted()||version!==revision||!panel.open) return;
-          if(kind==='performance') performanceReport(body,report,download);
+          if(kind==='kit-regression') kitRegression(body,report,download,verifyTicket);
+          else if(kind==='performance') performanceReport(body,report,download);
           else if(kind==='mobile') mobile(body,report,download);
           else if(kind==='replay') replay(body,report); else visual(body,report,download);
           notice.textContent='';
@@ -751,6 +818,7 @@ window.UiPracticeResults = (() => {
     if(hasPermission('ui.view') && (currentAccessProfile?.is_superuser===true || apps==='*' ||
        (Array.isArray(apps) && apps.includes('com.kfb.model')))) panelFor('mobile','手机回归实测');
     if(hasPermission('ui.view') && (apps==='*' || (Array.isArray(apps) && apps.includes('com.kfb.model')))) {
+      panelFor('kit-regression','套件专区需求回归');
       panelFor('performance','接口性能实测');
     }
     if(hasPermission('platform.configure') && hasPermission('api.view') &&
