@@ -48,45 +48,82 @@ window.UiPracticeResults = (() => {
     }
   }
   function kitRegression(body,report,download,verifyTicket) {
-    add(body,'h3',report.requirement);
-    add(body,'small','运行编号 '+report.run_id+' · '+formatTime(report.created_at));
-    add(body,'p',report.summary);
-    add(body,'h4','用例生成 · '+report.generation.status);
-    add(body,'p',report.generation.observed);
-    add(body,'small','生成证据 · '+report.generation.evidence);
+    const counts={passed:0,failed:0,blocked:0,not_run:0};
+    for(const row of report.checks) counts[row.status]++;
+    const unverified=counts.blocked+counts.not_run;
+    const date=new Date(report.created_at).toLocaleDateString('zh-CN',{
+      month:'long',day:'numeric',timeZone:'Asia/Shanghai'
+    });
+    add(body,'h3','套件专区回归报告 · '+date);
+    const verdict=counts.failed || unverified ? '暂不能确认可以发版'
+      : counts.passed ? '本轮检查全部通过，发版仍待确认' : '尚无实测结果，发版待确认';
+    add(body,'strong',verdict);
+    const measured=report.checks.filter(row=>['passed','failed'].includes(row.status));
+    const subjects=[
+      ['WEB-', '后台套件模型关联'],['QA-', '后台接口'],
+      ['APP-ENTRY', '手机首页入口'],['APP-API', 'App 套件接口']
+    ].filter(([prefix])=>measured.some(row=>row.id.startsWith(prefix))).map(([,name])=>name);
+    add(body,'p',subjects.length ? '本轮实测了'+subjects.join('、')+'。'
+      : measured.length ? '本轮实测了'+measured.map(row=>row.title).join('、')+'。' : '本轮尚无已执行的检查。');
+    add(body,'p','共 '+report.checks.length+' 项检查 · '+counts.passed+' 项通过 · '+counts.failed+' 项失败 · '+unverified+' 项未验证');
+    const guidance={
+      'android-home-kit-entry': '确认哪一版 App、哪个账号已开放套件入口，再用手机验证详情和模型顺序。',
+      'app-case-contract-example': '取得同一 App 环境中已上架的套件编号，替换示例值后重跑接口。'
+    };
+    if(report.defects.length) {
+      add(body,'h4','下一步');
+      for(const row of report.defects) {
+        const guide=guidance[row.observation_id];
+        const title=row.observation_id==='app-case-contract-example' ? '套件接口用的是文档里的示例编号' : row.title;
+        add(body,'strong',title);
+        add(body,'p',guide || row.observed);
+      }
+    } else if(unverified || counts.failed) {
+      add(body,'p','下一步请查看失败或未验证的检查，核对执行条件后补测。');
+    }
+    const issues=detail(body,'查看待排查问题（'+report.defects.length+'）');
+    if(!report.defects.length) add(issues,'p','本轮尚未登记排查单。');
+    for(const row of report.defects) {
+      add(issues,'h4',row.title);
+      add(issues,'p',row.observed);
+      add(issues,'small',row.status+' · '+row.evidence);
+      if(row.type) {
+        const button=add(issues,'button','查看排查单');button.type='button';
+        button.setAttribute('aria-label','查看排查单 · '+row.title);
+        const result=add(issues,'div');result.setAttribute('role','status');
+        button.onclick=()=>verifyTicket(row.id,report.run_id,button,result);
+      }
+    }
+    const all=detail(body,'查看全部 '+report.checks.length+' 项检查');
+    for(const [channel,label] of [['ui','界面检查'],['api','接口检查']]) {
+      const rows=report.checks.filter(row=>row.channel===channel);
+      add(all,'h4',label);
+      if(!rows.length) add(all,'p','本轮没有'+label+'记录。');
+      for(const row of rows) {
+        const item=detail(all,row.title+' · '+statusNames[row.status]);
+        add(item,'p',row.observed);
+        add(item,'small','关联用例 · '+row.case_id);
+        add(item,'small','证据 · '+row.evidence);
+      }
+    }
+    const design=detail(body,'用例设计与审核');
+    add(design,'p',report.generation.status+' · '+report.generation.observed);
     for(const row of report.cases) {
-      const item=detail(body,row.id+' · '+row.title);
+      const item=detail(design,row.title);
       add(item,'p','需求来源 · '+row.source);
       add(item,'p','预期结果 · '+row.expected);
     }
-    for(const [channel,label] of [['ui','UI 检查'],['api','接口检查']]) {
-      const rows=report.checks.filter(row=>row.channel===channel);
-      add(body,'h4',label);
-      if(!rows.length) add(body,'p','尚无已发布的'+label+'记录。');
-      for(const row of rows) {
-        const item=detail(body,row.id+' · '+row.title+' · '+statusNames[row.status]);
-        add(item,'p','关联用例 · '+row.case_id);
-        add(item,'p',row.observed);
-        add(item,'small','证据 · '+row.evidence);
-      }
+    const tech=detail(body,'技术详情与证据');
+    add(tech,'p',report.requirement);
+    add(tech,'small','运行编号 '+report.run_id+' · '+formatTime(report.created_at));
+    add(tech,'p',report.summary);
+    add(tech,'small','生成证据 · '+report.generation.evidence);
+    for(const row of report.knowledge) {
+      const item=detail(tech,row.title+' · '+row.status);
+      add(item,'p',row.observed);
+      add(item,'small',row.id+' · '+row.evidence);
     }
-    for(const [key,label] of [['defects','缺陷'],['knowledge','知识沉淀']]) {
-      add(body,'h4',label);
-      if(!report[key].length) add(body,'p','尚无已发布的'+label+'记录。');
-      for(const row of report[key]) {
-        const item=detail(body,row.id+' · '+row.title+' · '+row.status);
-        add(item,'p',row.observed);
-        add(item,'small','证据 · '+row.evidence);
-        if(key==='defects' && row.type) {
-          add(item,'p','工单类型 · '+row.type);
-          const button=add(item,'button','核对独立工单');button.type='button';
-          const result=add(item,'div');result.setAttribute('role','status');
-          button.onclick=()=>verifyTicket(row.id,report.run_id,button,result);
-        }
-      }
-    }
-    if(report.limitations.length) add(body,'h4','覆盖边界与待办');
-    for(const text of report.limitations) add(body,'p',text);
+    for(const text of report.limitations) add(tech,'p',text);
     if(report.evidence) {
       const button=add(body,'button','下载回归证据 ZIP');button.type='button';
       button.onclick=()=>download(button,report.evidence.sha256,report.evidence.bytes);
@@ -792,7 +829,7 @@ window.UiPracticeResults = (() => {
           if(permitted()&&revision===version) {clear();notice.textContent=message(error);}
         } finally {button.disabled=false;}
       }
-      async function load() {
+      async function load(alignReport=false) {
         if(!permitted()) {dispose();return;}
         clear();const version=revision;refresh.disabled=true;notice.textContent='正在读取已发布结果…';
         try {
@@ -803,12 +840,13 @@ window.UiPracticeResults = (() => {
           else if(kind==='mobile') mobile(body,report,download);
           else if(kind==='replay') replay(body,report); else visual(body,report,download);
           notice.textContent='';
+          if(alignReport) panel.scrollIntoView({block:'start'});
         } catch(error) {
           if(permitted()&&version===revision) {body.replaceChildren();notice.textContent=message(error);}
         } finally {if(version===revision) refresh.disabled=false;}
       }
-      panel.ontoggle=()=>{if(panel.open) load(); else {clear();refresh.disabled=false;notice.textContent='';}};
-      refresh.onclick=load;
+      panel.ontoggle=()=>{if(panel.open) load(kind==='kit-regression'); else {clear();refresh.disabled=false;notice.textContent='';}};
+      refresh.onclick=()=>load();
     }
     const guard=setInterval(()=>{if(!permitted()) dispose();},500);
     const disposeTools=attachTools(page,()=>permitted()&&hasPermission('ui.view'));
