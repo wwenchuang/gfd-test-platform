@@ -105,11 +105,11 @@ window.MobileTracking = (() => {
         const conditions=(props||'').trim().split(/\n/).filter(Boolean).map(v=>v.trim().match(/^([a-zA-Z]+)=([^=]+)$/));
         const unique=rules.filter(rule=>rule[1]===event && rule[3]===props).length===1;
         const defined=unique && (scene.selectedIndex===1 || (conditions.length>0 && conditions.every(Boolean)));
-        const matches=events.filter(x=>x.event===event && conditions.every(c=>c && x.fields?.[c[1]]===c[2]));
+        const matches=events.filter(x=>x.event===event && (!conditions.length || (x.contents||[x.fields]).some(item=>conditions.every(c=>c && item?.[c[1]]===c[2]))));
         const aligned=matches.filter(x=>x.frame!=null);
         return [step,event,wanted?'出现':'不出现',events.length?matches.length:null,
           aligned.map(x=>new Date(x.time*1000).toISOString()+' / 截图 '+(x.frame+1)).join('\n'),
-          !defined||!aligned.length?'待实测':wanted?'通过':'失败'];
+          !defined||!aligned.length?'待实测':!wanted||aligned.some(x=>x.ack==='上报失败')?'失败':aligned.some(x=>x.ack==='已接收')?'通过':'待实测'];
 
       });
     }
@@ -165,7 +165,7 @@ window.MobileTracking = (() => {
       try{
         const wb=new ExcelJS.Workbook();const result=wb.addWorksheet('结论');
         result.addRow(['场景',scene.value]);result.addRow(['规则来源',scene.selectedIndex===1?'打印取消原因收集专项需求':plan.files[0]?.name]);
-        result.addRow(['手机操作','事件','预期','观测条数','请求时间','结论']);rows().forEach(row=>result.addRow(row));
+        result.addRow(['手机操作','事件','预期','观测条数','发生时间与截图','结论']);rows().forEach(row=>result.addRow(row));
         result.columns.forEach((c,i)=>c.width=[28,34,12,14,32,16][i]);
         if(frames.length){
           const pictures=wb.addWorksheet('手机现场截图');
@@ -175,8 +175,8 @@ window.MobileTracking = (() => {
             pictures.addImage(id,{tl:{col:0,row:row+1},br:{col:5,row:row+33}});
           });
         }
-        const observations=wb.addWorksheet('抓包事件');observations.addRow(['事件','请求时间','最近现场截图','页面或元素']);
-        events.forEach(e=>observations.addRow([e.event,new Date(e.time*1000).toISOString(),e.frame==null?'无相邻截图':e.frame+1,JSON.stringify(e.fields)]));
+        const observations=wb.addWorksheet('抓包事件');observations.addRow(['请求类型','事件类型','事件名称','发生时间','请求时间','最近现场截图','内容属性','上报回执']);
+        events.forEach(e=>observations.addRow([e.requestType,e.event,e.name,e.time?new Date(e.time*1000).toISOString():'未提供',new Date((e.sent||e.time)*1000).toISOString(),e.frame==null?'无相邻截图':e.frame+1,JSON.stringify(e.contents||e.fields),e.ack]));
         if(photo){
           const sheet=wb.addWorksheet('截图');sheet.addRow(['操作或前置状态截图',photo.name]);
           const id=wb.addImage({buffer:photo.bytes,extension:photo.ext});

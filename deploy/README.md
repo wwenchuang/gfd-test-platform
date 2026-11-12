@@ -578,7 +578,7 @@ broker 可能丢弃已过期消息，此时任务不会自动终结。
 
 测试平台按常规发布流程更新。在管理 OPPO Reno9（ecbfd645）的 Mac 上，将
 `mac-midscene-runner.py`、`mobile_tracking_runner.py`、`mobile_tracking_observer.py`
-放到同一 Runner 目录。默认采集 QA 的 `https://qa-event.gongfudou.com/event/zxbEvent?type=UA`。需要换环境时可设置 `TRACKING_EVENT_URL`。在原启动环境
+放到同一 Runner 目录。默认采集 QA 的 `https://qa-event.gongfudou.com/event/zxbEvent?type=CS`。需要换环境时可设置 `TRACKING_EVENT_URL`。在原启动环境
 设置 `TRACKING_MITMDUMP` 为 mitmdump 的绝对路径（在 PATH 中时可省略）。
 可用独立 Python 环境安装 mitmproxy。HTTPS 采集需要测试构建已信任该测试代理；
 未取得可解析请求的项目标为待实测。设备已有代理时会显示待实测。

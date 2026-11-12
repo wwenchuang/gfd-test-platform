@@ -35,7 +35,7 @@ def capture(adb, on_ready=lambda: None):
         else:
             result['note']='请先打开智小白 3D，待实测'
             return result
-        endpoint=os.getenv('TRACKING_EVENT_URL') or 'https://qa-event.gongfudou.com/event/zxbEvent?type=UA'
+        endpoint=os.getenv('TRACKING_EVENT_URL') or 'https://qa-event.gongfudou.com/event/zxbEvent?type=CS'
         url=urlsplit(endpoint)
         binary=os.getenv('TRACKING_MITMDUMP') or shutil.which('mitmdump')
         if url.scheme not in ('http','https') or not url.hostname or not binary:
@@ -76,7 +76,7 @@ def capture(adb, on_ready=lambda: None):
             markers=diag.read_text().splitlines() if diag.exists() else []
             result['diagnostics']={key:markers.count(key) for key in ('matched_path','matched_query','tls_failed_client')}
             if events: result['note']='采集结束'
-            elif 'matched_query' in markers: result['note']='收到 UA 请求，但未解析到事件，待实测'
+            elif 'matched_query' in markers: result['note']='收到目标上报请求，但未解析到事件，待实测'
             elif 'tls_failed_client' in markers: result['note']='上报域名的客户端 TLS 握手失败，待实测'
             else: result['note']='观察时段内未读到匹配的上报请求，待实测'
         finally:
