@@ -15,7 +15,15 @@ def db():
     con.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, owner TEXT, runner TEXT, created REAL, state TEXT, result TEXT)')
     return con
 
-def start(owner, runner):
+def path_for(key,runner):
+    with db() as con:
+        row=con.execute('SELECT result FROM runs WHERE id=? AND runner=?',(key,runner)).fetchone()
+    return json.loads(row[0]).get('path',[]) if row else []
+
+def start(owner, runner, path=None):
+    from .mobile_tracking_plan import LABELS
+    if not isinstance(path,list) or not 1<=len(path)<=5 or any(a not in LABELS for a in path):
+        raise ValueError('手机操作路径未通过校验')
     with db() as con:
         con.execute('BEGIN IMMEDIATE')
         now = time.time()
@@ -23,7 +31,7 @@ def start(owner, runner):
         if con.execute("SELECT 1 FROM runs WHERE state IN ('queued','running','ready') AND created>?", (now-150,)).fetchone():
             raise ValueError('指定手机已有采集任务')
         key = secrets.token_hex(16)
-        con.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(key,owner,runner,now,'queued','{}'))
+        con.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(key,owner,runner,now,'queued',json.dumps({'path':path})))
         return key
 
 def claim(runner):

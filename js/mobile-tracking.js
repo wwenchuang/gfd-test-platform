@@ -88,24 +88,28 @@ window.MobileTracking = (() => {
     const preview=add(panel,'img');preview.hidden=true;preview.style.maxWidth='min(100%, 380px)';
     const output=add(panel,'pre'),save=add(panel,'button','导出 Excel 测试表');save.type='button';
     let sheets=[],events=[],photo=null,photoUrl='',planRev=0,photoRev=0;
-    let frames=[],busy=false;
-    function checks(){
+    let frames=[],busy=false,plans=[];
+    function sourceChecks(){
       if(scene.selectedIndex===1)return steps;
       const planned=[];
       for(const sheet of sheets){
         const header=sheet.rows[0]?.values||[];
         const code=header.indexOf('使用事件'),action=header.indexOf('需要统计的行为'),props=header.findIndex(x=>x?.includes('标识'));
-        for(const row of sheet.rows.slice(1))if(code>=0&&row.values[code])planned.push([row.values[action]||sheet.sheet,row.values[code],true,row.values[props]||'']);
+        for(const row of sheet.rows.slice(1))if(code>=0&&row.values[code])planned.push([row.values[action]||sheet.sheet,row.values[code],true,row.values[props]||'',row.values[1]||sheet.sheet,sheet.name+' / '+sheet.sheet+' 第 '+row.n+' 行']);
       }
       return planned;
     }
+    function checks(){
+      const source=sourceChecks();
+      return plans.length?plans.map(p=>[p.action||source[p.source][0],...source[p.source].slice(1)]):source;
+    }
     function rows(){
       const rules=checks();
-      return rules.map(([step,event,wanted,props])=>{
-        const conditions=(props||'').trim().split(/\n/).filter(Boolean).map(v=>v.trim().match(/^([a-zA-Z]+)=([^=]+)$/));
+      return rules.map(([step,event,wanted,props],id)=>{
+        const conditions=(props||'').trim().split(/\n/).filter(Boolean).map(v=>v.trim().replace(/^[`]+|[；;`]+$/g,'').match(/^([a-zA-Z][\w]*)=([^=]+)$/));
         const unique=rules.filter(rule=>rule[1]===event && rule[3]===props).length===1;
         const defined=unique && (scene.selectedIndex===1 || (conditions.length>0 && conditions.every(Boolean)));
-        const matches=events.filter(x=>x.event===event && (!conditions.length || (x.contents||[x.fields]).some(item=>conditions.every(c=>c && item?.[c[1]]===c[2]))));
+        const matches=events.filter(x=>x.ids.includes(id) && String(x.event).toUpperCase()===plans[id]?.event && (!conditions.length || (x.contents||[x.fields]).some(item=>conditions.every(c=>c && item?.[c[1]]===c[2]))));
         const aligned=matches.filter(x=>x.frame!=null);
         return [step,event,wanted?'出现':'不出现',events.length?matches.length:null,
           aligned.map(x=>new Date(x.time*1000).toISOString()+' / 截图 '+(x.frame+1)).join('\n'),
@@ -115,7 +119,7 @@ window.MobileTracking = (() => {
     }
     function render(){output.textContent=rows().map(r=>r[0]+'　'+r[5]).join('\n');save.disabled=!sheets.length||busy;start.disabled=!sheets.length||busy;scene.disabled=busy;plan.disabled=busy;}
     plan.onchange=async()=>{
-      events=[];frames=[];photo=null;preview.hidden=true;message.textContent='';const rev=++planRev;sheets=[];contents.replaceChildren();render();
+      plans=[];events=[];frames=[];photo=null;preview.hidden=true;message.textContent='';const rev=++planRev;sheets=[];contents.replaceChildren();render();
       const file=plan.files[0];if(!file)return;
       planState.textContent='正在解析…';
       try{
@@ -127,32 +131,72 @@ window.MobileTracking = (() => {
         planState.textContent='已解析 '+sheets.length+' 张工作表';
       }catch(e){if(rev===planRev)planState.textContent='解析失败：'+e.message;}render();
     };
-    scene.onchange=()=>{events=[];frames=[];photo=null;preview.hidden=true;message.textContent='';render();};
+    scene.onchange=()=>{plans=[];events=[];frames=[];photo=null;preview.hidden=true;message.textContent='';render();};
     async function call(body){
       const reply=await nativeFetch('/api/mobile-tracking',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(body)});
       const data=await reply.json();if(!reply.ok||!data.ok)throw Error(data.error||'采集服务不可用');return data;
     }
-    start.onclick=async()=>{
-      busy=true;events=[];frames=[];photo=null;preview.hidden=true;render();message.textContent='正在连接指定手机…';
-      try{
-        const run=await call({device:device.value});const deadline=Date.now()+160000;
-        while(Date.now()<deadline&&panel.isConnected){
-          const data=await call({id:run.id});
-          if(data.state==='done'){
-            frames=data.frames||[];
-            events=(data.events||[]).map(e=>{
-              let frame=null,distance=3;
-              frames.forEach((f,i)=>{const d=Math.abs(f.time-e.time);if(d<distance){frame=i;distance=d;}});
-              return {...e,frame};
-            });
-            if(frames.length){preview.src='data:image/png;base64,'+frames[0].png;preview.hidden=false;}
-            message.textContent=(data.note||'采集结束')+' · '+events.length+' 条事件，'+frames.length+' 张截图';break;
+    async function runGroup(group){
+      const path=group[0].path;
+      const run=await call({device:device.value,path});
+      const deadline=Date.now()+160000;
+      while(Date.now()<deadline && panel.isConnected){
+        const data=await call({id:run.id});
+        if(data.state==='done'){
+          const offset=frames.length;
+          const pictures=data.frames||[], performed=data.performed||[];
+          const done=performed.length===path.length && performed.every((a,i)=>a.label===path[i]);
+          const ids=done?group.map(g=>g.id):[];
+          frames.push(...pictures);
+          for(const e of data.events||[]){
+            let frame=null,distance=3;
+            pictures.forEach((f,i)=>{const d=Math.abs(f.time-e.time);if(d<distance){frame=offset+i;distance=d;}});
+            events.push({...e,frame,ids:done&&e.time>=performed[0].time-0.5?ids:[]});
           }
-          message.textContent=data.state==='ready'?'已开始 30 秒抓包，请在手机上操作 App。':'正在准备手机采集…';
-          await new Promise(resolve=>setTimeout(resolve,1500));
+          for(const g of group){
+            g.observed=performed.map(a=>a.label).join(' → ');
+            g.actualTypes=[...new Set((data.events||[]).filter(e=>String(e.event).toUpperCase()===g.event).map(e=>e.requestType).filter(Boolean))].join('、');
+            g.reason=done?(data.note||'采集结束'):(data.note||'待实测')+'；未完成预期操作';
+          }
+          const verdicts=rows();
+          return group.some(g=>verdicts[g.id][5]==='通过');
         }
-        if(Date.now()>=deadline)message.textContent='采集超时，待实测';
-      }catch(e){message.textContent=e.message+' · 待实测';}finally{busy=false;render();}
+        await new Promise(resolve=>setTimeout(resolve,1500));
+      }
+      throw Error('等待设备结果超时');
+    }
+    start.onclick=async()=>{
+      busy=true;plans=[];events=[];frames=[];photo=null;preview.hidden=true;render();
+      try{
+        const source=checks().map(([action,event,,properties,feature,origin],id)=>({id,action,event,properties,feature,origin}));
+        for(let i=0;i<source.length;i+=12){
+          message.textContent='AI 正在分析需求行 '+(i+1)+'–'+Math.min(i+12,source.length);
+          const batch=source.slice(i,i+12);
+          const reply=await call({requirements:batch});
+          for(const item of reply.items)plans.push({...item,source:item.id,id:plans.length,origin:source[item.id]?.origin});
+        }
+        const paths=new Map();
+        for(const item of plans){
+          if(!item?.path.length)continue;
+          const key=JSON.stringify(item.path);
+          if(!paths.has(key))paths.set(key,[]);
+          paths.get(key).push(item);
+        }
+        const groups=[...paths.values()];
+        let passed=0;
+        for(let i=0;i<groups.length;i++){
+          if(i===3 && passed<2){
+            groups.slice(i).flat().forEach(g=>g.reason='首批 3 条流程通过不足 50%，待实测');break;
+          }
+          message.textContent='手机正在自动执行 '+(i+1)+' / '+groups.length+'：'+groups[i][0].path.join(' → ');
+          if(await runGroup(groups[i]))passed++;
+        }
+        message.textContent='本轮结束，已生成实测表。';
+      }catch(e){
+        sourceChecks().forEach((r,i)=>{if(!plans.some(p=>p.source===i))plans.push({id:plans.length,source:i,feature:r[4],action:r[0],path:[],steps:[],reason:e.message});});
+        message.textContent=e.message+' · 未取得证据的项目待实测';
+      }
+      finally{busy=false;render();await save.onclick();}
     };
     evidence.onchange=async()=>{
       const rev=++photoRev;photo=null;preview.hidden=true;if(photoUrl)URL.revokeObjectURL(photoUrl);
@@ -167,6 +211,14 @@ window.MobileTracking = (() => {
         result.addRow(['场景',scene.value]);result.addRow(['规则来源',scene.selectedIndex===1?'打印取消原因收集专项需求':plan.files[0]?.name]);
         result.addRow(['手机操作','事件','预期','观测条数','发生时间与截图','结论']);rows().forEach(row=>result.addRow(row));
         result.columns.forEach((c,i)=>c.width=[28,34,12,14,32,16][i]);
+        const design=wb.addWorksheet('AI 测试步骤');
+        design.addRow(['需求来源','功能','需求事件','AI 预估请求分组','实收请求分组','测试步骤','实际手机操作','执行说明','实测结论']);
+        const verdicts=rows();
+        checks().forEach((rule,i)=>{
+          const p=plans[i]||{};
+          design.addRow([rule[5],p.feature||rule[4],p.event||rule[1],p.transport||'未知',p.actualTypes||'未观测',(p.steps||[]).join('\n'),p.observed||'',p.reason||'本轮未执行',verdicts[i][5]]);
+        });
+        design.columns.forEach(c=>c.width=34);
         if(frames.length){
           const pictures=wb.addWorksheet('手机现场截图');
           frames.forEach((frame,i)=>{
@@ -184,12 +236,16 @@ window.MobileTracking = (() => {
         }
         const catalog=wb.addWorksheet('方案事件清单');catalog.addRow(['来源工作表','原行号','业务动作','使用事件','页面或元素标识','结论']);
         let catalogIndex=0;const conclusions=rows();
+        function sourceConclusion(index){
+          const items=plans.filter(p=>p.source===index).map(p=>conclusions[p.id][5]);
+          return items.includes('失败')?'失败':items.length && items.every(v=>v==='通过')?'通过':'待实测';
+        }
         for(const s of sheets){
           const header=s.rows[0]?.values||[];
           const code=header.indexOf('使用事件'),action=header.indexOf('需要统计的行为');
           const props=header.findIndex(x=>x?.includes('标识'));
           if(code<0)continue;
-          for(const row of s.rows.slice(1))if(row.values[code])catalog.addRow([s.name+' / '+s.sheet,row.n,row.values[action],row.values[code],row.values[props],scene.selectedIndex===0?conclusions[catalogIndex++][5]:'待实测']);
+          for(const row of s.rows.slice(1))if(row.values[code])catalog.addRow([s.name+' / '+s.sheet,row.n,row.values[action],row.values[code],row.values[props],scene.selectedIndex===0?sourceConclusion(catalogIndex++):'待实测']);
         }
         catalog.columns.forEach(c=>c.width=32);
         sheets.forEach((s,i)=>{

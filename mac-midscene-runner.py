@@ -1815,7 +1815,7 @@ def poll_tracking(devices):
             if not reply.get('id'): return
             def ready():
                 http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'id':reply['id'],'phase':'ready'},timeout=5)
-            try: result = capture(recording_adb_path(), ready)
+            try: result = capture(recording_adb_path(), ready, reply.get("path"))
             except Exception as exc: result = {'note':'手机采集失败，待实测：'+type(exc).__name__}
             for attempt in range(3):
                 try:
@@ -1839,6 +1839,7 @@ def heartbeat(devices):
         "version": RUNNER_VERSION,
         "capabilities": {
             **RUNNER_CAPABILITIES,
+            "tracking_auto": RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
             "tracking": RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
             "midscene_model_name": runtime.get("MIDSCENE_MODEL_NAME", ""),
             "midscene_model_family": runtime.get("MIDSCENE_MODEL_FAMILY", ""),

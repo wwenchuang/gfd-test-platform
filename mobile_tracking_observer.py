@@ -19,6 +19,7 @@ def request(flow):
     if (url.scheme,url.netloc,url.path)!=(target.scheme,target.netloc,target.path):return
     mark('matched_path')
     expected=parse_qs(target.query,keep_blank_values=True)
+    expected.pop('type',None)  # One reporting path carries several transport groups.
     actual=parse_qs(url.query,keep_blank_values=True)
     if any(actual.get(key)!=values for key,values in expected.items()):return
     mark('matched_query')
@@ -28,7 +29,7 @@ def request(flow):
     for record in records: record['requestType']=actual.get('type',[''])[0][:32]
     flow.metadata['tracking_rows']=records
 
-FIELDS=('page','pageTitle','element','elementId','modelName','modelType','resourceType',
+FIELDS=('page','pageTitle','ele','eleTitle','tab','topicId','topicName','element','elementId','modelName','modelType','resourceType',
         'modelId','firstExposurePosition','exposurePage','pagePre')
 
 def decode(body, sent):

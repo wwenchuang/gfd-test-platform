@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 DEVICE = 'ecbfd645'
 APP = 'com.kfb.model'
 
-def capture(adb, on_ready=lambda: None):
+def capture(adb, on_ready=lambda: None, path=None):
     def command(*args, timeout=6):
         return subprocess.check_output([adb,'-s',DEVICE,*args],timeout=timeout,stderr=subprocess.DEVNULL)
     def frame(folder):
@@ -30,12 +30,19 @@ def capture(adb, on_ready=lambda: None):
     frames=[]
     result={'events':events,'frames':frames,'note':'待实测'}
     with tempfile.TemporaryDirectory() as folder:
+        if path:
+            launcher=command('shell','cmd','package','resolve-activity','--brief','-a','android.intent.action.MAIN','-c','android.intent.category.LAUNCHER',APP).decode().strip().splitlines()[-1]
+            if not re.fullmatch(re.escape(APP)+r'/[A-Za-z0-9_.$]+',launcher):
+                result['note']='无法确认 App 启动入口，待实测'
+                return result
+            command('shell','am','start','-n',launcher)
+            time.sleep(1)
         initial=frame(folder)
         if initial: frames.append(initial)
         else:
             result['note']='请先打开智小白 3D，待实测'
             return result
-        endpoint=os.getenv('TRACKING_EVENT_URL') or 'https://qa-event.gongfudou.com/event/zxbEvent?type=CS'
+        endpoint=os.getenv('TRACKING_EVENT_URL') or 'https://qa-event.gongfudou.com/event/zxbEvent'
         url=urlsplit(endpoint)
         binary=os.getenv('TRACKING_MITMDUMP') or shutil.which('mitmdump')
         if url.scheme not in ('http','https') or not url.hostname or not binary:
@@ -64,6 +71,24 @@ def capture(adb, on_ready=lambda: None):
             assigned='127.0.0.1:'+remote
             command('shell','settings','put','global','http_proxy',assigned)
             on_ready()
+            performed=[]
+            result['performed']=performed
+            for label in path or []:
+                # Only tap a unique, visible control belonging to the configured App.
+                if frame(folder) is None:break
+                image=Path(folder)/'label.png'
+                image.write_bytes(command('exec-out','screencap','-p'))
+                helper=Path(__file__).with_name('mobile_tracking_label.swift')
+                try:
+                    point=subprocess.check_output(['swift',str(helper),str(image),label],timeout=15,stderr=subprocess.DEVNULL).decode().strip()
+                except (OSError,subprocess.SubprocessError):break
+                if not re.fullmatch(r'\d+ \d+',point) or frame(folder) is None:break
+                stamp=time.time()
+                command('shell','input','tap',*point.split())
+                performed.append({'label':label,'time':stamp})
+                time.sleep(.5)
+                shot=frame(folder)
+                if shot:frames.append(shot)
             until=time.monotonic()+30
             while time.monotonic()<until and proxy.poll() is None:
                 shot=frame(folder)
