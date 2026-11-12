@@ -9,10 +9,50 @@ import socket
 import subprocess
 import tempfile
 import time
-from urllib.parse import urlsplit
+from datetime import datetime
+from urllib.parse import parse_qs, urlsplit
+from mobile_tracking_observer import decode
 
 DEVICE = 'ecbfd645'
 APP = 'com.kfb.model'
+
+def proxyman_events(folder, target, device_ip, since, until):
+    cli='/Applications/Proxyman.app/Contents/MacOS/proxyman-cli'
+    destination=Path(folder)/'qa-events.har'
+    subprocess.run([cli,'export-log','-m','domains','-d',target.hostname,'-o',str(destination),'-f','har'],
+                   check=True,timeout=15,stdout=subprocess.DEVNULL)
+    deadline=time.monotonic()+8
+    while True:
+        try:
+            entries=json.loads(destination.read_text())['log']['entries']
+            break
+        except (FileNotFoundError,json.JSONDecodeError):
+            if time.monotonic()>=deadline:raise ValueError('未取得 Proxyman 导出结果')
+            time.sleep(.25)
+    events=[]
+    matched=0
+    for entry in entries:
+        if entry.get('_remoteDeviceIP')!=device_ip:continue
+        req=entry['request']
+        url=urlsplit(req['url'])
+        if req['method']!='POST' or (url.scheme,url.netloc,url.path)!=(target.scheme,target.netloc,target.path):continue
+        sent=datetime.fromisoformat(entry['startedDateTime'].replace('Z','+00:00')).timestamp()
+        if not since<=sent<=until:continue
+        matched+=1
+        try:body=json.loads(req.get('postData',{}).get('text',''))
+        except ValueError:continue
+        response=entry['response']
+        content=response.get('content',{})
+        try:
+            raw=content.get('text','')
+            reply=json.loads(base64.b64decode(raw) if content.get('encoding')=='base64' else raw)
+        except ValueError:reply=None
+        ack='回执未识别'
+        if isinstance(reply,dict) and type(reply.get('code')) is int:
+            ack='已接收' if 200<=response['status']<300 and reply['code']==0 else '上报失败'
+        for row in decode(body,sent):
+            events.append(dict(row,ack=ack,requestType=parse_qs(url.query).get('type',[''])[0]))
+    return matched,events
 
 def capture(adb, on_ready=lambda: None, path=None):
     def command(*args, timeout=6):
@@ -44,11 +84,63 @@ def capture(adb, on_ready=lambda: None, path=None):
             return result
         endpoint=os.getenv('TRACKING_EVENT_URL') or 'https://qa-event.gongfudou.com/event/zxbEvent'
         url=urlsplit(endpoint)
+        def observe(is_running):
+            on_ready()
+            performed=[]
+            result['performed']=performed
+            for label in path or []:
+                # Only tap a unique, visible control belonging to the configured App.
+                if frame(folder) is None:break
+                image=Path(folder)/'label.png'
+                image.write_bytes(command('exec-out','screencap','-p'))
+                helper=Path(__file__).with_name('mobile_tracking_label.swift')
+                try:
+                    point=subprocess.check_output(['swift',str(helper),str(image),label],timeout=15,stderr=subprocess.DEVNULL).decode().strip()
+                except (OSError,subprocess.SubprocessError):break
+                if not re.fullmatch(r'\d+ \d+',point) or frame(folder) is None:break
+                stamp=time.time()
+                command('shell','input','tap',*point.split())
+                performed.append({'label':label,'time':stamp})
+                time.sleep(.5)
+                shot=frame(folder)
+                if shot:frames.append(shot)
+            until=time.monotonic()+30
+            while time.monotonic()<until and is_running():
+                shot=frame(folder)
+                if shot: frames.append(shot)
+                time.sleep(2)
         binary=os.getenv('TRACKING_MITMDUMP') or shutil.which('mitmdump')
-        if url.scheme not in ('http','https') or not url.hostname or not binary:
+        if url.scheme not in ('http','https') or not url.hostname:
             result['note']='Runner 缺少埋点上报地址或 mitmdump，待实测'
             return result
         old=command('shell','settings','get','global','http_proxy').decode().strip()
+        networks=command('shell','dumpsys','connectivity').decode(errors='replace')
+        wifi=re.search(r'HttpProxy: \[([0-9.]+)\] (\d+)',networks)
+        if wifi and old in ('',':0','null',wifi[1]+':'+wifi[2]):
+            host,proxy_port=wifi.groups()
+            interfaces=subprocess.check_output(['/sbin/ifconfig'],text=True)
+            listener=subprocess.run(['/usr/sbin/lsof','-nP','-iTCP:'+proxy_port,'-sTCP:LISTEN'],capture_output=True,text=True)
+            if not re.search(r'\binet '+re.escape(host)+r'\s',interfaces) or 'Proxyman' not in listener.stdout:
+                result['note']='设备已配置其他 Wi-Fi 代理，待实测'
+                return result
+            ip=re.search(r'\binet ([0-9.]+)/',command('shell','ip','-4','addr','show','wlan0').decode())
+            if not ip:
+                result['note']='无法核对手机 Wi-Fi 地址，待实测'
+                return result
+            since=time.time()
+            observe(lambda:True)
+            try:
+                matched,found=proxyman_events(folder,url,ip[1],since,time.time())
+            except (OSError,ValueError,subprocess.SubprocessError):
+                result['note']='Proxyman 记录读取失败，待实测'
+                return result
+            events.extend(found)
+            result['diagnostics']={'source':'Proxyman','matched_path':matched}
+            result['note']='已读取本机 Proxyman 的本轮事件' if found else '本轮未取得这台手机的可解析 QA 埋点，待实测'
+            return result
+        if not binary:
+            result['note']='Runner 缺少 mitmdump，待实测'
+            return result
         if old not in ('',':0','null'):
             result['note']='手机已有代理正在使用，待实测'
             return result
@@ -70,30 +162,7 @@ def capture(adb, on_ready=lambda: None, path=None):
             if not remote.isdigit():raise RuntimeError('无法绑定手机采集端口')
             assigned='127.0.0.1:'+remote
             command('shell','settings','put','global','http_proxy',assigned)
-            on_ready()
-            performed=[]
-            result['performed']=performed
-            for label in path or []:
-                # Only tap a unique, visible control belonging to the configured App.
-                if frame(folder) is None:break
-                image=Path(folder)/'label.png'
-                image.write_bytes(command('exec-out','screencap','-p'))
-                helper=Path(__file__).with_name('mobile_tracking_label.swift')
-                try:
-                    point=subprocess.check_output(['swift',str(helper),str(image),label],timeout=15,stderr=subprocess.DEVNULL).decode().strip()
-                except (OSError,subprocess.SubprocessError):break
-                if not re.fullmatch(r'\d+ \d+',point) or frame(folder) is None:break
-                stamp=time.time()
-                command('shell','input','tap',*point.split())
-                performed.append({'label':label,'time':stamp})
-                time.sleep(.5)
-                shot=frame(folder)
-                if shot:frames.append(shot)
-            until=time.monotonic()+30
-            while time.monotonic()<until and proxy.poll() is None:
-                shot=frame(folder)
-                if shot: frames.append(shot)
-                time.sleep(2)
+            observe(lambda:proxy.poll() is None)
             path=Path(env['TRACKING_ROWS'])
             if path.exists():
                 events.extend(json.loads(line) for line in path.read_text().splitlines()[:256])
