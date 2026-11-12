@@ -881,41 +881,7 @@ window.UiPracticeResults = (() => {
        (Array.isArray(apps) && apps.includes('com.kfb.model')))) reportPanels.mobile=panelFor('mobile','手机回归实测');
     if(hasPermission('ui.view') && (apps==='*' || (Array.isArray(apps) && apps.includes('com.kfb.model')))) {
       reportPanels['kit-regression']=panelFor('kit-regression','套件专区需求回归');
-      const tracking=add(page,'details');
-      add(tracking,'summary','埋点校验 · 告诉我们');
-      add(tracking,'p','导入仅含本次设备、会话和操作时段的事件 JSON。格式为 {"events":[{"event":"click_tell_us"}],"complete":true}。complete 表示数据源已完整覆盖本次观察时段。');
-      const input=add(tracking,'input');input.type='file';input.accept='.json';input.setAttribute('aria-label','本次事件明细');
-      const photoLabel=add(tracking,'label','操作截图 ');
-      const photo=add(photoLabel,'input');photo.type='file';photo.accept='image/png,image/jpeg';
-      const preview=add(tracking,'img');preview.hidden=true;preview.alt='本次操作截图';preview.style.maxWidth='100%';
-      photo.onchange=()=>{
-        if(preview.src) URL.revokeObjectURL(preview.src);
-        preview.hidden=!photo.files.length;
-        if(photo.files.length) preview.src=URL.createObjectURL(photo.files[0]);
-      };
-      const result=add(tracking,'pre','待实测');result.setAttribute('role','status');
-      const save=add(tracking,'button','导出本次测试表');save.type='button';save.disabled=true;
-      let report='',sequence=0;
-      input.onchange=async()=>{
-        const version=++sequence;save.disabled=true;result.textContent='待核对';
-        if(!input.files.length)return;
-        try{
-          const data=JSON.parse(await input.files[0].text());
-          if(version!==sequence)return;
-          if(!Array.isArray(data.events)||!data.events.every(e=>typeof e?.event==='string'))throw Error();
-          const rows=[['操作','事件','预期','实际条数','结论']];
-          for(const [step,name,expected] of [['显示弹窗','pv_print_canceled_toast',true],['点击告诉我们','click_tell_us',true],['进入原因页','pv_cancel_reason_collect',true],['未提交反馈','click_cancel',false]]){
-            const count=data.events.filter(e=>e.event===name).length;
-            const verdict=data.complete!==true?'待核对':Boolean(count)===expected?'通过':'失败';
-            rows.push([step,name,expected?'出现':'不出现',count,verdict]);
-          }
-          result.textContent=rows.map(r=>r.join('  ')).join('\n');report=rows.map(r=>r.join(',')).join('\r\n');save.disabled=false;
-        }catch{if(version===sequence)result.textContent='无法读取事件明细，请检查 JSON 格式后重选文件。';}
-      };
-      save.onclick=()=>{
-        const url=URL.createObjectURL(new Blob(['\ufeff',report],{type:'text/csv;charset=utf-8'}));
-        const a=document.createElement('a');a.href=url;a.download='告诉我们-埋点测试结果.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-      };
+      window.MobileTracking?.attach(page);
       recent=document.createElement('section');
       recent.className='ui-practice-evidence';
       recent.setAttribute('aria-label','最近的回归报告');
