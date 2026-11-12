@@ -43,9 +43,14 @@ def decode(body, sent):
         if not isinstance(kind,str) or not kind:continue
         contents=row.get('conts',[]) if batch else [row.get('properties',row)]
         if not isinstance(contents,list):contents=[]
+        attributes=row.get('extAttr') if batch else None
+        if isinstance(attributes,dict):
+            contents=[{**attributes,**item} for item in contents if isinstance(item,dict)] or [attributes]
         fields=[{k:str(item[k])[:160] for k in FIELDS if k in item and isinstance(item[k],(str,int,float))}
                 for item in contents[:64] if isinstance(item,dict)]
         timestamp=row.get('time') if batch else None
+        if isinstance(timestamp,str) and timestamp.isascii() and timestamp.isdecimal() and len(timestamp)<=14:
+            timestamp=int(timestamp)
         occurred=timestamp/1000 if type(timestamp) in (int,float) and 0<timestamp<10**14 else None
         result.append({'event':kind[:100],'name':str(row.get('eventName',''))[:100],
                        'time':occurred if batch else sent,'sent':sent,'contents':fields})

@@ -1,3 +1,7 @@
+## 荣耀 Magic Vs3 热门 AEC
+
+真机从推荐切到热门，QA 上报 AEC 四个字段在 extAttr 内，字符串毫秒时间戳，HTTP 200、code 0。已用实录回放解析并验证两张截图的 Excel。OPPO 待实测。
+
 ## 复用已配置的 Android Wi-Fi 代理
 
 指定 OPPO 已配置本机 Proxyman。实测 Runner 自动点击推荐与热门并按设备来源、时间和 QA 路径读取记录，本轮匹配请求为 0，结论待实测。独立浏览器对照触发证书告警，尚无该 AEC 的请求或回执。
