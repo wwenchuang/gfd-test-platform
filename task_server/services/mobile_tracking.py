@@ -1,0 +1,54 @@
+"""One bounded capture per physical phone, readable only by its initiating user."""
+import json
+import secrets
+import sqlite3
+import time
+from pathlib import Path
+from task_server.config import LEARNING_DIR
+
+DEVICE = 'ecbfd645'
+APP = 'com.kfb.model'
+def db():
+    path = Path(LEARNING_DIR) / 'private-mobile-tracking'
+    path.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(path/'sessions.sqlite', timeout=5)
+    con.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, owner TEXT, runner TEXT, created REAL, state TEXT, result TEXT)')
+    return con
+
+def start(owner, runner):
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        now = time.time()
+        con.execute('DELETE FROM runs WHERE created < ?', (now-86400,))
+        if con.execute("SELECT 1 FROM runs WHERE state IN ('queued','running','ready') AND created>?", (now-150,)).fetchone():
+            raise ValueError('指定手机已有采集任务')
+        key = secrets.token_hex(16)
+        con.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(key,owner,runner,now,'queued','{}'))
+        return key
+
+def claim(runner):
+    with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        row = con.execute("SELECT id FROM runs WHERE runner=? AND state='queued' AND created>? LIMIT 1",(runner,time.time()-30)).fetchone()
+        if row:
+            con.execute("UPDATE runs SET state='running' WHERE id=?",row)
+            return row[0]
+
+def ready(key, runner):
+    with db() as con:
+        con.execute("UPDATE runs SET state='ready' WHERE id=? AND runner=? AND state='running'", (key,runner))
+
+def finish(key, runner, result):
+    encoded = json.dumps(result)
+    if len(encoded)>6_000_000: raise ValueError('证据超过大小限制')
+    with db() as con:
+        con.execute("UPDATE runs SET state='done',result=? WHERE id=? AND runner=? AND state IN ('running','ready')",(encoded,key,runner))
+
+def read(owner,key):
+    with db() as con:
+        row = con.execute('SELECT created,state,result FROM runs WHERE id=? AND owner=?',(key,owner)).fetchone()
+    if not row: raise ValueError('找不到本次测试')
+    created,state,result=row
+    if state!='done' and time.time()-created>(30 if state=='queued' else 150):
+        return {'state':'done','note':'采集超时，待实测'}
+    return dict(json.loads(result),state=state)

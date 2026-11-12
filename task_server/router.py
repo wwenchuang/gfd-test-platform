@@ -4282,6 +4282,46 @@ def _handle_generate_job_cancel(handler, m, job_id, d):
 
 # ── Runner 心跳 ─────────────────────────────────────────────────────
 
+@route_post("/api/runner/mobile-tracking")
+def _tracking_runner(handler, qs):
+    if _require_runner_auth(handler):
+        return
+    from task_server.services import mobile_tracking as track
+    data = handler._body()
+    runner = str(data.get('runner_id') or '')
+    if data.get('phase') == 'ready':
+        track.ready(data.get('id'), runner)
+        handler._json({'ok': True})
+    elif 'result' in data:
+        track.finish(data.get('id'), runner, data['result'])
+        handler._json({'ok': True})
+    else:
+        handler._json({'ok': True, 'id': track.claim(runner)})
+
+
+@route_post("/api/mobile-tracking")
+def _tracking_user(handler, qs):
+    from task_server.services import mobile_tracking as track
+    from task_server.services.ui_execution_contract import require_ui_actor, AccessDenied
+    data = handler._body()
+    try:
+        owner = require_ui_actor(permission='ui.execute', app_id=track.APP)['user_id']
+        if data.get('id'):
+            handler._json(dict(ok=True, **track.read(owner, data['id'])))
+            return
+        if data.get('device') != track.DEVICE:
+            raise ValueError('请选择指定手机')
+        online = [d for d in all_online_devices() if d.get('runner_online') and d.get('device_id')==track.DEVICE
+                  and d.get('usage_status')=='idle' and d.get('runner_capabilities',{}).get('tracking') and d.get('status') in ('device','online')]
+        if len(online)!=1:
+            raise ValueError('指定手机未就绪或 Runner 尚未更新，待实测')
+        handler._json({'ok': True, 'id': track.start(owner, online[0]['runner_id'])})
+    except AccessDenied:
+        handler._json({'ok': False,'error':'没有此应用的执行权限'},403)
+    except ValueError as exc:
+        handler._json({'ok': False,'error':str(exc)},400)
+
+
 @route_post("/api/runner/heartbeat")
 def _post_runner_heartbeat(handler, qs):
     if _require_user_auth(handler):

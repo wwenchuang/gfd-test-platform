@@ -77,31 +77,45 @@ window.MobileTracking = (() => {
     const planState=add(panel,'p','请选择 Word 方案或 Excel 表。');
     const list=add(panel,'details');add(list,'summary','查看解析明细');
     const contents=add(list,'div');
-    add(panel,'h3','打印取消反馈 · 告诉我们');
-    add(panel,'p','用例来源为打印取消原因收集专项需求。请选择指定手机本次操作的埋点请求 HAR，或本次事件 JSON。');
-    const phone=add(panel,'a','打开 Sonic 选择指定手机');
-    phone.href='http://101.34.197.12:3000/Index/Devices';phone.target='_blank';phone.rel='noopener';
-    add(panel,'p','本轮手机 ecbfd645。进入该手机的抓包工具，限定 App 埋点请求，开始记录后再操作；结束后导入本次记录。');
-    const capture=fileInput('本次手机抓包','.har,.json');
-    const verified=add(panel,'label');
-    const covered=add(verified,'input');covered.type='checkbox';covered.disabled=true;
-    verified.append('已核对抓包仅含本轮埋点请求，已完成全部操作并覆盖上报等待时间');
-    add(panel,'br');
+    const scene=add(panel,'select');scene.setAttribute('aria-label','测试场景');
+    add(scene,'option','使用上传方案');
+    add(scene,'option','打印取消反馈 · 告诉我们');
+    const device=add(panel,'select');device.setAttribute('aria-label','选择手机');
+    add(device,'option','OPPO Reno9 · ecbfd645').value='ecbfd645';
+    const start=add(panel,'button','开始测试');start.type='button';
+    const message=add(panel,'p');message.setAttribute('role','status');
     const evidence=fileInput('操作或前置状态截图','image/png,image/jpeg');
     const preview=add(panel,'img');preview.hidden=true;preview.style.maxWidth='min(100%, 380px)';
     const output=add(panel,'pre'),save=add(panel,'button','导出 Excel 测试表');save.type='button';
-    let sheets=[],events=[],complete=false,photo=null,photoUrl='',planRev=0,captureRev=0,photoRev=0;
+    let sheets=[],events=[],photo=null,photoUrl='',planRev=0,photoRev=0;
+    let frames=[],busy=false;
+    function checks(){
+      if(scene.selectedIndex===1)return steps;
+      const planned=[];
+      for(const sheet of sheets){
+        const header=sheet.rows[0]?.values||[];
+        const code=header.indexOf('使用事件'),action=header.indexOf('需要统计的行为'),props=header.findIndex(x=>x?.includes('标识'));
+        for(const row of sheet.rows.slice(1))if(code>=0&&row.values[code])planned.push([row.values[action]||sheet.sheet,row.values[code],true,row.values[props]||'']);
+      }
+      return planned;
+    }
     function rows(){
-      return steps.map(([step,event,wanted])=>{
-        const matches=events.filter(x=>x.event===event);
-        return [step,event,wanted?'出现':'不出现',events.length||complete?matches.length:null,
-          matches.map(x=>x.time).filter(Boolean).join('\n'),
-          !(complete||covered.checked)?'待实测':Boolean(matches.length)===wanted?'通过':'失败'];
+      const rules=checks();
+      return rules.map(([step,event,wanted,props])=>{
+        const conditions=(props||'').trim().split(/\n/).filter(Boolean).map(v=>v.trim().match(/^([a-zA-Z]+)=([^=]+)$/));
+        const unique=rules.filter(rule=>rule[1]===event && rule[3]===props).length===1;
+        const defined=unique && (scene.selectedIndex===1 || (conditions.length>0 && conditions.every(Boolean)));
+        const matches=events.filter(x=>x.event===event && conditions.every(c=>c && x.fields?.[c[1]]===c[2]));
+        const aligned=matches.filter(x=>x.frame!=null);
+        return [step,event,wanted?'出现':'不出现',events.length?matches.length:null,
+          aligned.map(x=>new Date(x.time*1000).toISOString()+' / 截图 '+(x.frame+1)).join('\n'),
+          !defined||!aligned.length?'待实测':wanted?'通过':'失败'];
+
       });
     }
-    function render(){output.textContent=rows().map(r=>r[0]+'　'+r[5]).join('\n');save.disabled=!sheets.length;}
+    function render(){output.textContent=rows().map(r=>r[0]+'　'+r[5]).join('\n');save.disabled=!sheets.length||busy;start.disabled=!sheets.length||busy;scene.disabled=busy;plan.disabled=busy;}
     plan.onchange=async()=>{
-      const rev=++planRev;sheets=[];contents.replaceChildren();render();
+      events=[];frames=[];photo=null;preview.hidden=true;message.textContent='';const rev=++planRev;sheets=[];contents.replaceChildren();render();
       const file=plan.files[0];if(!file)return;
       planState.textContent='正在解析…';
       try{
@@ -113,27 +127,33 @@ window.MobileTracking = (() => {
         planState.textContent='已解析 '+sheets.length+' 张工作表';
       }catch(e){if(rev===planRev)planState.textContent='解析失败：'+e.message;}render();
     };
-    const message=add(panel,'p');
-    capture.onchange=async()=>{
-      const rev=++captureRev;events=[];complete=false;covered.checked=false;covered.disabled=true;message.textContent='';render();
-      const file=capture.files[0];if(!file)return;
+    scene.onchange=()=>{events=[];frames=[];photo=null;preview.hidden=true;message.textContent='';render();};
+    async function call(body){
+      const reply=await nativeFetch('/api/mobile-tracking',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(body)});
+      const data=await reply.json();if(!reply.ok||!data.ok)throw Error(data.error||'采集服务不可用');return data;
+    }
+    start.onclick=async()=>{
+      busy=true;events=[];frames=[];photo=null;preview.hidden=true;render();message.textContent='正在连接指定手机…';
       try{
-        const data=JSON.parse(await file.text());if(rev!==captureRev)return;
-        if(Array.isArray(data.log?.entries)){
-          for(const entry of data.log.entries){
-            let body;try{body=JSON.parse(entry.request?.postData?.text);}catch{continue;}
-            for(const item of Array.isArray(body)?body:(Array.isArray(body?.events)?body.events:[body])){
-              if(typeof item?.event==='string')events.push({event:item.event,time:entry.startedDateTime});
-            }
+        const run=await call({device:device.value});const deadline=Date.now()+160000;
+        while(Date.now()<deadline&&panel.isConnected){
+          const data=await call({id:run.id});
+          if(data.state==='done'){
+            frames=data.frames||[];
+            events=(data.events||[]).map(e=>{
+              let frame=null,distance=3;
+              frames.forEach((f,i)=>{const d=Math.abs(f.time-e.time);if(d<distance){frame=i;distance=d;}});
+              return {...e,frame};
+            });
+            if(frames.length){preview.src='data:image/png;base64,'+frames[0].png;preview.hidden=false;}
+            message.textContent=(data.note||'采集结束')+' · '+events.length+' 条事件，'+frames.length+' 张截图';break;
           }
-          covered.disabled=!events.length;message.textContent='读取到 '+events.length+' 条可解析事件。';
-        }else{
-          if(!Array.isArray(data.events)||!data.events.every(x=>typeof x?.event==='string'))throw Error();
-          events=data.events;complete=data.complete===true;
+          message.textContent=data.state==='ready'?'已开始 30 秒抓包，请在手机上操作 App。':'正在准备手机采集…';
+          await new Promise(resolve=>setTimeout(resolve,1500));
         }
-      }catch{events=[];complete=false;message.textContent='未能读取事件，请检查抓包文件。';}render();
+        if(Date.now()>=deadline)message.textContent='采集超时，待实测';
+      }catch(e){message.textContent=e.message+' · 待实测';}finally{busy=false;render();}
     };
-    covered.onchange=render;
     evidence.onchange=async()=>{
       const rev=++photoRev;photo=null;preview.hidden=true;if(photoUrl)URL.revokeObjectURL(photoUrl);
       const file=evidence.files[0];if(!file)return;
@@ -144,21 +164,32 @@ window.MobileTracking = (() => {
     save.onclick=async()=>{
       try{
         const wb=new ExcelJS.Workbook();const result=wb.addWorksheet('结论');
-        result.addRow(['场景','打印取消反馈 · 告诉我们']);result.addRow(['规则来源','打印取消原因收集专项需求']);
+        result.addRow(['场景',scene.value]);result.addRow(['规则来源',scene.selectedIndex===1?'打印取消原因收集专项需求':plan.files[0]?.name]);
         result.addRow(['手机操作','事件','预期','观测条数','请求时间','结论']);rows().forEach(row=>result.addRow(row));
         result.columns.forEach((c,i)=>c.width=[28,34,12,14,32,16][i]);
+        if(frames.length){
+          const pictures=wb.addWorksheet('手机现场截图');
+          frames.forEach((frame,i)=>{
+            const row=34*i;pictures.getCell(row+1,1).value='截图 '+(i+1)+' · '+new Date(frame.time*1000).toISOString();
+            const id=wb.addImage({base64:'data:image/png;base64,'+frame.png,extension:'png'});
+            pictures.addImage(id,{tl:{col:0,row:row+1},br:{col:5,row:row+33}});
+          });
+        }
+        const observations=wb.addWorksheet('抓包事件');observations.addRow(['事件','请求时间','最近现场截图','页面或元素']);
+        events.forEach(e=>observations.addRow([e.event,new Date(e.time*1000).toISOString(),e.frame==null?'无相邻截图':e.frame+1,JSON.stringify(e.fields)]));
         if(photo){
           const sheet=wb.addWorksheet('截图');sheet.addRow(['操作或前置状态截图',photo.name]);
           const id=wb.addImage({buffer:photo.bytes,extension:photo.ext});
           sheet.addImage(id,{tl:{col:0,row:2},br:{col:5,row:2+Math.ceil(16*(preview.naturalHeight/preview.naturalWidth||2))}});
         }
         const catalog=wb.addWorksheet('方案事件清单');catalog.addRow(['来源工作表','原行号','业务动作','使用事件','页面或元素标识','结论']);
+        let catalogIndex=0;const conclusions=rows();
         for(const s of sheets){
           const header=s.rows[0]?.values||[];
           const code=header.indexOf('使用事件'),action=header.indexOf('需要统计的行为');
           const props=header.findIndex(x=>x?.includes('标识'));
           if(code<0)continue;
-          for(const row of s.rows.slice(1))if(row.values[code])catalog.addRow([s.name+' / '+s.sheet,row.n,row.values[action],row.values[code],row.values[props],'待实测']);
+          for(const row of s.rows.slice(1))if(row.values[code])catalog.addRow([s.name+' / '+s.sheet,row.n,row.values[action],row.values[code],row.values[props],scene.selectedIndex===0?conclusions[catalogIndex++][5]:'待实测']);
         }
         catalog.columns.forEach(c=>c.width=32);
         sheets.forEach((s,i)=>{

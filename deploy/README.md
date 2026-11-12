@@ -573,3 +573,15 @@ broker 可能丢弃已过期消息，此时任务不会自动终结。
 已开始的任务若被重新投递，将标记结果不确定并阻止重复调用。
 若 broker 或 worker 永久故障导致没有重投，运行中任务仍可能停留在运行状态，需排障，
 不得把该机制当作所有故障均自动恢复或严格只收费一次的保证。
+
+### 手机埋点测试
+
+测试平台按常规发布流程更新。在管理 OPPO Reno9（ecbfd645）的 Mac 上，将
+`mac-midscene-runner.py`、`mobile_tracking_runner.py`、`mobile_tracking_observer.py`
+放到同一 Runner 目录。在原启动环境设置 `TRACKING_EVENT_URL` 为 App 实际上报的完整 URL，
+设置 `TRACKING_MITMDUMP` 为 mitmdump 的绝对路径（在 PATH 中时可省略）。
+可用独立 Python 环境安装 mitmproxy。HTTPS 采集需要测试构建已信任该测试代理；
+未取得可解析请求的项目标为待实测。设备已有代理时会显示待实测。
+在现有 Runner 空闲时重启该进程。上传方案、选手机、点「开始测试」，看到
+「已开始 30 秒抓包」后操作 App，等待回传后导出 Excel。报告用请求时间关联
+三秒以内最近的一张 App 截图，时间接近表示同一观测时段。

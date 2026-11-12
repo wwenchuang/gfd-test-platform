@@ -56,7 +56,7 @@ FILE_REPAIR_ROUTES = {
 MACHINE_ROUTES = {
     ("GET", "/api/runner/jobs/next"), ("GET", "/api/app-install/package"),
     ("POST", "/api/runner/heartbeat"), ("POST", "/api/runner/device-snapshot"),
-    ("POST", "/api/runner/recording-evidence"), ("POST", "/report"),
+    ("POST", "/api/runner/mobile-tracking"), ("POST", "/api/runner/recording-evidence"), ("POST", "/report"),
     ("POST", "/api/report/chunk"), ("POST", "/api/report/chunk-finish"),
     ("POST", "/api/sonic/suite-complete"), ("POST", "/api/sonic/suite-report"),
     ("POST", "/api/sonic/report-ready"), ("POST", "/api/sonic/result"),
@@ -226,6 +226,8 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
+        if method == 'POST' and path == '/api/mobile-tracking':
+            return  # handler enforces app scope and run ownership
         if _mcp_route(method, path) or is_knowledge_read_route(method, path):
             # These services verify the current actor and authorized scope before reading data.
             return
@@ -348,6 +350,8 @@ class MainAccess:
     def permission_for(self, method, path, qs, body):
         from task_server.config import safe_bool
         if method == 'POST' and path == '/api/platform/mcp/diagnose':
+            return 'ui.execute'
+        if method == 'POST' and path == '/api/mobile-tracking':
             return 'ui.execute'
         if _mcp_route(method, path) or is_knowledge_read_route(method, path):
             return "ui.view"

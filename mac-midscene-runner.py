@@ -1800,6 +1800,34 @@ def install_apk_job(job):
         return payload
 
 
+_tracking_thread = None
+_tracking_next = 0
+
+def poll_tracking(devices):
+    global _tracking_thread, _tracking_next
+    if not any(d.get('device_id') == 'ecbfd645' for d in devices) or time.monotonic() < _tracking_next or (_tracking_thread and _tracking_thread.is_alive()):
+        return
+    _tracking_next = time.monotonic() + 5
+    def work():
+        from mobile_tracking_runner import capture
+        try:
+            reply = http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID},timeout=5)
+            if not reply.get('id'): return
+            def ready():
+                http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'id':reply['id'],'phase':'ready'},timeout=5)
+            try: result = capture(recording_adb_path(), ready)
+            except Exception as exc: result = {'note':'手机采集失败，待实测：'+type(exc).__name__}
+            for attempt in range(3):
+                try:
+                    http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'id':reply['id'],'result':result},timeout=12)
+                    return
+                except Exception:
+                    time.sleep(1)
+        except Exception:
+            pass
+    _tracking_thread = threading.Thread(target=work, daemon=True, name='mobile-tracking')
+    _tracking_thread.start()
+
 def heartbeat(devices):
     runtime = {} if RUNNER_PLATFORM == "ios" else midscene_env()
     payload = {
@@ -1811,6 +1839,7 @@ def heartbeat(devices):
         "version": RUNNER_VERSION,
         "capabilities": {
             **RUNNER_CAPABILITIES,
+            "tracking": RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
             "midscene_model_name": runtime.get("MIDSCENE_MODEL_NAME", ""),
             "midscene_model_family": runtime.get("MIDSCENE_MODEL_FAMILY", ""),
         },
@@ -3069,6 +3098,7 @@ def _run_main():
                 continue
             try:
                 acknowledgement = heartbeat(devices)
+                poll_tracking(devices)
                 _RECORDING_EVIDENCE.submit(acknowledgement, devices)
                 upload_snapshot_requests(acknowledgement, devices)
                 if RUNNER_PLATFORM == "ios" and acknowledgement.get("dispatch_policy") != "explicit-target-v1":
