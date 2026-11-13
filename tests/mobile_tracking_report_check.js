@@ -17,9 +17,36 @@ test('browser reports reflect exact action windows, evidence, aliases and source
         const input={reqId:'request1',event:wire,method:'POST',contents:[actual],sent:42,time:41,httpStatus:200,businessCode:0,ack:'已接收'};
         return MobileTrackingReport.report([rule],[plan],[MobileTrackingReport.sanitize(input,'r',[0],'https://example.test/a?token=secret')]).sources[0];
       }
-      return [grade('CC','CCZ').status,grade('CS','CSZ').status,grade('AEC','AEC','page=home\nele=tab',{page:'elsewhere',ele:'tab'}).status,grade('AEC','AV').status,grade('CC','CCZ','page=home',{page:'home'},false).status];
+      return [grade('CC','CCZ').status,grade('CS','CSZ').status,grade('CSZ','CS').status,grade('AV','AVZ').status,grade('CS','CSZ','firstExposurePosition=homeFeedModel\nexposurePage=home',{firstExposurePosition:'homeFeedModel'}).status,grade('AEC','AEC','page=home\nele=tab',{page:'elsewhere',ele:'tab'}).status,grade('AEC','AV').status,grade('CC','CCZ','page=home',{page:'home'},false).status];
     });
-    assert.deepEqual(results,['通过','差异待确认','差异待确认','待实测','失败']);
+    assert.deepEqual(results,['通过','通过','通过','待实测','差异待确认','差异待确认','待实测','失败']);
+  }finally{await browser.close();}
+});
+
+test('confirmed exposure positions distinguish missing required fields from unknown navigation context',async()=>{
+  const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'chrome'});
+  try{
+    const page=await browser.newPage();
+    await page.addScriptTag({path:path.join(root,'js/mobile-tracking-report.js')});
+    const result=await page.evaluate(()=>{
+      const source=['曝光首页','CS',true,'firstExposurePosition=homeFeedModel\nexposurePage=当前曝光页面\npagePre=上一级页面','首页','正文第5节','','exposure'];
+      const plan={id:0,source:0,path:['首页'],batch:'run1',done:true};
+      const pos={firstExposurePosition:'homeFeedModel'};
+      function check(contents,override={},extraRules=[],plans=[plan]){
+        const capture={reqId:'receipt1',event:'CSZ',name:'内容曝光',method:'POST',contents,sent:100,time:99,httpStatus:200,businessCode:0,ack:'已接收',...override};
+        const event=MobileTrackingReport.sanitize(capture,'run1',[0,1],'https://event.example.test/event');
+        const row=MobileTrackingReport.report([source,...extraRules],plans,[event]).sources[0];
+        return {status:row.status,reason:row.reason};
+      }
+      return [check([pos]),check([{...pos,pagePre:'previous',exposurePage:'home'}]),
+        check([{...pos,pagePre:'previous',exposurePage:'   '}]),check([pos],{businessCode:null}),
+        check([{firstExposurePosition:'other'}]),check([pos],{ack:'回执未识别'}),
+        check([pos],{},[[source[0],'CSZ',...source.slice(2)]],[plan,{...plan,id:1,source:1}])];
+    });
+    assert.equal(result[0].status,'差异待确认');assert.match(result[0].reason,/exposurePage/);assert.match(result[0].reason,/pagePre/);
+    assert.equal(result[1].status,'待实测');assert.equal(result[2].status,'差异待确认');assert.doesNotMatch(result[2].reason,/pagePre/);
+    assert.deepEqual(result.slice(3).map(x=>x.status),['待实测','待实测','待实测','待实测']);
+    assert.match(result.at(-1).reason,/同一操作/);
   }finally{await browser.close();}
 });
 

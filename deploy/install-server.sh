@@ -181,7 +181,7 @@ if [ -f "${SRC_DIR}/sonic-midscene-task-runner.groovy" ]; then
   install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/sonic-midscene-task-runner.groovy" "${APP_DIR}/sonic-midscene-task-runner.groovy"
   install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/sonic-midscene-task-runner.groovy" "/opt/sonic-midscene-task-runner.groovy"
 fi
-for runner_file in "windows-midscene-runner.py" "mac-midscene-runner.py" "run-mac-midscene-runner.sh"; do
+for runner_file in "windows-midscene-runner.py" "mac-midscene-runner.py" "mobile_tracking_ios_probe.py" "run-mac-midscene-runner.sh"; do
   if [ -f "${SRC_DIR}/${runner_file}" ]; then
     install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/${runner_file}" "${APP_DIR}/${runner_file}"
   fi

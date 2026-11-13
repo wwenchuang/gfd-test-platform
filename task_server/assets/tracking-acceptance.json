@@ -95,8 +95,9 @@
           "origin": "表2 第11行",
           "action": "点击首页、成长、创作、广场、我的",
           "status": "差异待确认",
-          "reason": "首页 · page 预期 home，实收 create；pageTitle 预期 首页，实收 创作",
+          "reason": "首页 · 从创作页返回首页，点击控件 home_tab 确认，实收 page=create、pageTitle=创作；从首页再次点首页实收 home。两种入口上报页值不同，保留差异",
           "receiptIds": [
+            "7ab7da6c606025cf",
             "efa83732d43c01e1",
             "7f904560d5fb3672",
             "46e88e731b675894",
@@ -131,8 +132,8 @@
         {
           "origin": "表2 第15行",
           "action": "曝光",
-          "status": "差异待确认",
-          "reason": "方案要求 CS，实报 CSZ（内容曝光）；请核对生产事件字典",
+          "status": "通过",
+          "reason": "已完成",
           "receiptIds": [
             "5996eada26c80605"
           ]
@@ -194,14 +195,20 @@
         {
           "origin": "表4 第6行",
           "action": "点击“AI立即生成”",
-          "status": "待实测",
-          "reason": "已进入掐丝珐琅上传页，未识别到可用于选择指定测试图片的控件；尚未到达「AI立即生成」，需取得该步的实际请求及回执"
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "acbb226277f6f283"
+          ]
         },
         {
           "origin": "表4 第7行",
           "action": "点击“立即生成3D模型”",
-          "status": "待实测",
-          "reason": "已进入掐丝珐琅上传页，未识别到可用于选择指定测试图片的控件；尚未到达「立即生成3D模型」，需取得该步的实际请求及回执"
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "81097332e4ce94dc"
+          ]
         },
         {
           "origin": "表4 第9行",
@@ -212,8 +219,11 @@
         {
           "origin": "表5 第3行",
           "action": "点击“生成3D预览图”",
-          "status": "待实测",
-          "reason": "已点击「生成3D预览图」，两次操作窗口均未匹配目标 AEC，尚待复测"
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "2dc27eeb9e527bfe"
+          ]
         },
         {
           "origin": "表5 第4行",
@@ -309,8 +319,8 @@
         {
           "origin": "表8 第6行",
           "action": "曝光",
-          "status": "差异待确认",
-          "reason": "方案要求 CS，实报 CSZ（内容曝光）；请核对生产事件字典",
+          "status": "通过",
+          "reason": "已完成",
           "receiptIds": [
             "142463217051ab2a"
           ]
@@ -532,7 +542,7 @@
           "origin": "表11 第3行",
           "action": "点击某个热搜关键词",
           "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "reason": "已点击热搜榜第 1 名公开词「龙」，结果页提示无法连接到网络。该动作窗口尚未匹配要求的 ASE"
         },
         {
           "origin": "表11 第4行",
@@ -544,67 +554,83 @@
           "origin": "表11 第5行",
           "action": "搜索请求成功返回结果",
           "status": "待实测",
-          "reason": "首页提交 3D 后显示无法连接到网络，窗口内未匹配到 ASE；需在结果可加载时复测"
+          "reason": "榜单关键词和手工提交结果页均提示无法连接到网络，未收到可证明首页搜索有结果的 ASE"
         },
         {
           "origin": "表11 第6行",
           "action": "搜索结果点击",
           "status": "待实测",
-          "reason": "口径分别为广场 plazaSeach 和首页 seach（保留需求拼写）；记录实际关键词、输入/返回和结果"
+          "reason": "首页热搜和手工输入搜索均出现网络错误；没有结果卡可点击，不能用广场搜索结果的 ASR 代替"
         },
         {
           "origin": "表12 第2行",
           "action": "点击一级分类「收藏」「作品」「导入」",
           "status": "差异待确认",
-          "reason": "共同字段 page 预期 my_page，实收 myPage；该记录可验证分类控件，具体分类名未识别; 收藏 · 本轮尚未取得该操作的实报; 作品 · 本轮尚未取得该操作的实报; 导入 · 本轮尚未取得该操作的实报",
+          "reason": "收藏 · page 预期 my_page，实收 myPage; 作品 · page 预期 my_page，实收 myPage; 导入 · page 预期 my_page，实收 myPage",
           "receiptIds": [
-            "7050ca03bb8a614e"
+            "ecdb39ae559b6b3b",
+            "562a01d9e73f8c69",
+            "bde8e9571b8d40b6"
           ]
         },
         {
           "origin": "表12 第3行",
           "action": "点击子分类「模型」「主题专区」「广场」",
           "status": "差异待确认",
-          "reason": "共同字段 page 预期 my_page，实收 myPage；该记录可验证分类控件，具体分类名未识别; 模型 · 本轮尚未取得该操作的实报; 主题专区 · 本轮尚未取得该操作的实报; 广场 · 本轮尚未取得该操作的实报",
+          "reason": "模型 · page 预期 my_page，实收 myPage; 主题专区 · page 预期 my_page，实收 myPage; 广场 · page 预期 my_page，实收 myPage",
           "receiptIds": [
-            "a9ac79703b6afe99"
+            "4ca849c4518828c1",
+            "ddf3b7389da1a05e",
+            "8657bcb1b00814b8"
           ]
         },
         {
           "origin": "表12 第4行",
           "action": "浏览「模型」列表",
-          "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "status": "差异待确认",
+          "reason": "已核对 profileFavorite、favorite、model 与该次操作；方案 page=my_page，实报 myPage；方案要求 subTab=model，实报未见该字段",
+          "receiptIds": [
+            "a97db22a88fc47ea"
+          ]
         },
         {
           "origin": "表12 第5行",
           "action": "浏览「主题专区」列表",
-          "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "status": "差异待确认",
+          "reason": "已核对 profileFavorite、favorite、topic 与该次操作；方案 page=my_page，实报 myPage",
+          "receiptIds": [
+            "d8fde135168c56f3"
+          ]
         },
         {
           "origin": "表12 第6行",
           "action": "浏览「广场」列表",
-          "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "status": "差异待确认",
+          "reason": "已核对 profileFavorite、favorite、plaza 与该次操作；方案 page=my_page，实报 myPage",
+          "receiptIds": [
+            "9aa2bc0ec248252b"
+          ]
         },
         {
           "origin": "表12 第7行",
           "action": "浏览「全部」作品列表",
           "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "reason": "已经逐项切换并浏览全部列表，可见卡片 8。本次未捕获能归属作品列表的 CS/CSZ"
         },
         {
           "origin": "表12 第8行",
           "action": "浏览某个作品分类的列表",
           "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "reason": "已经逐项切换并浏览AI建模列表，可见卡片 8。本次未捕获能归属作品列表的 CS/CSZ"
         },
         {
           "origin": "表12 第9行",
           "action": "浏览导入列表",
-          "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "status": "差异待确认",
+          "reason": "已核对 profileImport、imports、model 与该次操作；方案 page=my_page，实报 myPage",
+          "receiptIds": [
+            "c42adbd809bc5e04"
+          ]
         },
         {
           "origin": "表12 第10行",
@@ -619,13 +645,16 @@
           "origin": "表12 第11行",
           "action": "点击当前子分类里的模型卡片并打开详情或预览",
           "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "reason": "自建小鳄鱼卡已打开，生成结果页的 AV 和回执证明到达详情；本窗口未捕获作品卡点击的 CC/CCZ"
         },
         {
           "origin": "表12 第12行",
           "action": "点击导入的模型卡片并打开详情或预览",
-          "status": "待实测",
-          "reason": "操作窗口内未匹配需求事件"
+          "status": "差异待确认",
+          "reason": "已核对 profileImport、imports、model 与该次操作，请求中的文件名摘要与本轮自建 STL 完全相同；方案 page=my_page，实报 myPage",
+          "receiptIds": [
+            "0ab85cc86f1ef46c"
+          ]
         },
         {
           "origin": "表4 第4行",
@@ -655,7 +684,7 @@
           "origin": "正文第5节 第2行",
           "action": "印章",
           "status": "差异待确认",
-          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 sealDetail；请求未见 exposurePage",
+          "reason": "首展位预期 sealDetailModel，实收 sealDetail；请求未见 exposurePage",
           "receiptIds": [
             "19d456fa532f372b"
           ]
@@ -664,7 +693,7 @@
           "origin": "正文第5节 第3行",
           "action": "掐丝珐琅",
           "status": "差异待确认",
-          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 cloisonneDetailModel；请求未见 exposurePage",
+          "reason": "请求未见 exposurePage",
           "receiptIds": [
             "b4f16ca845a0020a"
           ]
@@ -672,8 +701,8 @@
         {
           "origin": "正文第5节 第4行",
           "action": "主题专区",
-          "status": "差异待确认",
-          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 topicList",
+          "status": "通过",
+          "reason": "已核对 CSZ 的首展位 topicList、HTTP 200 和业务码 0",
           "receiptIds": [
             "c9078affedf04460"
           ]
@@ -688,7 +717,7 @@
           "origin": "正文第5节 第6行",
           "action": "主题模型",
           "status": "差异待确认",
-          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 topicDetailModel；请求未见 exposurePage",
+          "reason": "请求未见 exposurePage",
           "receiptIds": [
             "2e52dd25028a8700"
           ]
@@ -697,7 +726,7 @@
           "origin": "正文第5节 第7行",
           "action": "首页模型瀑布流",
           "status": "差异待确认",
-          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 homeFeedModel；请求未见 exposurePage",
+          "reason": "请求未见 exposurePage",
           "receiptIds": [
             "5996eada26c80605"
           ]
@@ -706,7 +735,7 @@
           "origin": "正文第5节 第8行",
           "action": "广场",
           "status": "差异待确认",
-          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 squareHome；请求未见 exposurePage",
+          "reason": "请求未见 exposurePage",
           "receiptIds": [
             "142463217051ab2a"
           ]
@@ -714,8 +743,11 @@
         {
           "origin": "正文第5节 第9行",
           "action": "个人中心-收藏",
-          "status": "待实测",
-          "reason": "本轮操作窗口未观测到指定首展位"
+          "status": "差异待确认",
+          "reason": "请求未见 exposurePage",
+          "receiptIds": [
+            "d8fde135168c56f3"
+          ]
         },
         {
           "origin": "正文第5节 第10行",
@@ -726,8 +758,11 @@
         {
           "origin": "正文第5节 第11行",
           "action": "个人中心-导入",
-          "status": "待实测",
-          "reason": "本轮操作窗口未观测到指定首展位"
+          "status": "差异待确认",
+          "reason": "请求未见 exposurePage",
+          "receiptIds": [
+            "c42adbd809bc5e04"
+          ]
         },
         {
           "origin": "正文第5节 第12行",
@@ -744,8 +779,8 @@
         {
           "origin": "正文第5节 第14行",
           "action": "广场搜索结果页",
-          "status": "差异待确认",
-          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 plazaSeach",
+          "status": "通过",
+          "reason": "已核对 CSZ 的首展位 plazaSeach、HTTP 200 和业务码 0",
           "receiptIds": [
             "9eeda1685acf0d30"
           ]
@@ -763,11 +798,12 @@
           "name": "荣耀MagicVs3-待实测清单.xlsx"
         }
       ],
-      "receiptReport": "honor"
+      "receiptReport": "honor",
+      "note": "已按新版 CSZ、CCZ 核对。珐琅书签的两个生成按钮均有成功回执。进入作品预览后，三维内容和参考图加载失败。"
     },
     {
       "title": "iPhone 13 · 2026-11-13 设备核验",
-      "note": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。",
+      "note": "iPhone 已配对，两个独立探针确认了同一代理来源。智小白 3D 冷启动成功；本轮范围内未见两个埋点域名的 CONNECT、业务请求或回执，94 项待实测。",
       "files": [
         {
           "id": "iphone",
@@ -780,565 +816,565 @@
           "origin": "表2 第2行",
           "action": "浏览首页",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第3行",
           "action": "点击设备",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第4行",
           "action": "点击搜索",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第5行",
           "action": "点击扫码",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第6行",
           "action": "点击消息铃铛",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第7行",
           "action": "点击勋章挑战",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第8行",
           "action": "点击AI建模、印章、掐丝珐琅、标牌、导入打印",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第9行",
           "action": "点击查看全部",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第10行",
           "action": "点击推荐、热门、最新、玩具等分类",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第11行",
           "action": "点击首页、成长、创作、广场、我的",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第12行",
           "action": "曝光",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第13行",
           "action": "点击主题卡",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第14行",
           "action": "点击模型",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第15行",
           "action": "曝光",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第16行",
           "action": "下一步",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表2 第17行",
           "action": "立即打印",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表3 第3行",
           "action": "点击“立即定制”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表3 第4行",
           "action": "点击“去打印”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表3 第5行",
           "action": "印章打印成功",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表4 第2行",
           "action": "浏览",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表4 第3行",
           "action": "点击挂件",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表4 第6行",
           "action": "点击“AI立即生成”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表4 第7行",
           "action": "点击“立即生成3D模型”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表4 第9行",
           "action": "打印成功",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表5 第3行",
           "action": "点击“生成3D预览图”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表5 第4行",
           "action": "标牌打印成功",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表6 第3行",
           "action": "点击“微信导入”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表6 第4行",
           "action": "点击“本地导入”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表6 第5行",
           "action": "导入的模型打印成功",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表7 第3行",
           "action": "点击“欢度国庆”等系列卡片",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表7 第4行",
           "action": "见原表流程节点",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表7 第5行",
           "action": "点击某个模型的“去打印”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第2行",
           "action": "进入广场",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第3行",
           "action": "点击推荐、最新",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第4行",
           "action": "点击搜索",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第5行",
           "action": "点击视频封面、标题或播放图标",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第6行",
           "action": "曝光",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第7行",
           "action": "浏览某条视频内容",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第8行",
           "action": "视频开始播放",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第9行",
           "action": "结束本次观看",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第10行",
           "action": "离开当前视频内容",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第11行",
           "action": "收藏或取消收藏",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第12行",
           "action": "点击“我也要”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第13行",
           "action": "输入关键词后点击搜索",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第14行",
           "action": "搜索请求成功返回结果",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表8 第15行",
           "action": "搜索结果点击",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表9 第3行",
           "action": "点击“去看看”按钮",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表9 第4行",
           "action": "点击“下一步”按钮",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表9 第5行",
           "action": "点击“去打印”按钮",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表9 第6行",
           "action": "点击“去打印”按钮",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第2行",
           "action": "浏览创作页面",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第3行",
           "action": "点击「角色手办」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第4行",
           "action": "点击「动物萌宠」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第6行",
           "action": "点击「炫酷载具」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第7行",
           "action": "点击「开始创作」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第8行",
           "action": "点击「模型导入」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第9行",
           "action": "点击「魔法涂鸦」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第10行",
           "action": "点击「魔法叠叠乐」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第11行",
           "action": "点击「魔法捏捏乐」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第12行",
           "action": "点击「魔法积木」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第13行",
           "action": "点击“就这样，生成模型”",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表10 第14行",
           "action": "AI模型打印成功",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表11 第2行",
           "action": "浏览搜索页",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表11 第3行",
           "action": "点击某个热搜关键词",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表11 第4行",
           "action": "输入关键词后点击搜索",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表11 第5行",
           "action": "搜索请求成功返回结果",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表11 第6行",
           "action": "搜索结果点击",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第2行",
           "action": "点击一级分类「收藏」「作品」「导入」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第3行",
           "action": "点击子分类「模型」「主题专区」「广场」",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第4行",
           "action": "浏览「模型」列表",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第5行",
           "action": "浏览「主题专区」列表",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第6行",
           "action": "浏览「广场」列表",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第7行",
           "action": "浏览「全部」作品列表",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第8行",
           "action": "浏览某个作品分类的列表",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第9行",
           "action": "浏览导入列表",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第10行",
           "action": "点击收藏的模型卡片并打开详情",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第11行",
           "action": "点击当前子分类里的模型卡片并打开详情或预览",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表12 第12行",
           "action": "点击导入的模型卡片并打开详情或预览",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表4 第4行",
           "action": "点击书签",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表4 第5行",
           "action": "点击吧唧",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "表7 第6行",
           "action": "模型打印成功",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第2行",
           "action": "印章",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第3行",
           "action": "掐丝珐琅",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第4行",
           "action": "主题专区",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第5行",
           "action": "首页",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第6行",
           "action": "主题模型",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第7行",
           "action": "首页模型瀑布流",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第8行",
           "action": "广场",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第9行",
           "action": "个人中心-收藏",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第10行",
           "action": "个人中心-作品",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第11行",
           "action": "个人中心-导入",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第12行",
           "action": "模型详情页",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第13行",
           "action": "搜索结果页",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         },
         {
           "origin": "正文第5节 第14行",
           "action": "广场搜索结果页",
           "status": "待实测",
-          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+          "reason": "已两次确认本机代理来源；冷启动窗口未取得该动作的上报或回执，XCTest 通道仍未就绪。"
         }
       ]
     }

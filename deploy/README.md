@@ -597,3 +597,5 @@ broker 可能丢弃已过期消息，此时任务不会自动终结。
 
 安卓动态首页的分类文字使用 UIAutomator2 读取。请在运行 Mac Runner 的同一 Python 环境执行 `python3 -m pip install uiautomator2==3.5.2`。
 部署后可直接打开 `/task-manager.html?view=tracking`，或点左侧主导航「埋点测试」。
+
+「新建测试 → 选择 iPhone 13 → 验证 iOS 抓包连接」可独立检查代理。诊断由所选手机访问两次随机测试地址再切回智小白，只展示归属核验和上报、业务回执的计数。更新 Mac Runner 时一并复制 `mobile_tracking_ios_probe.py`，所用 Mac 需要已配对 iPhone、Xcode 的 devicectl 和 Proxyman CLI。业务动作仍由正常 iOS 自动操作流程运行。

@@ -872,6 +872,7 @@ def ios_device_metadata(device_id):
     try:
         raw = subprocess.check_output(["ideviceinfo", "-u", device_id, "-x"], timeout=5, stderr=subprocess.DEVNULL)
         info = plistlib.loads(raw)
+        row['ios_pairing_verified'] = info.get('UniqueDeviceID') == device_id
         row.update(model=info.get("ProductType") or "iPhone", ios_version=info.get("ProductVersion") or "")
         row["label"] = ios_marketing_name(device_id) or info.get("DeviceName") or row["model"]
         row["display_name"] = row["label"]
@@ -1842,35 +1843,86 @@ def ios_tracking_states(devices):
     return states
 
 
+_ios_probe_tools = (0, False)
+
+
+def ios_probe_tools_available():
+    global _ios_probe_tools
+    now = time.monotonic()
+    if _ios_probe_tools[0] and now-_ios_probe_tools[0]<30:
+        return _ios_probe_tools[1]
+    try:
+        from mobile_tracking_ios_probe import PROXYMAN
+        path = subprocess.check_output(['xcrun','--find','devicectl'],text=True,
+                                       stderr=subprocess.DEVNULL,timeout=3).strip()
+        available = bool(path and os.access(path,os.X_OK) and os.access(PROXYMAN,os.X_OK))
+    except (ImportError,OSError,subprocess.SubprocessError):
+        available = False
+    _ios_probe_tools = (now,available)
+    return available
+
+
+def ios_probe_states(devices):
+    states = {}
+    for row in devices:
+        if row.get('platform')!='ios' or row.get('status')!='online':
+            continue
+        device=row['device_id']
+        reason=''
+        if not IOS_EXECUTION_ENABLED or device!=os.getenv('IOS_DEVICE_ID','') or device!='00008110-000150CC21C2801E':
+            reason='请在 iOS 执行机启用执行并选择指定 iPhone'
+        elif _IOS_JOB_ACTIVE.is_set() or (_tracking_thread and _tracking_thread.is_alive()):
+            reason='执行机正在使用这部 iPhone'
+        elif row.get('ios_pairing_verified') is not True:
+            reason='尚未在 USB 配对信息中核实这部 iPhone，请确认信任状态'
+        elif not any(app.get('source_package')=='com.kfb.model' and app.get('package')=='com.kfb.3d'
+                     and app.get('installed') is True for app in row.get('installed_apps') or []):
+            reason='尚未在这部 iPhone 核实已安装智小白 3D'
+        elif not ios_probe_tools_available():
+            reason='Mac 执行机缺少 devicectl、Proxyman 或连接诊断模块'
+        states[device]={'ready':not reason,'reason':reason or '可单独验证代理连接'}
+    return states
+
+
 def poll_tracking(devices):
     global _tracking_thread, _tracking_next
     available = [d['device_id'] for d in devices if d.get('device_id') in ('ecbfd645','A9TU024622000978') and d.get('status') in ('online','device')]
+    probes = []
     if RUNNER_PLATFORM == 'ios':
         available = [k for k,v in ios_tracking_states(devices).items() if v['ready']]
-    if not available or time.monotonic() < _tracking_next or (_tracking_thread and _tracking_thread.is_alive()):
+        probes = [k for k,v in ios_probe_states(devices).items() if v['ready']]
+    if not (available or probes) or time.monotonic() < _tracking_next or (_tracking_thread and _tracking_thread.is_alive()):
         return
     _tracking_next = time.monotonic() + 5
     def work():
-        from mobile_tracking_runner import capture
         try:
-            reply = http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'devices':available},timeout=16)
+            reply = http_json('POST','/api/runner/mobile-tracking',
+                              {'runner_id':RUNNER_ID,'devices':available,'probeDevices':probes},timeout=16)
             if not reply.get('id'): return
             def ready():
                 http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'id':reply['id'],'phase':'ready'},timeout=5)
             try:
                 selected=reply.get("device","ecbfd645")
-                if selected not in available: raise ValueError("设备分配不匹配")
+                is_probe=reply.get('kind')=='ios_proxy_probe'
+                if selected not in (probes if is_probe else available):
+                    raise ValueError("设备分配不匹配")
                 if RUNNER_PLATFORM == "ios":
-                    from mobile_tracking_ios import capture as ios_capture
                     with _IOS_RECOVERY_GUARD:
                         if _IOS_JOB_ACTIVE.is_set():
                             raise ValueError("iOS Runner 正在执行其他任务")
                         _IOS_JOB_ACTIVE.set()
                     try:
-                        result=ios_capture(selected,ios_app_mappings()["com.kfb.model"],reply.get("path"),ready,ios_usb_forward)
+                        bundle=ios_app_mappings()["com.kfb.model"]
+                        if is_probe:
+                            from mobile_tracking_ios_probe import probe
+                            result={'device':selected,'probeResult':probe(selected,bundle)}
+                        else:
+                            from mobile_tracking_ios import capture as ios_capture
+                            result=ios_capture(selected,bundle,reply.get("path"),ready,ios_usb_forward)
                     finally:
                         _IOS_JOB_ACTIVE.clear()
                 else:
+                    from mobile_tracking_runner import capture
                     result=capture(recording_adb_path(),ready,reply.get("path"),selected)
             except Exception as exc: result = {'note':'手机采集失败，待实测：'+type(exc).__name__}
             for attempt in range(3):
@@ -1907,6 +1959,7 @@ def heartbeat(devices):
         "capabilities": {
             **RUNNER_CAPABILITIES,
             "tracking_ios_devices": ios_tracking,
+            "tracking_ios_probe_devices": ios_probe_states(devices) if RUNNER_PLATFORM=="ios" else {},
             "tracking_http_receipts": ios_ready or RUNNER_PLATFORM == "android" and tracking_receipts_available(),
             "tracking_selected_device": ios_ready or RUNNER_PLATFORM == "android",
             "tracking_auto": ios_ready or RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),

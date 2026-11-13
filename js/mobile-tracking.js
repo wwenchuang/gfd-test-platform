@@ -36,6 +36,8 @@ window.MobileTracking = (() => {
     const device=field(deviceGroup,'测试手机','select'),refresh=button(deviceGroup,'刷新设备');
     const badges=add(deviceGroup,'div');badges.className='tracking-device-status';
     const deviceState=add(deviceGroup,'p');deviceState.setAttribute('role','status');
+    const probe=button(deviceGroup,'验证 iOS 抓包连接');
+    const probeStatus=add(deviceGroup,'p');probeStatus.setAttribute('role','status');
     const actions=add(panel,'div');actions.className='tracking-actions';
     const start=button(actions,'开始测试'),startHint=add(actions,'span');
     startHint.className='tracking-start-hint';
@@ -45,7 +47,7 @@ window.MobileTracking = (() => {
     const output=add(panel,'section');output.setAttribute('aria-label','本次测试报告');
     const R=window.MobileTrackingReport;
     let sheets=[],rules=[],specificRules=[],planRev=0,busy=false,available=[],deviceRev=0,reading=false,current=null,previous=null;
-    let fetchingDevices=false,deviceError='';
+    let fetchingDevices=false,deviceError='',probing=false;
     function sourceChecks(){return scene.selectedIndex===1?specificRules:rules;}
     async function call(body){
       const reply=await nativeFetch('/api/mobile-tracking',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(body)});
@@ -54,9 +56,11 @@ window.MobileTracking = (() => {
     function state(){
       const d=available.find(item=>item.id===device.value);
       const requirements=sourceChecks();
-      start.disabled=busy||reading||fetchingDevices||!requirements.length||!d?.ready;
+      start.disabled=busy||probing||reading||fetchingDevices||!requirements.length||!d?.ready;
       plan.disabled=scene.disabled=busy;
-      device.disabled=busy||fetchingDevices||!available.length;refresh.disabled=busy||fetchingDevices;
+      device.disabled=busy||probing||fetchingDevices||!available.length;refresh.disabled=busy||probing||fetchingDevices;
+      probe.hidden=!d||typeof d.probeReady!=='boolean';probe.disabled=busy||probing||fetchingDevices||!d?.probeReady;
+      probe.title=d?.probeReason||'';
       downloads.hidden=!current||busy;save.disabled=!current;word.disabled=!current;
       word.hidden=!current?.file?.name.toLowerCase().endsWith('.docx')||current?.specific;
       startHint.textContent=busy?'测试正在运行':reading?'正在解析方案':!plan.files.length?'先选择埋点方案':!requirements.length?'当前方案中没有可测试的需求':!d?.ready?'选择可采集的手机后开始':'';
@@ -88,7 +92,33 @@ window.MobileTracking = (() => {
         }
       }finally{if(revision===deviceRev){fetchingDevices=false;state();}}
     }
-    refresh.onclick=devices;device.onchange=state;
+    refresh.onclick=devices;device.onchange=()=>{probeStatus.textContent='';state();};
+    probe.onclick=async()=>{
+      if(probe.disabled||probing)return;
+      const selected=device.value, actor=typeof sessionToken==='function'?sessionToken():null;
+      const active=()=>panel.isConnected && device.value===selected && (typeof sessionToken!=='function'||actor===sessionToken());
+      probing=true;state();probeStatus.textContent='正在核对这台 iPhone 经代理发出的请求…';
+      try{
+        const queued=await call({probe:true,device:selected});
+        const end=Date.now()+170000;
+        while(active()&&Date.now()<end){
+          const result=await call({id:queued.id});
+          if(!active())return;
+          if(result.state==='done'){
+            const r=result.probeResult;
+            if(!r||result.device!==selected||r.kind!=='ios_proxy_probe'){
+              probeStatus.textContent=result.note||'未取得这部手机的诊断结果';return;
+            }
+            const counters=r.observationComplete?'本轮目标上报 '+r.postCount+' 笔，业务回执 '+r.receiptCount+' 笔。':'未完成目标上报观测。';
+            probeStatus.textContent=(r.sourceVerified?'已确认该手机的代理来源。':'未确认该手机的代理来源。')+counters+(r.reason||'');
+            return;
+          }
+          await new Promise(resolve=>setTimeout(resolve,1800));
+        }
+        if(active())probeStatus.textContent='等待诊断超时，请刷新设备后重试。';
+      }catch(e){if(active())probeStatus.textContent='抓包连接诊断失败：'+e.message;}
+      finally{probing=false;if(active())state();}
+    };
     function resultFor(session){return R.report(session.rules,session.plans,session.events);}
     function groupEvents(session,id){return session.events.filter(e=>e.reqId===id);}
     function receiptIds(rows){return [...new Set(rows.map(r=>r.e?.reqId).filter(Boolean))];}
@@ -258,7 +288,7 @@ window.MobileTracking = (() => {
         s.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF245449'}};return s;
       };
       sheet('结论',['来源','需求动作','方案事件','结论','原因'],[34,36,24,18,82],sources.map(s=>[s.rule[5]||'专项需求',s.rule[0],s.rule[1],s.status,s.reason]));
-      sheet('本轮范围',['测试手机','方案文件','场景','事件口径'],[28,40,30,72],[[session.deviceName,session.file.name,session.specific?'告诉我们':'使用上传方案','CC 与 CCZ 表示内容点击，CS 与 CSZ 分开核对。']]);
+      sheet('本轮范围',['测试手机','方案文件','场景','事件口径'],[28,40,30,72],[[session.deviceName,session.file.name,session.specific?'告诉我们':'使用上传方案','CC 与 CCZ 表示内容点击，CS 与 CSZ 表示内容曝光；匹配时核对业务字段和回执。']]);
       sheet('AI 测试步骤',['来源','动作','步骤','实际路径','结论','需求字段','重点记录','实收字段','请求编号','说明'],[34,32,55,34,18,60,55,70,26,80],details.map(d=>{
         const r=session.rules[d.plan.source];return [r[5],d.plan.action,d.plan.steps.join('\n'),d.plan.observed,d.status,r[3],r[6],d.actual&&JSON.stringify(d.actual),d.e?.reqId,d.reason];
       }));

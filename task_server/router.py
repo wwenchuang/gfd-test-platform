@@ -4296,7 +4296,8 @@ def _tracking_runner(handler, qs):
         track.finish(data.get('id'), runner, data['result'])
         handler._json({'ok': True})
     else:
-        key = track.claim(runner, data.get('devices'), directory_lookup=sonic_list_device_statuses)
+        key = track.claim(runner, data.get('devices'), directory_lookup=sonic_list_device_statuses,
+                          probe_devices=data.get('probeDevices'))
         handler._json({'ok': True, 'id':key, **track.assignment_for(key,runner)})
 
 
@@ -4331,7 +4332,7 @@ def _tracking_user(handler, qs):
             return
         if data.get('devices') is True:
             devices = track.selectable_devices(all_online_devices(), sonic_list_device_statuses())
-            handler._json({'ok': True, 'devices': [{k:v for k,v in d.items() if k != 'runner'} for d in devices]})
+            handler._json({'ok': True, 'devices': [{k:v for k,v in d.items() if k not in ('runner','probeRunner')} for d in devices]})
             return
         if 'saveReport' in data:
             handler._json({'ok': True, 'id': track.save_report(owner, data['saveReport'])})
@@ -4344,6 +4345,12 @@ def _tracking_user(handler, qs):
         if device not in track.DEVICES:
             raise ValueError('请选择指定手机')
         entry = next(d for d in track.selectable_devices(all_online_devices(), sonic_list_device_statuses()) if d['id'] == device)
+        if data.get('probe') is True:
+            if not entry.get('probeReady'):
+                raise ValueError(entry.get('probeReason') or '连接诊断仅支持已配置的 iPhone')
+            key = track.start(owner, entry['probeRunner'], data.get('path'), device, probe=True)
+            handler._json({'ok':True,'id':key})
+            return
         if not entry['ready']:
             raise ValueError(entry['reason'])
         handler._json({'ok': True, 'id': track.start(owner, entry['runner'],data.get('path'),device)})

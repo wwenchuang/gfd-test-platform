@@ -12,11 +12,23 @@ class PublishedReceiptsTest(unittest.TestCase):
         honor, iphone = reports
         self.assertTrue(all('receiptIds' not in row for row in iphone['rows']))
         links = [row for row in honor['rows'] if row.get('receiptIds')]
-        self.assertEqual(len(links), 57)
+        self.assertTrue(links)
         self.assertTrue(all(row['status'] != '待实测' for row in links))
         linked = {rid for row in links for rid in row['receiptIds']}
-        self.assertEqual(len(linked), 66)
         with ZipFile(ASSETS / 'honor-tracking.xlsx') as book:
+            shared = [''.join(item.itertext()) for item in ElementTree.fromstring(book.read('xl/sharedStrings.xml'))]
+            expected = {}
+            for sheet in ('sheet3', 'sheet4'):  # exposure rules and individual action checks
+                rows = ElementTree.fromstring(book.read('xl/worksheets/'+sheet+'.xml')).findall('.//{*}row')
+                for row in rows[1:]:
+                    cells = {}
+                    for cell in row.findall('{*}c'):
+                        value = cell.findtext('{*}v')
+                        if value is not None:
+                            cells[cell.get('r').rstrip('0123456789')] = shared[int(value)] if cell.get('t')=='s' else value
+                    if cells.get('F') and cells.get('D') != '待实测':
+                        expected.setdefault(cells['A'],set()).add(cells['F'])
+            self.assertEqual({row['origin']:set(row['receiptIds']) for row in links}, expected)
             labels = {cell.get('r'): cell.findtext('{*}v') for cell in
                       ElementTree.fromstring(book.read('xl/worksheets/sheet8.xml')).findall('.//{*}c')}
             rels = {rel.get('Id'): rel.get('Target').lstrip('/') for rel in

@@ -62,12 +62,15 @@ test('a refreshed personal history exports only owned run evidence with exact ro
     const article=name=>page.getByRole('article').filter({has:page.getByRole('heading',{name,exact:true})});
     const block=article(title),old=article('旧版.xlsx'),iphone=article(published.reports[1].title),honor=article(published.reports[0].title);
     assert.equal(await page.getByRole('article').count(),4);
-    assert.match(await honor.locator('.tracking-report-counts').innerText(),/通过 27/);
-    assert.match(await honor.locator('.tracking-report-counts').innerText(),/差异 30/);
+    const honorRows=published.reports[0].rows;
+    for(const [label,status] of [['通过','通过'],['差异','差异待确认'],['待实测','待实测']]){
+      const count=honorRows.filter(row=>row.status===status).length;
+      assert.match(await honor.locator('.tracking-report-counts').innerText(),new RegExp(label+' '+count+'\\b'));
+    }
     assert.match(await honor.locator('.tracking-report-meta').innerText(),/2026-11-13/);
     assert.match(await iphone.locator('.tracking-report-counts').innerText(),/待实测 94/);
     await honor.getByRole('button',{name:'预览逐项结论'}).click();
-    assert.equal(await honor.getByRole('button',{name:'查看接口证据'}).count(),57);
+    assert.equal(await honor.getByRole('button',{name:'查看接口证据'}).count(),honorRows.filter(row=>row.receiptIds?.length).length);
     const firstRow=honor.locator('tbody tr').first(),receipt=firstRow.getByRole('button',{name:'查看接口证据'});
     await receipt.click();
     const dialog=page.getByRole('dialog',{name:'查看接口证据'});

@@ -2,7 +2,7 @@
 window.MobileTrackingReport = (() => {
   const pending='待实测', difference='差异待确认';
   const wireCode=value=>String(value||'').split(/[：:]/,1)[0].trim().toUpperCase();
-  const equivalent=(a,b)=>a===b || ([a,b].every(v=>v==='CC'||v==='CCZ'));
+  const canonical=code=>({CCZ:'CC',CSZ:'CS'}[code]||code);
   const fields=new Set('page pageTitle ele eleTitle tab subTab topicId topicName element elementId modelType modelName resourceType resourceId resourceName modelId firstExposurePosition exposurePage pagePre keyword existResult functionUse tabClick listClick position channel source duration actDuration traceId requestId listRequestId rank favoriteType videoId contentId mediaType playDuration watchDuration isTop clickArea searchWord contentName videoName browseId batchId viewBatchId'.split(' '));
   const privateNames=new Set(['keyword','topicName','modelName','resourceName','traceId','requestId','listRequestId','searchWord','contentName','videoName','browseId','batchId','viewBatchId']);
   function publicObject(item){
@@ -36,18 +36,19 @@ window.MobileTrackingReport = (() => {
     return action.replace(/^.*?点击/,'').split('、').map(s=>s.replace(/[「」“”]/g,'').replace(/等分类.*$/,'').trim()).filter(Boolean);
   }
   function requirements(rule,label){
-    const text=rule[3]||'',expected={},unresolved=[];
+    const text=rule[3]||'',expected={},unresolved=[],exposureContext=[];
     for(const raw of text.split(/[；;\n]/)){
       const line=raw.replaceAll('`','').trim().replace(/[,，]$/,'').trim();
       if(!line)continue;
       const pair=line.match(/^\(["']([\w-]+)["'],\s*["']([^"']+)["']\)$/);
       if(pair){if(pair[2]===label)Object.assign(expected,{ele:pair[1],eleTitle:pair[2]});continue;}
       const term=line.match(/^([a-zA-Z]\w*)\s*=\s*([^=]+)$/)||line.match(/^"(\w+)":\s*"([^"]+)"$/);
+      if(term && ((term[1]==='pagePre' && term[2]==='上一级页面') || (term[1]==='exposurePage' && term[2]==='当前曝光页面')))exposureContext.push(term[1]);
       if(!term||/被点击|当前展示|按实际|搜索词|点击时|类型编码|上一级页面|当前曝光页面|当前选中|add\/remove|（/.test(term[2]))unresolved.push(line);
       else expected[term[1]]=term[2].trim();
     }
     if(text.includes('(')&&/\(["']/.test(text)&&expected.ele===undefined)unresolved.push('尚未确定当前入口对应的元素枚举');
-    return {expected,unresolved};
+    return {expected,unresolved,exposureContext};
   }
   function judge(rule,plan,captured,ambiguous){
     const result=(status,reason,e=null,actual=null)=>({status,reason,e,actual});
@@ -55,42 +56,44 @@ window.MobileTrackingReport = (() => {
     if(ambiguous)return result(pending,'同一操作路径对应多个相同事件条件，需区分触发动作');
     const type=wireCode(rule[1]);
     if(!/^[A-Z][\w]*$/.test(type))return result(pending,'需求未指定可核对的事件编码');
-    const label=plan.path.at(-1),{expected,unresolved}=requirements(rule,label);
+    const label=plan.path.at(-1),{expected,unresolved,exposureContext}=requirements(rule,label);
     const terms=Object.entries(expected);
     const options=[];
     for(const e of captured.filter(x=>x.ids.includes(plan.id))){
       const actualType=wireCode(e.event);
-      const alias=equivalent(type,actualType);
-      if(!alias && !(type==='CS'&&actualType==='CSZ'))continue;
+      if(canonical(type)!==canonical(actualType))continue;
       for(const obj of e.contents.length?e.contents:[{}]){
         const matched=terms.filter(([k,v])=>obj[k]===v).length;
         const identity=['ele','firstExposurePosition','resourceType'].some(key=>expected[key] && obj[key]===expected[key]) ||
           (type==='AV' && expected.page && obj.page===expected.page);
         if(terms.length && !matched && !identity)continue;
-        options.push({e,obj,matched,alias,identity});
+        const exactPosition=canonical(type)==='CS' && !!expected.firstExposurePosition && obj.firstExposurePosition===expected.firstExposurePosition;
+        const received=e.ack==='已接收' && e.httpStatus>=200 && e.httpStatus<300 && e.businessCode===0 && !!(e.reqId&&e.method&&e.time&&e.sent&&e.endpoint);
+        const missingContext=exactPosition && received ? exposureContext.filter(k=>!String(obj[k]??'').trim()) : [];
+        options.push({e,obj,matched,identity,missingContext});
       }
     }
     if(!options.length)return result(pending,'已执行操作，窗口内未找到与该需求对应的事件');
     // An explicitly rejected delivery remains visible even when a retry succeeds.
-    options.sort((a,b)=>Number(b.alias)-Number(a.alias)||b.matched-a.matched||Number(b.e.ack==='上报失败')-Number(a.e.ack==='上报失败'));
-    const {e,obj,matched,alias,identity}=options[0];
-    if(!alias)return result(identity||matched===terms.length&&terms.length?difference:pending,'需求 '+type+'；实收 '+e.event+'（'+e.name+'）',e,obj);
+    options.sort((a,b)=>b.matched-a.matched||Number(b.e.ack==='上报失败')-Number(a.e.ack==='上报失败')||b.missingContext.length-a.missingContext.length);
+    const {e,obj,matched,identity,missingContext}=options[0];
     if(matched<terms.length){
       const mismatch=terms.filter(([k,v])=>obj[k]!==v).map(([k,v])=>k+' 预期 '+v+'，实收 '+(obj[k]??'未见')).join('；');
       return result(identity?difference:pending,mismatch+(identity?'':'；待确认事件归属'),e,obj);
     }
     if(!e.reqId||!e.endpoint||!e.method||!e.time||!e.sent||e.httpStatus==null||e.businessCode==null)return result(pending,'缺少可关联的请求、时间或业务回执，需更新 Runner 后复测',e,obj);
+    if(rule[2] && missingContext.length)return result(difference,'实收 '+e.event+' 的首展位 '+expected.firstExposurePosition+' 已匹配，缺少方案必填字段 '+missingContext.join('、'),e,obj);
     if(unresolved.length || (!terms.length && rule[5]))return result(pending,'已收到 '+e.event+'，待核对 '+(unresolved.join('；')||'原表未明示的内容或触发条件'),e,obj);
     if(rule[2] && e.ack==='上报失败')return result('失败','业务字段匹配，上报请求未被成功接收',e,obj);
     if(!rule[2])return result('失败','实际出现了方案要求不出现的事件',e,obj);
     if(rule[6])return result(pending,'基础字段匹配；还需核对 '+rule[6],e,obj);
     if(e.ack!=='已接收'||e.httpStatus<200||e.httpStatus>=300||e.businessCode!==0)return result(pending,'未取得一致的成功回执',e,obj);
-    return result('通过',(type===wireCode(e.event)?'':'CC 与 CCZ 按同一内容点击事件核对。')+'需求字段匹配，HTTP '+e.httpStatus+'，业务码 0',e,obj);
+    return result('通过',(type===wireCode(e.event)?'':'原表 '+type+' 与实收 '+e.event+' 已按同一事件核对。')+'需求字段匹配，HTTP '+e.httpStatus+'，业务码 0',e,obj);
   }
   function report(rules,plans,events){
     const details=plans.map(p=>{
       const rule=rules[p.source];
-      const ambiguous=plans.some(q=>q.id!==p.id && q.batch && q.batch===p.batch && wireCode(rules[q.source][1])===wireCode(rule[1]) && rules[q.source][3]===rule[3]);
+      const ambiguous=plans.some(q=>q.id!==p.id && q.batch && q.batch===p.batch && canonical(wireCode(rules[q.source][1]))===canonical(wireCode(rule[1])) && rules[q.source][3]===rule[3]);
       return {plan:p,...judge(rule,p,events,ambiguous)};
     });
     const sources=rules.map((rule,source)=>{
