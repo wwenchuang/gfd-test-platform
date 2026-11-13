@@ -4296,7 +4296,7 @@ def _tracking_runner(handler, qs):
         track.finish(data.get('id'), runner, data['result'])
         handler._json({'ok': True})
     else:
-        key = track.claim(runner, data.get("devices"))
+        key = track.claim(runner, data.get('devices'), directory_lookup=sonic_list_device_statuses)
         handler._json({'ok': True, 'id':key, **track.assignment_for(key,runner)})
 
 
@@ -4306,23 +4306,47 @@ def _tracking_user(handler, qs):
     from task_server.services.ui_execution_contract import require_ui_actor, AccessDenied
     data = handler._body()
     try:
-        owner = require_ui_actor(permission='ui.execute', app_id=track.APP)['user_id']
-        if 'requirements' in data:
-            from task_server.services.mobile_tracking_plan import analyze
-            handler._json({'ok':True,'items':analyze(data['requirements'])})
+        reading = 'publishedReceipt' in data or 'publishedFile' in data or data.get('history') is True or bool(data.get('id'))
+        owner = require_ui_actor(permission='ui.view' if reading else 'ui.execute', app_id=track.APP)['user_id']
+        if 'publishedReceipt' in data:
+            from task_server.services.mobile_tracking_receipt import published_receipt
+            image = published_receipt(data['publishedReceipt'])
+            handler.send_response(200)
+            handler._cors()
+            handler.send_header('Content-Type', 'image/png')
+            handler.send_header('Content-Length', str(len(image)))
+            handler.send_header('Cache-Control', 'private, no-store')
+            handler.end_headers()
+            handler.wfile.write(image)
+            return
+        if 'publishedFile' in data:
+            content, name = track.published_file(data['publishedFile'])
+            send_attachment(handler, content, name, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            return
+        if data.get('history') is True:
+            handler._json({'ok': True, 'reports': track.history(owner), 'published': track.published_report()})
             return
         if data.get('id'):
             handler._json(dict(ok=True, **track.read(owner, data['id'])))
             return
+        if data.get('devices') is True:
+            devices = track.selectable_devices(all_online_devices(), sonic_list_device_statuses())
+            handler._json({'ok': True, 'devices': [{k:v for k,v in d.items() if k != 'runner'} for d in devices]})
+            return
+        if 'saveReport' in data:
+            handler._json({'ok': True, 'id': track.save_report(owner, data['saveReport'])})
+            return
+        if 'requirements' in data:
+            from task_server.services.mobile_tracking_plan import analyze
+            handler._json({'ok':True,'items':analyze(data['requirements'])})
+            return
         device = data.get('device')
         if device not in track.DEVICES:
             raise ValueError('请选择指定手机')
-        online = [d for d in all_online_devices() if d.get('runner_online') and d.get('device_id')==device
-                  and (device==track.DEVICE or d.get('runner_capabilities',{}).get('tracking_selected_device'))
-                  and d.get('usage_status')=='idle' and d.get('runner_capabilities',{}).get('tracking_auto') and d.get('status') in ('device','online')]
-        if len(online)!=1:
-            raise ValueError('指定手机未就绪或 Runner 尚未更新，待实测')
-        handler._json({'ok': True, 'id': track.start(owner, online[0]['runner_id'],data.get('path'),device)})
+        entry = next(d for d in track.selectable_devices(all_online_devices(), sonic_list_device_statuses()) if d['id'] == device)
+        if not entry['ready']:
+            raise ValueError(entry['reason'])
+        handler._json({'ok': True, 'id': track.start(owner, entry['runner'],data.get('path'),device)})
     except AccessDenied:
         handler._json({'ok': False,'error':'没有此应用的执行权限'},403)
     except ValueError as exc:

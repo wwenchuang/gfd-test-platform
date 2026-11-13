@@ -752,11 +752,13 @@ window.UiPracticeResults = (() => {
     const attached=context(), active=new Set(), panels=[];
     let disposed=false;
     let recent;
+    let trackingCleanup;
     function permitted() {return !disposed && current() && attached===context();}
     function dispose() {
       if(disposed) return;
       disposed=true; clearInterval(guard);recent?.remove();
       for(const controller of active) controller.abort();
+      trackingCleanup?.();
       disposeTools();
       if (disposeKnowledge) disposeKnowledge();
       for(const panel of panels) panel.remove();
@@ -881,7 +883,12 @@ window.UiPracticeResults = (() => {
        (Array.isArray(apps) && apps.includes('com.kfb.model')))) reportPanels.mobile=panelFor('mobile','手机回归实测');
     if(hasPermission('ui.view') && (apps==='*' || (Array.isArray(apps) && apps.includes('com.kfb.model')))) {
       reportPanels['kit-regression']=panelFor('kit-regression','套件专区需求回归');
-      window.MobileTracking?.attach(page);
+      if(canAccessWorkflow('mobile_tracking')){
+        const cards=page.querySelector('.ui-practice-tasks'),card=document.createElement('article');
+        add(card,'h2','埋点测试');add(card,'p','查看手机事件、接口回执和实测表。');
+        const open=add(card,'button','打开埋点测试');open.type='button';open.onclick=()=>window.MobileTrackingPage.open();
+        cards.append(card);trackingCleanup=()=>card.remove();
+      }
       recent=document.createElement('section');
       recent.className='ui-practice-evidence';
       recent.setAttribute('aria-label','最近的回归报告');

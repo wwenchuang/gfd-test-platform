@@ -89,7 +89,7 @@ function applyRestrictedActionControls() {
 }
 
 const WORKFLOW_PERMISSIONS = {
-  ui_start: 'ui.view', ui_library: 'ui.view', ui_reports: 'ui.view',
+  mobile_tracking: 'ui.view', ui_start: 'ui.view', ui_library: 'ui.view', ui_reports: 'ui.view',
   identity: 'auth.manage', ai_practice: 'platform.configure', config: 'platform.configure', app_config: 'platform.configure',
   sonic_config: 'platform.configure', system_config: 'platform.configure', feishu_config: 'platform.notify',
   dashboard: 'ui.execute', agent: 'ui.execute', agent_confirm: 'ui.execute', agent_history: 'ui.view',
@@ -99,6 +99,10 @@ const WORKFLOW_PERMISSIONS = {
 };
 
 function canAccessWorkflow(key) {
+  if (key === 'mobile_tracking') {
+    const apps=currentAccessProfile?.scope?.ui_apps;
+    return hasPermission('ui.view') && (currentAccessProfile?.is_superuser===true || apps==='*' || (Array.isArray(apps)&&apps.includes('com.kfb.model')));
+  }
   if (key === 'ai_practice') return hasPermission('ui.view') || hasPermission('api.view') || hasPermission('platform.configure');
   if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(key)) return isUiSimpleAvailable(key) && hasPermission('ui.view');
   if (['dashboard', 'agent', 'agent_confirm'].includes(key)) return canOperateAgent();
@@ -158,6 +162,7 @@ async function showAuthedApp() {
   if(identity!==currentAccessProfile?.user_id)return;
   if (typeof restoreWorkflowPreference === 'function') restoreWorkflowPreference();
   if (typeof preferUiSimpleReport === 'function') preferUiSimpleReport();
+  if (new URLSearchParams(location.search).get('view')==='tracking' && canAccessWorkflow('mobile_tracking')) activeWorkflow='mobile_tracking';
   if (typeof isUiSimpleAvailable === 'function' && isUiSimpleAvailable() && activeWorkflow==='dashboard') activeWorkflow='ui_start';
   if (!canAccessWorkflow(activeWorkflow)) {
     activeWorkflow = ['dashboard', 'assets', 'identity', 'config', 'feishu_config'].find(canAccessWorkflow) || 'account';

@@ -83,3 +83,20 @@
 .ui-video-source [data-video-first-pass] li{padding:8px 0;border-bottom:1px solid #34434b}
 .ui-video-source [data-video-first-pass] time{font-variant-numeric:tabular-nums}
 .ui-video-source [data-video-first-pass] p{margin:4px 0;color:#b5c3ca}
+
+.tracking-panel .tracking-controls,.tracking-panel .tracking-actions,.tracking-panel .tracking-totals{display:flex;flex-wrap:wrap;align-items:end;gap:.7rem}
+.tracking-panel .tracking-controls{margin-top:1rem}
+.tracking-panel .tracking-controls label{display:grid;gap:.35rem}
+.tracking-panel section>div>details{padding:.55rem 0;border-bottom:1px solid var(--border,#3b4b54)}
+.tracking-panel section summary strong,.tracking-panel section summary span{margin-right:.65rem}
+.tracking-panel [data-conclusion="通过"]{color:#85dbc0}
+.tracking-panel [data-conclusion="失败"],.tracking-panel [data-conclusion="差异待确认"]{color:#ffbb9e}
+.tracking-panel [data-conclusion="待实测"]{color:#c1cbd1}
+.tracking-panel img{max-width:100%;height:auto}
+@media(min-width:761px){.ui-practice-tasks:has([data-open-tracking]){grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}}
+.tracking-history table{border-collapse:collapse;width:100%;text-align:left;font-size:14px}
+.tracking-history th,.tracking-history td{padding:8px 10px;border-bottom:1px solid #39514e;vertical-align:top}
+.tracking-table-wrap{overflow-x:auto;max-width:100%}
+.tracking-table-wrap table{border-collapse:collapse;width:100%;min-width:520px;text-align:left}
+.tracking-table-wrap :is(th,td){padding:8px 10px;border-bottom:1px solid var(--border,#39514e);vertical-align:top;overflow-wrap:anywhere}
+.tracking-table-wrap th{color:#a1ddcd}.tracking-table-wrap td:nth-child(3){white-space:nowrap}

@@ -1,0 +1,1346 @@
+{
+  "reports": [
+    {
+      "title": "荣耀 Magic Vs3 · 2026-11-13 线上埋点实测",
+      "rows": [
+        {
+          "origin": "表2 第2行",
+          "action": "浏览首页",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "c3eeb81075320e61"
+          ]
+        },
+        {
+          "origin": "表2 第3行",
+          "action": "点击设备",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "9a33ebaa18643316"
+          ]
+        },
+        {
+          "origin": "表2 第4行",
+          "action": "点击搜索",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "64544d10806892bf"
+          ]
+        },
+        {
+          "origin": "表2 第5行",
+          "action": "点击扫码",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "2ab3707a1b993992"
+          ]
+        },
+        {
+          "origin": "表2 第6行",
+          "action": "点击消息铃铛",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "be2e4a72a5c99115"
+          ]
+        },
+        {
+          "origin": "表2 第7行",
+          "action": "点击勋章挑战",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "8595bfa2702f83ae"
+          ]
+        },
+        {
+          "origin": "表2 第8行",
+          "action": "点击AI建模、印章、掐丝珐琅、标牌、导入打印",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "4da02bad643f1dc2",
+            "e92745a4d832b4c9",
+            "2530e463a5e574e2",
+            "77a2b835f0cc898c",
+            "55c54d47114e4a14"
+          ]
+        },
+        {
+          "origin": "表2 第9行",
+          "action": "点击查看全部",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "b71819141bfaba21"
+          ]
+        },
+        {
+          "origin": "表2 第10行",
+          "action": "点击推荐、热门、最新、玩具等分类",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "d12e5a3aacc4ae73",
+            "b4e2d0483e50fd13",
+            "e6e1bd3fbd4789e0",
+            "a46fc4398ea74f3f"
+          ]
+        },
+        {
+          "origin": "表2 第11行",
+          "action": "点击首页、成长、创作、广场、我的",
+          "status": "差异待确认",
+          "reason": "首页 · page 预期 home，实收 create；pageTitle 预期 首页，实收 创作",
+          "receiptIds": [
+            "efa83732d43c01e1",
+            "7f904560d5fb3672",
+            "46e88e731b675894",
+            "dc7ee22bd611a673",
+            "c5569762a9e23f42"
+          ]
+        },
+        {
+          "origin": "表2 第12行",
+          "action": "曝光",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表2 第13行",
+          "action": "点击主题卡",
+          "status": "差异待确认",
+          "reason": "CCZ 与方案 CC 同口径。方案字段 topicId、topicName 在保留的事件属性中未见；实际包含 resourceId、resourceName、resourceType",
+          "receiptIds": [
+            "d5c24ac342496141"
+          ]
+        },
+        {
+          "origin": "表2 第14行",
+          "action": "点击模型",
+          "status": "差异待确认",
+          "reason": "CCZ 与方案 CC 同口径。方案字段 modelId、modelName、modelType 在保留的事件属性中未见；实际包含 resourceId、resourceName、resourceType、tab",
+          "receiptIds": [
+            "48ae8fbf71b2b2e7"
+          ]
+        },
+        {
+          "origin": "表2 第15行",
+          "action": "曝光",
+          "status": "差异待确认",
+          "reason": "方案要求 CS，实报 CSZ（内容曝光）；请核对生产事件字典",
+          "receiptIds": [
+            "5996eada26c80605"
+          ]
+        },
+        {
+          "origin": "表2 第16行",
+          "action": "下一步",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表2 第17行",
+          "action": "立即打印",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表3 第3行",
+          "action": "点击“立即定制”",
+          "status": "差异待确认",
+          "reason": "定制入口与回执均匹配，上报事件未见原表要求的本次链路 ID",
+          "receiptIds": [
+            "e5bdcd0552316846"
+          ]
+        },
+        {
+          "origin": "表3 第4行",
+          "action": "点击“去打印”",
+          "status": "差异待确认",
+          "reason": "去打印事件与业务回执已核对；原表要求的 作品 ID、本次链路 ID 尚未在该事件字段中识别",
+          "receiptIds": [
+            "254a0b409459cbc7"
+          ]
+        },
+        {
+          "origin": "表3 第5行",
+          "action": "印章打印成功",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表4 第2行",
+          "action": "浏览",
+          "status": "差异待确认",
+          "reason": "pageTitle 预期 掐丝珐琅页，实收 掐丝珐琅",
+          "receiptIds": [
+            "20bda22e1482eec4"
+          ]
+        },
+        {
+          "origin": "表4 第3行",
+          "action": "点击挂件",
+          "status": "差异待确认",
+          "reason": "pageTitle 预期 掐丝珐琅页，实收 掐丝珐琅",
+          "receiptIds": [
+            "2c8c40db3ece62ae"
+          ]
+        },
+        {
+          "origin": "表4 第6行",
+          "action": "点击“AI立即生成”",
+          "status": "待实测",
+          "reason": "已进入掐丝珐琅上传页，未识别到可用于选择指定测试图片的控件；尚未到达「AI立即生成」，需取得该步的实际请求及回执"
+        },
+        {
+          "origin": "表4 第7行",
+          "action": "点击“立即生成3D模型”",
+          "status": "待实测",
+          "reason": "已进入掐丝珐琅上传页，未识别到可用于选择指定测试图片的控件；尚未到达「立即生成3D模型」，需取得该步的实际请求及回执"
+        },
+        {
+          "origin": "表4 第9行",
+          "action": "打印成功",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表5 第3行",
+          "action": "点击“生成3D预览图”",
+          "status": "待实测",
+          "reason": "已点击「生成3D预览图」，两次操作窗口均未匹配目标 AEC，尚待复测"
+        },
+        {
+          "origin": "表5 第4行",
+          "action": "标牌打印成功",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表6 第3行",
+          "action": "点击“微信导入”",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "a1c7f2701550061d"
+          ]
+        },
+        {
+          "origin": "表6 第4行",
+          "action": "点击“本地导入”",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "b1cac3851d891041"
+          ]
+        },
+        {
+          "origin": "表6 第5行",
+          "action": "导入的模型打印成功",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表7 第3行",
+          "action": "点击“欢度国庆”等系列卡片",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "3688c98474136228"
+          ]
+        },
+        {
+          "origin": "表7 第4行",
+          "action": "见原表流程节点",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "d37e53ab6e0b9a08"
+          ]
+        },
+        {
+          "origin": "表7 第5行",
+          "action": "点击某个模型的“去打印”",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表8 第2行",
+          "action": "进入广场",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "a5a4a454c3369bf6"
+          ]
+        },
+        {
+          "origin": "表8 第3行",
+          "action": "点击推荐、最新",
+          "status": "差异待确认",
+          "reason": "推荐 · 已收到 AEC（元素点击），该事件含嵌套属性在内的字段中未见 点击前频道、频道位置; 最新 · 已收到 AEC（元素点击），该事件含嵌套属性在内的字段中未见 点击前频道、频道位置",
+          "receiptIds": [
+            "3261d205988ffbae",
+            "54baf6f1088bbc4e"
+          ]
+        },
+        {
+          "origin": "表8 第4行",
+          "action": "点击搜索",
+          "status": "差异待确认",
+          "reason": "已收到 AEC（元素点击），该事件含嵌套属性在内的字段中未见 当前频道",
+          "receiptIds": [
+            "bc7608e1ed866b0c"
+          ]
+        },
+        {
+          "origin": "表8 第5行",
+          "action": "点击视频封面、标题或播放图标",
+          "status": "差异待确认",
+          "reason": "已收到 CCZ（点击内容），该事件含嵌套属性在内的字段中未见 列表位置、是否置顶、点击区域、列表请求ID",
+          "receiptIds": [
+            "1f6e11a6874d6ae4"
+          ]
+        },
+        {
+          "origin": "表8 第6行",
+          "action": "曝光",
+          "status": "差异待确认",
+          "reason": "方案要求 CS，实报 CSZ（内容曝光）；请核对生产事件字典",
+          "receiptIds": [
+            "142463217051ab2a"
+          ]
+        },
+        {
+          "origin": "表8 第7行",
+          "action": "浏览某条视频内容",
+          "status": "差异待确认",
+          "reason": "已收到 CV（浏览内容详情），该事件含嵌套属性在内的字段中未见 同一次浏览跨事件使用的批次 UUID",
+          "receiptIds": [
+            "8ad02d2118099bf3"
+          ]
+        },
+        {
+          "origin": "表8 第8行",
+          "action": "视频开始播放",
+          "status": "差异待确认",
+          "reason": "已收到 CVP（音视频播放），该事件含嵌套属性在内的字段中未见 同一次浏览跨事件使用的批次 UUID",
+          "receiptIds": [
+            "852ad70c76591d10"
+          ]
+        },
+        {
+          "origin": "表8 第9行",
+          "action": "结束本次观看",
+          "status": "差异待确认",
+          "reason": "已收到 CVE（音视频退出），该事件含嵌套属性在内的字段中未见 同一次浏览跨事件使用的批次 UUID",
+          "receiptIds": [
+            "8642dffe3f3a48d6"
+          ]
+        },
+        {
+          "origin": "表8 第10行",
+          "action": "离开当前视频内容",
+          "status": "差异待确认",
+          "reason": "已收到 CED（离开内容详情页），该事件含嵌套属性在内的字段中未见 同一次浏览跨事件使用的批次 UUID",
+          "receiptIds": [
+            "ce7352b3943bf1de"
+          ]
+        },
+        {
+          "origin": "表8 第11行",
+          "action": "收藏或取消收藏",
+          "status": "待实测",
+          "reason": "改变线上收藏状态，需测试账号、初态和回滚"
+        },
+        {
+          "origin": "表8 第12行",
+          "action": "点击“我也要”",
+          "status": "待实测",
+          "reason": "本轮尚未取得该操作的实报"
+        },
+        {
+          "origin": "表8 第13行",
+          "action": "输入关键词后点击搜索",
+          "status": "差异待确认",
+          "reason": "page 预期 search，实收 PlazaSearch；pageTitle 预期 搜索页，实收 广场搜索",
+          "receiptIds": [
+            "c65d237255017138"
+          ]
+        },
+        {
+          "origin": "表8 第14行",
+          "action": "搜索请求成功返回结果",
+          "status": "差异待确认",
+          "reason": "page 预期 search，实收 PlazaSearch；pageTitle 预期 搜索页，实收 广场搜索",
+          "receiptIds": [
+            "c65d237255017138"
+          ]
+        },
+        {
+          "origin": "表8 第15行",
+          "action": "搜索结果点击",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "9e015569b60c20f7"
+          ]
+        },
+        {
+          "origin": "表9 第3行",
+          "action": "点击“去看看”按钮",
+          "status": "待实测",
+          "reason": "本轮尚未取得该操作的实报"
+        },
+        {
+          "origin": "表9 第4行",
+          "action": "点击“下一步”按钮",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表9 第5行",
+          "action": "点击“去打印”按钮",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表9 第6行",
+          "action": "点击“去打印”按钮",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表10 第2行",
+          "action": "浏览创作页面",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "2af7e659d718700d"
+          ]
+        },
+        {
+          "origin": "表10 第3行",
+          "action": "点击「角色手办」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "dbdef41020faae92"
+          ]
+        },
+        {
+          "origin": "表10 第4行",
+          "action": "点击「动物萌宠」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "d5375993f0f8952b"
+          ]
+        },
+        {
+          "origin": "表10 第6行",
+          "action": "点击「炫酷载具」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "ea60c893e3a5bddf"
+          ]
+        },
+        {
+          "origin": "表10 第7行",
+          "action": "点击「开始创作」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "1dcf9927754e3b83"
+          ]
+        },
+        {
+          "origin": "表10 第8行",
+          "action": "点击「模型导入」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "3e5d301d8bc1dfde"
+          ]
+        },
+        {
+          "origin": "表10 第9行",
+          "action": "点击「魔法涂鸦」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "cbdafd91374532a0"
+          ]
+        },
+        {
+          "origin": "表10 第10行",
+          "action": "点击「魔法叠叠乐」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "9b822778b98a85af"
+          ]
+        },
+        {
+          "origin": "表10 第11行",
+          "action": "点击「魔法捏捏乐」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "67b874dc561564ae"
+          ]
+        },
+        {
+          "origin": "表10 第12行",
+          "action": "点击「魔法积木」",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "b230e6234e925332"
+          ]
+        },
+        {
+          "origin": "表10 第13行",
+          "action": "点击“就这样，生成模型”",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "96284c598ff999a2"
+          ]
+        },
+        {
+          "origin": "表10 第14行",
+          "action": "AI模型打印成功",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "表11 第2行",
+          "action": "浏览搜索页",
+          "status": "通过",
+          "reason": "已完成",
+          "receiptIds": [
+            "6ecf0e5fabb2b228"
+          ]
+        },
+        {
+          "origin": "表11 第3行",
+          "action": "点击某个热搜关键词",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表11 第4行",
+          "action": "输入关键词后点击搜索",
+          "status": "待实测",
+          "reason": "首页提交 3D 后显示无法连接到网络，窗口内未匹配到 ASE；需在结果可加载时复测"
+        },
+        {
+          "origin": "表11 第5行",
+          "action": "搜索请求成功返回结果",
+          "status": "待实测",
+          "reason": "首页提交 3D 后显示无法连接到网络，窗口内未匹配到 ASE；需在结果可加载时复测"
+        },
+        {
+          "origin": "表11 第6行",
+          "action": "搜索结果点击",
+          "status": "待实测",
+          "reason": "口径分别为广场 plazaSeach 和首页 seach（保留需求拼写）；记录实际关键词、输入/返回和结果"
+        },
+        {
+          "origin": "表12 第2行",
+          "action": "点击一级分类「收藏」「作品」「导入」",
+          "status": "差异待确认",
+          "reason": "共同字段 page 预期 my_page，实收 myPage；该记录可验证分类控件，具体分类名未识别; 收藏 · 本轮尚未取得该操作的实报; 作品 · 本轮尚未取得该操作的实报; 导入 · 本轮尚未取得该操作的实报",
+          "receiptIds": [
+            "7050ca03bb8a614e"
+          ]
+        },
+        {
+          "origin": "表12 第3行",
+          "action": "点击子分类「模型」「主题专区」「广场」",
+          "status": "差异待确认",
+          "reason": "共同字段 page 预期 my_page，实收 myPage；该记录可验证分类控件，具体分类名未识别; 模型 · 本轮尚未取得该操作的实报; 主题专区 · 本轮尚未取得该操作的实报; 广场 · 本轮尚未取得该操作的实报",
+          "receiptIds": [
+            "a9ac79703b6afe99"
+          ]
+        },
+        {
+          "origin": "表12 第4行",
+          "action": "浏览「模型」列表",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表12 第5行",
+          "action": "浏览「主题专区」列表",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表12 第6行",
+          "action": "浏览「广场」列表",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表12 第7行",
+          "action": "浏览「全部」作品列表",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表12 第8行",
+          "action": "浏览某个作品分类的列表",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表12 第9行",
+          "action": "浏览导入列表",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表12 第10行",
+          "action": "点击收藏的模型卡片并打开详情",
+          "status": "差异待确认",
+          "reason": "page 预期 my_page，实收 myPage",
+          "receiptIds": [
+            "a550632347ba03e9"
+          ]
+        },
+        {
+          "origin": "表12 第11行",
+          "action": "点击当前子分类里的模型卡片并打开详情或预览",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表12 第12行",
+          "action": "点击导入的模型卡片并打开详情或预览",
+          "status": "待实测",
+          "reason": "操作窗口内未匹配需求事件"
+        },
+        {
+          "origin": "表4 第4行",
+          "action": "点击书签",
+          "status": "差异待确认",
+          "reason": "pageTitle 预期 掐丝珐琅页，实收 掐丝珐琅",
+          "receiptIds": [
+            "e083eb89ba2efe71"
+          ]
+        },
+        {
+          "origin": "表4 第5行",
+          "action": "点击吧唧",
+          "status": "差异待确认",
+          "reason": "pageTitle 预期 掐丝珐琅页，实收 掐丝珐琅",
+          "receiptIds": [
+            "ec40f4b9bab97fc6"
+          ]
+        },
+        {
+          "origin": "表7 第6行",
+          "action": "模型打印成功",
+          "status": "待实测",
+          "reason": "暂跳过模型编辑页；重开仍提示“加载失败2个模型”。本轮未提交打印任务，需另取对应动作或任务的上报与回执"
+        },
+        {
+          "origin": "正文第5节 第2行",
+          "action": "印章",
+          "status": "差异待确认",
+          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 sealDetail；请求未见 exposurePage",
+          "receiptIds": [
+            "19d456fa532f372b"
+          ]
+        },
+        {
+          "origin": "正文第5节 第3行",
+          "action": "掐丝珐琅",
+          "status": "差异待确认",
+          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 cloisonneDetailModel；请求未见 exposurePage",
+          "receiptIds": [
+            "b4f16ca845a0020a"
+          ]
+        },
+        {
+          "origin": "正文第5节 第4行",
+          "action": "主题专区",
+          "status": "差异待确认",
+          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 topicList",
+          "receiptIds": [
+            "c9078affedf04460"
+          ]
+        },
+        {
+          "origin": "正文第5节 第5行",
+          "action": "首页",
+          "status": "待实测",
+          "reason": "本轮操作窗口未观测到指定首展位"
+        },
+        {
+          "origin": "正文第5节 第6行",
+          "action": "主题模型",
+          "status": "差异待确认",
+          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 topicDetailModel；请求未见 exposurePage",
+          "receiptIds": [
+            "2e52dd25028a8700"
+          ]
+        },
+        {
+          "origin": "正文第5节 第7行",
+          "action": "首页模型瀑布流",
+          "status": "差异待确认",
+          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 homeFeedModel；请求未见 exposurePage",
+          "receiptIds": [
+            "5996eada26c80605"
+          ]
+        },
+        {
+          "origin": "正文第5节 第8行",
+          "action": "广场",
+          "status": "差异待确认",
+          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 squareHome；请求未见 exposurePage",
+          "receiptIds": [
+            "142463217051ab2a"
+          ]
+        },
+        {
+          "origin": "正文第5节 第9行",
+          "action": "个人中心-收藏",
+          "status": "待实测",
+          "reason": "本轮操作窗口未观测到指定首展位"
+        },
+        {
+          "origin": "正文第5节 第10行",
+          "action": "个人中心-作品",
+          "status": "待实测",
+          "reason": "本轮操作窗口未观测到指定首展位"
+        },
+        {
+          "origin": "正文第5节 第11行",
+          "action": "个人中心-导入",
+          "status": "待实测",
+          "reason": "本轮操作窗口未观测到指定首展位"
+        },
+        {
+          "origin": "正文第5节 第12行",
+          "action": "模型详情页",
+          "status": "待实测",
+          "reason": "本轮操作窗口未观测到指定首展位"
+        },
+        {
+          "origin": "正文第5节 第13行",
+          "action": "搜索结果页",
+          "status": "待实测",
+          "reason": "本轮操作窗口未观测到指定首展位"
+        },
+        {
+          "origin": "正文第5节 第14行",
+          "action": "广场搜索结果页",
+          "status": "差异待确认",
+          "reason": "预期 CS，实报 CSZ（内容曝光），首展位 plazaSeach",
+          "receiptIds": [
+            "9eeda1685acf0d30"
+          ]
+        }
+      ],
+      "files": [
+        {
+          "id": "honor",
+          "label": "下载完整实测表",
+          "name": "荣耀MagicVs3-线上埋点逐项实测.xlsx"
+        },
+        {
+          "id": "honor-pending",
+          "label": "下载待测清单",
+          "name": "荣耀MagicVs3-待实测清单.xlsx"
+        }
+      ],
+      "receiptReport": "honor"
+    },
+    {
+      "title": "iPhone 13 · 2026-11-13 设备核验",
+      "note": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。",
+      "files": [
+        {
+          "id": "iphone",
+          "label": "下载 iPhone 对照表",
+          "name": "iPhone13-埋点实测对照.xlsx"
+        }
+      ],
+      "rows": [
+        {
+          "origin": "表2 第2行",
+          "action": "浏览首页",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第3行",
+          "action": "点击设备",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第4行",
+          "action": "点击搜索",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第5行",
+          "action": "点击扫码",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第6行",
+          "action": "点击消息铃铛",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第7行",
+          "action": "点击勋章挑战",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第8行",
+          "action": "点击AI建模、印章、掐丝珐琅、标牌、导入打印",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第9行",
+          "action": "点击查看全部",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第10行",
+          "action": "点击推荐、热门、最新、玩具等分类",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第11行",
+          "action": "点击首页、成长、创作、广场、我的",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第12行",
+          "action": "曝光",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第13行",
+          "action": "点击主题卡",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第14行",
+          "action": "点击模型",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第15行",
+          "action": "曝光",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第16行",
+          "action": "下一步",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表2 第17行",
+          "action": "立即打印",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表3 第3行",
+          "action": "点击“立即定制”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表3 第4行",
+          "action": "点击“去打印”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表3 第5行",
+          "action": "印章打印成功",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表4 第2行",
+          "action": "浏览",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表4 第3行",
+          "action": "点击挂件",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表4 第6行",
+          "action": "点击“AI立即生成”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表4 第7行",
+          "action": "点击“立即生成3D模型”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表4 第9行",
+          "action": "打印成功",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表5 第3行",
+          "action": "点击“生成3D预览图”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表5 第4行",
+          "action": "标牌打印成功",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表6 第3行",
+          "action": "点击“微信导入”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表6 第4行",
+          "action": "点击“本地导入”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表6 第5行",
+          "action": "导入的模型打印成功",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表7 第3行",
+          "action": "点击“欢度国庆”等系列卡片",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表7 第4行",
+          "action": "见原表流程节点",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表7 第5行",
+          "action": "点击某个模型的“去打印”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第2行",
+          "action": "进入广场",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第3行",
+          "action": "点击推荐、最新",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第4行",
+          "action": "点击搜索",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第5行",
+          "action": "点击视频封面、标题或播放图标",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第6行",
+          "action": "曝光",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第7行",
+          "action": "浏览某条视频内容",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第8行",
+          "action": "视频开始播放",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第9行",
+          "action": "结束本次观看",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第10行",
+          "action": "离开当前视频内容",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第11行",
+          "action": "收藏或取消收藏",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第12行",
+          "action": "点击“我也要”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第13行",
+          "action": "输入关键词后点击搜索",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第14行",
+          "action": "搜索请求成功返回结果",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表8 第15行",
+          "action": "搜索结果点击",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表9 第3行",
+          "action": "点击“去看看”按钮",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表9 第4行",
+          "action": "点击“下一步”按钮",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表9 第5行",
+          "action": "点击“去打印”按钮",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表9 第6行",
+          "action": "点击“去打印”按钮",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第2行",
+          "action": "浏览创作页面",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第3行",
+          "action": "点击「角色手办」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第4行",
+          "action": "点击「动物萌宠」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第6行",
+          "action": "点击「炫酷载具」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第7行",
+          "action": "点击「开始创作」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第8行",
+          "action": "点击「模型导入」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第9行",
+          "action": "点击「魔法涂鸦」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第10行",
+          "action": "点击「魔法叠叠乐」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第11行",
+          "action": "点击「魔法捏捏乐」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第12行",
+          "action": "点击「魔法积木」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第13行",
+          "action": "点击“就这样，生成模型”",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表10 第14行",
+          "action": "AI模型打印成功",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表11 第2行",
+          "action": "浏览搜索页",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表11 第3行",
+          "action": "点击某个热搜关键词",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表11 第4行",
+          "action": "输入关键词后点击搜索",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表11 第5行",
+          "action": "搜索请求成功返回结果",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表11 第6行",
+          "action": "搜索结果点击",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第2行",
+          "action": "点击一级分类「收藏」「作品」「导入」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第3行",
+          "action": "点击子分类「模型」「主题专区」「广场」",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第4行",
+          "action": "浏览「模型」列表",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第5行",
+          "action": "浏览「主题专区」列表",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第6行",
+          "action": "浏览「广场」列表",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第7行",
+          "action": "浏览「全部」作品列表",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第8行",
+          "action": "浏览某个作品分类的列表",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第9行",
+          "action": "浏览导入列表",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第10行",
+          "action": "点击收藏的模型卡片并打开详情",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第11行",
+          "action": "点击当前子分类里的模型卡片并打开详情或预览",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表12 第12行",
+          "action": "点击导入的模型卡片并打开详情或预览",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表4 第4行",
+          "action": "点击书签",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表4 第5行",
+          "action": "点击吧唧",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "表7 第6行",
+          "action": "模型打印成功",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第2行",
+          "action": "印章",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第3行",
+          "action": "掐丝珐琅",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第4行",
+          "action": "主题专区",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第5行",
+          "action": "首页",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第6行",
+          "action": "主题模型",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第7行",
+          "action": "首页模型瀑布流",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第8行",
+          "action": "广场",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第9行",
+          "action": "个人中心-收藏",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第10行",
+          "action": "个人中心-作品",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第11行",
+          "action": "个人中心-导入",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第12行",
+          "action": "模型详情页",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第13行",
+          "action": "搜索结果页",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        },
+        {
+          "origin": "正文第5节 第14行",
+          "action": "广场搜索结果页",
+          "status": "待实测",
+          "reason": "iPhone 已配对，智小白 3D 可启动；XCTest 连接被拒（74），未取得此动作的请求和回执。"
+        }
+      ]
+    }
+  ]
+}

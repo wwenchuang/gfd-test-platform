@@ -32,7 +32,7 @@ cp "${SRC_DIR}/requirements-api-testing-dev.txt" "${pkg_dir}/"
 cp "${SRC_DIR}/task-manager.html" "${pkg_dir}/"
 cp "${SRC_DIR}/trace-viewer.html" "${pkg_dir}/"
 cp "${SRC_DIR}/sonic-midscene-task-runner.groovy" "${pkg_dir}/"
-for runner_file in "windows-midscene-runner.py" "mac-midscene-runner.py" "mobile_tracking_runner.py" "mobile_tracking_observer.py" "mobile_tracking_label.swift" "run-mac-midscene-runner.sh"; do
+for runner_file in "windows-midscene-runner.py" "mac-midscene-runner.py" "mobile_tracking_runner.py" "mobile_tracking_ios.py" "mobile_tracking_observer.py" "mobile_tracking_label.swift" "run-mac-midscene-runner.sh"; do
   if [ -f "${SRC_DIR}/${runner_file}" ]; then
     cp "${SRC_DIR}/${runner_file}" "${pkg_dir}/"
   fi

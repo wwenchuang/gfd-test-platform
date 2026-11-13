@@ -116,6 +116,7 @@ function authHeaders(headers = {}) {
 }
 
 const WORKFLOW_SECTIONS = {
+  mobile_tracking: {index:'',title:'埋点测试',help:'查看实测报告或选择手机开始采集。',cards:[],checklist:[]},
   ai_practice: { index: '', title: 'AI 测试实战', help: '按周练习并查看阶段证据。', cards: [], checklist: [] },
   ui_start: { index: '', title: '开始测试', help: '选择用例和手机，查看本次测试结果。', cards: [], checklist: [] },
   ui_library: { index: '', title: '用例库', help: '按应用、模块查找可复用用例。', cards: [], checklist: [] },

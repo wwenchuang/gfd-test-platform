@@ -1514,7 +1514,7 @@ async function retryAgentRunById(runId) {
 
 function renderAgentPageAfterRunUpdate() {
   renderAgentCenter();
-  if (activeWorkflow === 'ai_practice' || (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow))) {
+  if (['ai_practice','mobile_tracking'].includes(activeWorkflow) || (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow))) {
     if (typeof updateNavigationBadges === 'function') updateNavigationBadges();
     return;
   }
@@ -2344,6 +2344,13 @@ function normalizeWorkflowKey(sectionKey) {
 function setActiveWorkflow(sectionKey, options = {}) {
   clearManagementSearchTimers();
   const normalizedKey = normalizeWorkflowKey(sectionKey);
+  if (activeWorkflow==='mobile_tracking' && normalizedKey!==activeWorkflow) window.MobileTrackingPage?.leave();
+  if (normalizedKey==='mobile_tracking' || activeWorkflow==='mobile_tracking') {
+    const url=new URL(location.href);
+    if(normalizedKey==='mobile_tracking')url.searchParams.set('view','tracking');
+    else if(url.searchParams.get('view')==='tracking')url.searchParams.delete('view');
+    history.replaceState(history.state,'',url);
+  }
   if (typeof isUiSimpleWorkflow === 'function' && (isUiSimpleWorkflow(activeWorkflow) || activeWorkflow === 'ai_practice') && typeof leaveUiSimpleWorkflow === 'function') leaveUiSimpleWorkflow({discardReportIntent: normalizedKey !== activeWorkflow});
   if (activeWorkflow === 'operation_history' && normalizedKey !== 'operation_history' && typeof leaveOperationHistory === 'function') leaveOperationHistory();
   activeWorkflow = WORKFLOW_SECTIONS[normalizedKey] ? normalizedKey : 'dashboard';
@@ -2434,6 +2441,7 @@ function updateNavigationBadges() {
 
 function renderActiveWorkflowPage(options = {}) {
   if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow)) return showUiSimpleWorkflow();
+  if (activeWorkflow === 'mobile_tracking') return window.MobileTrackingPage.mount();
   if (activeWorkflow === 'ai_practice') return showAiPractice();
   if (activeWorkflow === 'operation_history') return showOperationHistory(options) || true;
   if (activeWorkflow === 'identity') return showIdentityManagement() || true;
@@ -2475,6 +2483,7 @@ function updateWorkbenchPanelMode() {
 
 // 上下文工具栏：根据当前模块动态展示标题/按钮
 const CONTEXT_TOOLBAR_MAP = {
+  mobile_tracking: { module:'ui', icon:'', title:'埋点测试', refreshLabel:'刷新报告与设备', refreshFn:'void 0' },
   ai_practice: { module: 'settings', icon: '', title: 'AI 测试实战', refreshLabel: '在页面内刷新探针', refreshFn: 'void 0' },
   ui_start: { module: 'ui', icon: '', title: '开始测试', refreshLabel: '刷新状态', refreshFn: 'refreshUiSimpleWorkflow()' },
   ui_library: { module: 'ui', icon: '', title: '用例库', refreshLabel: '刷新状态', refreshFn: 'refreshUiSimpleWorkflow()' },
@@ -2528,6 +2537,7 @@ function updateContextToolbar() {
 }
 
 function refreshActiveWorkflow() {
+  if(activeWorkflow==='mobile_tracking'){document.querySelector('[data-tracking-workspace]')?.dispatchEvent(new Event('tracking-refresh'));return;}
   const ctx = CONTEXT_TOOLBAR_MAP[activeWorkflow] || CONTEXT_TOOLBAR_MAP.dashboard;
   const fn = ctx.refreshFn || 'loadJobs(true)';
   try {
@@ -2567,6 +2577,7 @@ async function activateWorkflow(sectionKey) {
   // round 4: 切换页面前，按目标页面动态决定数据加载与轮询
   applyLazyLoadForSection(activeWorkflow);
   if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow)) { showUiSimpleWorkflow(); return; }
+  if (activeWorkflow === 'mobile_tracking') { window.MobileTrackingPage.mount(); return; }
   if (activeWorkflow === 'ai_practice') { showAiPractice(); return; }
   if (keepFileContext) {
     document.getElementById('toolbar-help').textContent = '当前 YAML 已保留；编辑后先保存，再选择单条调试或整文件执行。';

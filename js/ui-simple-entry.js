@@ -55,7 +55,7 @@ async function initUiSimpleAvailability({navigate=true}={}){
     uiSimpleEnabled=data?.ok===true&&data.enabled===true;
     uiSimpleEvidenceAvailable=data?.ok===true&&(data.evidence_available===true||uiSimpleEnabled);
     const advanced=document.querySelector('[data-ui-advanced]');
-    if(advanced){advanced.classList.toggle('ui-advanced-enabled',uiSimpleEnabled);if(activeWorkflow!=='ai_practice')advanced.open=!uiSimpleEnabled||!isUiSimpleWorkflow(activeWorkflow)&&activeWorkflow!=='dashboard';}
+    if(advanced){advanced.classList.toggle('ui-advanced-enabled',uiSimpleEnabled);if(!['ai_practice','mobile_tracking'].includes(activeWorkflow))advanced.open=!uiSimpleEnabled||!isUiSimpleWorkflow(activeWorkflow)&&activeWorkflow!=='dashboard';}
     applyAccessNavigation();
     // Never take the user away from a page they opened while the feature check was in flight.
     if(navigate&&uiSimpleEnabled&&activeWorkflow===initialWorkflow&&!currentFile){

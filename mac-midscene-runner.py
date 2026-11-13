@@ -1803,20 +1803,75 @@ def install_apk_job(job):
 _tracking_thread = None
 _tracking_next = 0
 
+_ios_tracking_cache = {}
+
+
+def ios_tracking_states(devices):
+    states = {}
+    connected = {d['device_id'] for d in devices if d.get('platform') == 'ios' and d.get('status') == 'online'}
+    for gone in set(_ios_tracking_cache) - connected:
+        _ios_tracking_cache.pop(gone, None)
+    for device in connected:
+        row = next(d for d in devices if d.get('device_id') == device)
+        reason = ''
+        if _IOS_JOB_ACTIVE.is_set() or (_tracking_thread and _tracking_thread.is_alive()):
+            states[device]={'ready':False,'stage':'busy','reason':'此 Runner 正在执行手机任务'}
+            continue
+        if not IOS_EXECUTION_ENABLED:
+            reason = '已连接 iPhone，Runner 当前只支持预览'
+        elif os.getenv('IOS_DEVICE_ID','') != device:
+            reason = '这部 iPhone 未配置为此 Runner 的执行设备'
+        elif not row.get('preflight',{}).get('ready'):
+            reason = row.get('preflight',{}).get('reason') or 'WDA 未就绪'
+        elif not any(app.get('source_package')=='com.kfb.model' and app.get('installed') is True for app in row.get('installed_apps',[])):
+            reason = '未核实智小白 3D 已安装在这部 iPhone'
+        if reason:
+            states[device] = {'ready':False,'stage':'device','reason':reason}
+            _ios_tracking_cache.pop(device,None)
+            continue
+        now = time.monotonic()
+        cached = _ios_tracking_cache.get(device)
+        if not cached or now-cached[0] > 30:
+            try:
+                from mobile_tracking_ios import readiness
+                state = readiness(device, ios_wda_read)
+            except ImportError:
+                state = {'ready':False,'stage':'runner','reason':'请更新 iOS 埋点采集模块'}
+            _ios_tracking_cache[device]=(now,state)
+        states[device]=_ios_tracking_cache[device][1]
+    return states
+
+
 def poll_tracking(devices):
     global _tracking_thread, _tracking_next
     available = [d['device_id'] for d in devices if d.get('device_id') in ('ecbfd645','A9TU024622000978') and d.get('status') in ('online','device')]
+    if RUNNER_PLATFORM == 'ios':
+        available = [k for k,v in ios_tracking_states(devices).items() if v['ready']]
     if not available or time.monotonic() < _tracking_next or (_tracking_thread and _tracking_thread.is_alive()):
         return
     _tracking_next = time.monotonic() + 5
     def work():
         from mobile_tracking_runner import capture
         try:
-            reply = http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'devices':available},timeout=5)
+            reply = http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'devices':available},timeout=16)
             if not reply.get('id'): return
             def ready():
                 http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'id':reply['id'],'phase':'ready'},timeout=5)
-            try: result = capture(recording_adb_path(), ready, reply.get("path"), reply.get("device","ecbfd645"))
+            try:
+                selected=reply.get("device","ecbfd645")
+                if selected not in available: raise ValueError("设备分配不匹配")
+                if RUNNER_PLATFORM == "ios":
+                    from mobile_tracking_ios import capture as ios_capture
+                    with _IOS_RECOVERY_GUARD:
+                        if _IOS_JOB_ACTIVE.is_set():
+                            raise ValueError("iOS Runner 正在执行其他任务")
+                        _IOS_JOB_ACTIVE.set()
+                    try:
+                        result=ios_capture(selected,ios_app_mappings()["com.kfb.model"],reply.get("path"),ready,ios_usb_forward)
+                    finally:
+                        _IOS_JOB_ACTIVE.clear()
+                else:
+                    result=capture(recording_adb_path(),ready,reply.get("path"),selected)
             except Exception as exc: result = {'note':'手机采集失败，待实测：'+type(exc).__name__}
             for attempt in range(3):
                 try:
@@ -1829,8 +1884,19 @@ def poll_tracking(devices):
     _tracking_thread = threading.Thread(target=work, daemon=True, name='mobile-tracking')
     _tracking_thread.start()
 
+def tracking_receipts_available():
+    try:
+        from mobile_tracking_runner import scoped_events
+        from mobile_tracking_observer import decode
+        return callable(scoped_events) and callable(decode)
+    except ImportError:
+        return False
+
+
 def heartbeat(devices):
     runtime = {} if RUNNER_PLATFORM == "ios" else midscene_env()
+    ios_tracking = ios_tracking_states(devices) if RUNNER_PLATFORM == "ios" else {}
+    ios_ready = any(s["ready"] for s in ios_tracking.values())
     payload = {
         "runner_id": RUNNER_ID,
         "hostname": socket.gethostname(),
@@ -1840,9 +1906,11 @@ def heartbeat(devices):
         "version": RUNNER_VERSION,
         "capabilities": {
             **RUNNER_CAPABILITIES,
-            "tracking_selected_device": RUNNER_PLATFORM == "android",
-            "tracking_auto": RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
-            "tracking": RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
+            "tracking_ios_devices": ios_tracking,
+            "tracking_http_receipts": ios_ready or RUNNER_PLATFORM == "android" and tracking_receipts_available(),
+            "tracking_selected_device": ios_ready or RUNNER_PLATFORM == "android",
+            "tracking_auto": ios_ready or RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
+            "tracking": ios_ready or RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
             "midscene_model_name": runtime.get("MIDSCENE_MODEL_NAME", ""),
             "midscene_model_family": runtime.get("MIDSCENE_MODEL_FAMILY", ""),
         },
@@ -3116,6 +3184,13 @@ def _run_main():
             if not devices:
                 time.sleep(ADB_DEVICE_CHECK_INTERVAL)
                 continue
+            # Avoid scheduling a normal job over a live phone capture. Only wait
+            # for the quick claim exchange when the tracking queue is empty.
+            if _tracking_thread and _tracking_thread.is_alive():
+                _tracking_thread.join(timeout=0.25)
+                if _tracking_thread.is_alive():
+                    time.sleep(POLL_INTERVAL)
+                    continue
             qs = urllib.parse.urlencode({
                 "runner_id": RUNNER_ID,
                 "devices": ",".join([dev["device_id"] for dev in devices])
