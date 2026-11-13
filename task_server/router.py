@@ -4296,8 +4296,8 @@ def _tracking_runner(handler, qs):
         track.finish(data.get('id'), runner, data['result'])
         handler._json({'ok': True})
     else:
-        key = track.claim(runner)
-        handler._json({'ok': True, 'id':key, 'path':track.path_for(key,runner) if key else []})
+        key = track.claim(runner, data.get("devices"))
+        handler._json({'ok': True, 'id':key, **track.assignment_for(key,runner)})
 
 
 @route_post("/api/mobile-tracking")
@@ -4314,13 +4314,15 @@ def _tracking_user(handler, qs):
         if data.get('id'):
             handler._json(dict(ok=True, **track.read(owner, data['id'])))
             return
-        if data.get('device') != track.DEVICE:
+        device = data.get('device')
+        if device not in track.DEVICES:
             raise ValueError('请选择指定手机')
-        online = [d for d in all_online_devices() if d.get('runner_online') and d.get('device_id')==track.DEVICE
+        online = [d for d in all_online_devices() if d.get('runner_online') and d.get('device_id')==device
+                  and (device==track.DEVICE or d.get('runner_capabilities',{}).get('tracking_selected_device'))
                   and d.get('usage_status')=='idle' and d.get('runner_capabilities',{}).get('tracking_auto') and d.get('status') in ('device','online')]
         if len(online)!=1:
             raise ValueError('指定手机未就绪或 Runner 尚未更新，待实测')
-        handler._json({'ok': True, 'id': track.start(owner, online[0]['runner_id'],data.get('path'))})
+        handler._json({'ok': True, 'id': track.start(owner, online[0]['runner_id'],data.get('path'),device)})
     except AccessDenied:
         handler._json({'ok': False,'error':'没有此应用的执行权限'},403)
     except ValueError as exc:

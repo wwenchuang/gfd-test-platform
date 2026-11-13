@@ -51,19 +51,30 @@ def proxyman_events(folder, target, device_ip, since, until):
         if isinstance(reply,dict) and type(reply.get('code')) is int:
             ack='已接收' if 200<=response['status']<300 and reply['code']==0 else '上报失败'
         for row in decode(body,sent):
-            events.append(dict(row,ack=ack,requestType=parse_qs(url.query).get('type',[''])[0]))
+            events.append(dict(row,ack=ack,httpStatus=response.get('status'),businessCode=reply.get('code') if isinstance(reply,dict) and type(reply.get('code')) is int else None,requestType=parse_qs(url.query).get('type',[''])[0]))
     return matched,events
 
-def capture(adb, on_ready=lambda: None, path=None):
+def capture(adb, on_ready=lambda: None, path=None, device=DEVICE):
+    if device not in (DEVICE,"A9TU024622000978"): raise ValueError("未知手机")
     def command(*args, timeout=6):
-        return subprocess.check_output([adb,'-s',DEVICE,*args],timeout=timeout,stderr=subprocess.DEVNULL)
+        return subprocess.check_output([adb,'-s',device,*args],timeout=timeout,stderr=subprocess.DEVNULL)
+    def screenshot():
+        args = []
+        if device == "A9TU024622000978":
+            displays = command('shell','dumpsys','display').decode(errors='replace')
+            active = re.findall(r'DisplayDeviceInfo\{[^\n]*?uniqueId="local:(\d+)"[^\n]*?type INTERNAL,[^\n]*? state ON,', displays)
+            if len(set(active)) != 1: raise ValueError('无法确认荣耀当前使用的屏幕')
+            args = ['-d', active[0]]
+        data = command('exec-out','screencap',*args,'-p')
+        if not data.startswith(b'\x89PNG'): raise ValueError('未取得有效截图')
+        return data
     def frame(folder):
         focus=command('shell','dumpsys','window').decode(errors='replace')
         if not any(APP+'/' in line for line in focus.splitlines() if 'mCurrentFocus=' in line):
             return None
         stamp=time.time()
         image=Path(folder)/'screen.png'
-        image.write_bytes(command('exec-out','screencap','-p'))
+        image.write_bytes(screenshot())
         subprocess.run(['sips','-Z','420',str(image)],stdout=subprocess.DEVNULL,check=True,timeout=5)
         return {'time':stamp,'png':base64.b64encode(image.read_bytes()).decode()}
     events=[]
@@ -82,8 +93,9 @@ def capture(adb, on_ready=lambda: None, path=None):
         else:
             result['note']='请先打开智小白 3D，待实测'
             return result
-        endpoint=os.getenv('TRACKING_EVENT_URL') or 'https://qa-event.gongfudou.com/event/zxbEvent'
+        endpoint=os.getenv('TRACKING_EVENT_URL') or 'https://event.gongfudou.com/event/zxbEvent'
         url=urlsplit(endpoint)
+        result["endpoint"]=url.hostname+url.path
         def observe(is_running):
             on_ready()
             performed=[]
@@ -92,7 +104,7 @@ def capture(adb, on_ready=lambda: None, path=None):
                 # Only tap a unique, visible control belonging to the configured App.
                 if frame(folder) is None:break
                 image=Path(folder)/'label.png'
-                image.write_bytes(command('exec-out','screencap','-p'))
+                image.write_bytes(screenshot())
                 helper=Path(__file__).with_name('mobile_tracking_label.swift')
                 try:
                     point=subprocess.check_output(['swift',str(helper),str(image),label],timeout=15,stderr=subprocess.DEVNULL).decode().strip()
@@ -136,7 +148,7 @@ def capture(adb, on_ready=lambda: None, path=None):
                 return result
             events.extend(found)
             result['diagnostics']={'source':'Proxyman','matched_path':matched}
-            result['note']='已读取本机 Proxyman 的本轮事件' if found else '本轮未取得这台手机的可解析 QA 埋点，待实测'
+            result['note']='已读取本机 Proxyman 的本轮事件' if found else '本轮未取得这台手机的可解析埋点，待实测'
             return result
         if not binary:
             result['note']='Runner 缺少 mitmdump，待实测'

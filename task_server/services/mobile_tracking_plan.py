@@ -37,6 +37,9 @@ def analyze(source):
             path=x.get('path')
             actions=x.get('steps')
             executable=isinstance(path,list) and 0<len(path)<=5 and all(isinstance(a,str) and a in LABELS for a in path)
+            if executable and re.search(r'支付|提交|删除|下单|去打印|发送打印|立即打印|生成模型', str(x.get('action') or row['action'])):
+                executable=False
+                x=dict(x,reason='涉及写入或实体任务，仅生成步骤，待实测')
             match=re.fullmatch(r'\s*([A-Za-z][A-Za-z0-9_]*)(?:\s*[：:].*)?\s*',row['event'])
             code=match[1].upper() if match else ''
             result.append({'id':row['id'],'action':str(x.get('action') or row['action'])[:200],'feature':str(x.get('feature') or row['feature'])[:100],

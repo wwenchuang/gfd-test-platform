@@ -576,11 +576,11 @@ broker 可能丢弃已过期消息，此时任务不会自动终结。
 
 ### 手机埋点测试
 
-测试平台按常规发布流程更新。在管理 OPPO Reno9（ecbfd645）的 Mac 上，将
+测试平台按常规发布流程更新。在连接荣耀 Magic Vs3（A9TU024622000978）或 OPPO Reno9（ecbfd645）的 Mac 上，将
 `mac-midscene-runner.py`、`mobile_tracking_runner.py`、`mobile_tracking_observer.py`、`mobile_tracking_label.swift`
-放到同一 Runner 目录。默认采集 QA 的 `https://qa-event.gongfudou.com/event/zxbEvent`。需要换环境时可设置 `TRACKING_EVENT_URL`。在原启动环境
+放到同一 Runner 目录。荣耀专用 Runner 使用独立 RUNNER_ID，设置 DEVICE_ID=A9TU024622000978。默认采集线上 `https://event.gongfudou.com/event/zxbEvent`。需要换环境时可设置 `TRACKING_EVENT_URL`。在原启动环境
 设置 `TRACKING_MITMDUMP` 为 mitmdump 的绝对路径（在 PATH 中时可省略）。
 可用独立 Python 环境安装 mitmproxy。HTTPS 采集需要测试构建已信任该测试代理；
-未取得可解析请求的项目标为待实测。若手机 Wi-Fi 已指向本机 Proxyman，Runner 复用现有监听并按手机 IP、运行时间和 QA 路径读取记录。其他既有代理标为待实测。
+未取得可解析请求的项目标为待实测。若手机 Wi-Fi 已指向本机 Proxyman，Runner 复用现有监听并按手机 IP、运行时间和配置的上报路径读取记录。其他既有代理标为待实测。
 在现有 Runner 空闲时重启该进程。上传方案、选手机、点「开始测试」，工作台通过 AI Gateway 按需求行规划手机操作，自动执行能定位的导航步骤并导出 Excel。采集接收该上报路径上的各请求类型。实际事件与源表逐行匹配，请求分组以本轮抓到的数据为准。运行时保持工作台页面打开。报告用请求时间关联
 三秒以内最近的一张 App 截图，时间接近表示同一观测时段。

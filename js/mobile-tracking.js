@@ -81,6 +81,7 @@ window.MobileTracking = (() => {
     add(scene,'option','使用上传方案');
     add(scene,'option','打印取消反馈 · 告诉我们');
     const device=add(panel,'select');device.setAttribute('aria-label','选择手机');
+    add(device,'option','荣耀 Magic Vs3').value='A9TU024622000978';
     add(device,'option','OPPO Reno9 · ecbfd645').value='ecbfd645';
     const start=add(panel,'button','开始测试');start.type='button';
     const message=add(panel,'p');message.setAttribute('role','status');
@@ -107,7 +108,7 @@ window.MobileTracking = (() => {
       const rules=checks();
       return rules.map(([step,event,wanted,props],id)=>{
         const conditions=(props||'').trim().split(/\n/).filter(Boolean).map(v=>v.trim().replace(/^[`]+|[；;`]+$/g,'').match(/^([a-zA-Z][\w]*)=([^=]+)$/));
-        const unique=rules.filter(rule=>rule[1]===event && rule[3]===props).length===1;
+        const unique=plans[id]?.observed && !plans.some((p,j)=>j!==id && p.observed===plans[id].observed && rules[j][1]===event && rules[j][3]===props);
         const defined=unique && (scene.selectedIndex===1 || (conditions.length>0 && conditions.every(Boolean)));
         const matches=events.filter(x=>x.ids.includes(id) && String(x.event).toUpperCase()===plans[id]?.event && (!conditions.length || (x.contents||[x.fields]).some(item=>conditions.every(c=>c && item?.[c[1]]===c[2]))));
         const aligned=matches.filter(x=>x.frame!=null);
@@ -117,7 +118,7 @@ window.MobileTracking = (() => {
 
       });
     }
-    function render(){output.textContent=rows().map(r=>r[0]+'　'+r[5]).join('\n');save.disabled=!sheets.length||busy;start.disabled=!sheets.length||busy;scene.disabled=busy;plan.disabled=busy;}
+    function render(){output.textContent=rows().map(r=>r[0]+'　'+r[5]).join('\n');save.disabled=!sheets.length||busy;start.disabled=!sheets.length||busy;scene.disabled=busy;plan.disabled=busy;device.disabled=busy;}
     plan.onchange=async()=>{
       plans=[];events=[];frames=[];photo=null;preview.hidden=true;message.textContent='';const rev=++planRev;sheets=[];contents.replaceChildren();render();
       const file=plan.files[0];if(!file)return;
@@ -151,15 +152,16 @@ window.MobileTracking = (() => {
           for(const e of data.events||[]){
             let frame=null,distance=3;
             pictures.forEach((f,i)=>{const d=Math.abs(f.time-e.time);if(d<distance){frame=offset+i;distance=d;}});
-            events.push({...e,frame,ids:done&&e.time>=performed[0].time-0.5?ids:[]});
+            events.push({...e,frame,ids:done&&e.time>=performed.at(-1).time && e.sent>=performed.at(-1).time?ids:[]});
           }
           for(const g of group){
+            g.endpoint=data.endpoint||'';
             g.observed=performed.map(a=>a.label).join(' → ');
             g.actualTypes=[...new Set((data.events||[]).filter(e=>String(e.event).toUpperCase()===g.event).map(e=>e.requestType).filter(Boolean))].join('、');
             g.reason=done?(data.note||'采集结束'):(data.note||'待实测')+'；未完成预期操作';
           }
           const verdicts=rows();
-          return group.some(g=>verdicts[g.id][5]==='通过');
+          return group.every(g=>verdicts[g.id][5]==='通过');
         }
         await new Promise(resolve=>setTimeout(resolve,1500));
       }
@@ -168,16 +170,23 @@ window.MobileTracking = (() => {
     start.onclick=async()=>{
       busy=true;plans=[];events=[];frames=[];photo=null;preview.hidden=true;render();
       try{
-        const source=checks().map(([action,event,,properties,feature,origin],id)=>({id,action,event,properties,feature,origin}));
+        const source=sourceChecks().map(([action,event,,properties,feature,origin],id)=>({id,action,event,properties,feature,origin}));
+        const hot=source.find(r=>r.event==='AEC' && r.action.includes('热门') && /^ele=model_category$/m.test(r.properties));
+        if(hot){
+          const first={...hot,id:0,source:hot.id,action:'点击热门',steps:['在首页点击可见的热门分类'],path:['热门']};
+          plans.push(first);
+          message.textContent='正在验证首页「热门」埋点';
+          await runGroup([first]);
+        }
         for(let i=0;i<source.length;i+=12){
           message.textContent='AI 正在分析需求行 '+(i+1)+'–'+Math.min(i+12,source.length);
           const batch=source.slice(i,i+12);
           const reply=await call({requirements:batch});
-          for(const item of reply.items)plans.push({...item,source:item.id,id:plans.length,origin:source[item.id]?.origin});
+          for(const item of reply.items){if(hot && item.id===hot.id && item.path?.at(-1)==='热门')continue;plans.push({...item,source:item.id,id:plans.length,origin:source[item.id]?.origin});}
         }
         const paths=new Map();
         for(const item of plans){
-          if(!item?.path.length)continue;
+          if(!item?.path.length || item.observed!==undefined)continue;
           const key=JSON.stringify(item.path);
           if(!paths.has(key))paths.set(key,[]);
           paths.get(key).push(item);
@@ -208,15 +217,15 @@ window.MobileTracking = (() => {
     save.onclick=async()=>{
       try{
         const wb=new ExcelJS.Workbook();const result=wb.addWorksheet('结论');
-        result.addRow(['场景',scene.value]);result.addRow(['规则来源',scene.selectedIndex===1?'打印取消原因收集专项需求':plan.files[0]?.name]);
+        result.addRow(['测试手机',device.selectedOptions[0].textContent]);result.addRow(['场景',scene.value]);result.addRow(['规则来源',scene.selectedIndex===1?'打印取消原因收集专项需求':plan.files[0]?.name]);
         result.addRow(['手机操作','事件','预期','观测条数','发生时间与截图','结论']);rows().forEach(row=>result.addRow(row));
         result.columns.forEach((c,i)=>c.width=[28,34,12,14,32,16][i]);
         const design=wb.addWorksheet('AI 测试步骤');
-        design.addRow(['需求来源','功能','需求事件','AI 预估请求分组','实收请求分组','测试步骤','实际手机操作','执行说明','实测结论']);
+        design.addRow(['需求来源','功能','需求事件','AI 预估请求分组','实收请求分组','测试步骤','实际手机操作','采集地址','执行说明','实测结论']);
         const verdicts=rows();
         checks().forEach((rule,i)=>{
           const p=plans[i]||{};
-          design.addRow([rule[5],p.feature||rule[4],p.event||rule[1],p.transport||'未知',p.actualTypes||'未观测',(p.steps||[]).join('\n'),p.observed||'',p.reason||'本轮未执行',verdicts[i][5]]);
+          design.addRow([rule[5],p.feature||rule[4],p.event||rule[1],p.transport||'未知',p.actualTypes||'未观测',(p.steps||[]).join('\n'),p.observed||'',p.endpoint||'',p.reason||'本轮未执行',verdicts[i][5]]);
         });
         design.columns.forEach(c=>c.width=34);
         if(frames.length){
@@ -227,8 +236,8 @@ window.MobileTracking = (() => {
             pictures.addImage(id,{tl:{col:0,row:row+1},br:{col:5,row:row+33}});
           });
         }
-        const observations=wb.addWorksheet('抓包事件');observations.addRow(['请求类型','事件类型','事件名称','发生时间','请求时间','最近现场截图','内容属性','上报回执']);
-        events.forEach(e=>observations.addRow([e.requestType,e.event,e.name,e.time?new Date(e.time*1000).toISOString():'未提供',new Date((e.sent||e.time)*1000).toISOString(),e.frame==null?'无相邻截图':e.frame+1,JSON.stringify(e.contents||e.fields),e.ack]));
+        const observations=wb.addWorksheet('抓包事件');observations.addRow(['请求类型','事件类型','事件名称','发生时间','请求时间','最近现场截图','内容属性','上报回执','HTTP 状态','业务码']);
+        events.forEach(e=>observations.addRow([e.requestType,e.event,e.name,e.time?new Date(e.time*1000).toISOString():'未提供',new Date((e.sent||e.time)*1000).toISOString(),e.frame==null?'无相邻截图':e.frame+1,JSON.stringify(e.contents||e.fields),e.ack,e.httpStatus,e.businessCode]));
         if(photo){
           const sheet=wb.addWorksheet('截图');sheet.addRow(['操作或前置状态截图',photo.name]);
           const id=wb.addImage({buffer:photo.bytes,extension:photo.ext});

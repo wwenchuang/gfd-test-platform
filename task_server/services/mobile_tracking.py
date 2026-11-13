@@ -7,6 +7,8 @@ from pathlib import Path
 from task_server.config import LEARNING_DIR
 
 DEVICE = 'ecbfd645'
+HONOR = 'A9TU024622000978'
+DEVICES = (DEVICE, HONOR)
 APP = 'com.kfb.model'
 def db():
     path = Path(LEARNING_DIR) / 'private-mobile-tracking'
@@ -15,12 +17,13 @@ def db():
     con.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, owner TEXT, runner TEXT, created REAL, state TEXT, result TEXT)')
     return con
 
-def path_for(key,runner):
+def assignment_for(key,runner):
     with db() as con:
         row=con.execute('SELECT result FROM runs WHERE id=? AND runner=?',(key,runner)).fetchone()
-    return json.loads(row[0]).get('path',[]) if row else []
+    return json.loads(row[0]) if row else {}
 
-def start(owner, runner, path=None):
+def start(owner, runner, path=None, device=DEVICE):
+    if device not in DEVICES: raise ValueError("未知设备")
     from .mobile_tracking_plan import LABELS
     if not isinstance(path,list) or not 1<=len(path)<=5 or any(a not in LABELS for a in path):
         raise ValueError('手机操作路径未通过校验')
@@ -31,13 +34,16 @@ def start(owner, runner, path=None):
         if con.execute("SELECT 1 FROM runs WHERE state IN ('queued','running','ready') AND created>?", (now-150,)).fetchone():
             raise ValueError('指定手机已有采集任务')
         key = secrets.token_hex(16)
-        con.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(key,owner,runner,now,'queued',json.dumps({'path':path})))
+        con.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(key,owner,runner,now,'queued',json.dumps({'path':path,'device':device})))
         return key
 
-def claim(runner):
+def claim(runner, devices=None):
+    reported = [DEVICE] if devices is None else devices
+    devices = [d for d in DEVICES if isinstance(reported,list) and d in reported]
+    if not devices: return None
     with db() as con:
         con.execute('BEGIN IMMEDIATE')
-        row = con.execute("SELECT id FROM runs WHERE runner=? AND state='queued' AND created>? LIMIT 1",(runner,time.time()-30)).fetchone()
+        row = con.execute("SELECT id FROM runs WHERE runner=? AND state='queued' AND created>? AND COALESCE(json_extract(result,'$.device'),?) IN (" + ','.join('?' for _ in devices) + ") ORDER BY created LIMIT 1",(runner,time.time()-30,DEVICE,*devices)).fetchone()
         if row:
             con.execute("UPDATE runs SET state='running' WHERE id=?",row)
             return row[0]

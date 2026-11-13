@@ -1805,17 +1805,18 @@ _tracking_next = 0
 
 def poll_tracking(devices):
     global _tracking_thread, _tracking_next
-    if not any(d.get('device_id') == 'ecbfd645' for d in devices) or time.monotonic() < _tracking_next or (_tracking_thread and _tracking_thread.is_alive()):
+    available = [d['device_id'] for d in devices if d.get('device_id') in ('ecbfd645','A9TU024622000978') and d.get('status') in ('online','device')]
+    if not available or time.monotonic() < _tracking_next or (_tracking_thread and _tracking_thread.is_alive()):
         return
     _tracking_next = time.monotonic() + 5
     def work():
         from mobile_tracking_runner import capture
         try:
-            reply = http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID},timeout=5)
+            reply = http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'devices':available},timeout=5)
             if not reply.get('id'): return
             def ready():
                 http_json('POST','/api/runner/mobile-tracking',{'runner_id':RUNNER_ID,'id':reply['id'],'phase':'ready'},timeout=5)
-            try: result = capture(recording_adb_path(), ready, reply.get("path"))
+            try: result = capture(recording_adb_path(), ready, reply.get("path"), reply.get("device","ecbfd645"))
             except Exception as exc: result = {'note':'手机采集失败，待实测：'+type(exc).__name__}
             for attempt in range(3):
                 try:
@@ -1839,6 +1840,7 @@ def heartbeat(devices):
         "version": RUNNER_VERSION,
         "capabilities": {
             **RUNNER_CAPABILITIES,
+            "tracking_selected_device": RUNNER_PLATFORM == "android",
             "tracking_auto": RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
             "tracking": RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
             "midscene_model_name": runtime.get("MIDSCENE_MODEL_NAME", ""),
