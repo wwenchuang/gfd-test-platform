@@ -37,7 +37,12 @@ window.MobileTrackingPage = (() => {
       const isNew=tab==='new'&&runAllowed;
       reports.hidden=isNew;setup.hidden=!isNew;
       reportsButton.setAttribute('aria-pressed',String(!isNew));newButton?.setAttribute('aria-pressed',String(isNew));
-      if(isNew&&!created){created=true;window.MobileTracking.attach(setup,true);}
+      if(isNew&&!created){
+        created=true;
+        window.MobileTracking.attach(setup,true,name=>{
+          choose('reports');history.showDevice(name);reportsButton.focus();
+        });
+      }
     }
     reportsButton.onclick=()=>choose('reports');
     if(newButton)newButton.onclick=()=>choose('new');

@@ -85,7 +85,7 @@ class IosProxyProbeTest(unittest.TestCase):
             return {'_remoteDeviceIP':peer,'startedDateTime':datetime.fromtimestamp(t,timezone.utc).isoformat(),
                     'request':{'url':'https://'+host+path+'?type=AV','method':method,'postData':{'text':post}},
                     'response':{'status':status,'content':{'text':reply,'encoding':'base64'}}}
-        samples = [entry(),entry(host=probe.TARGETS[1], code=11),entry(code=None),entry(method='CONNECT', code=None),
+        samples = [entry(),entry(host=probe.TARGETS[1], code=11),entry(code=None),entry(status=999),entry(method='CONNECT', code=None),
                    entry(t=start-1),entry(t=start+10),entry(path='/other'),entry(host='unrelated.example'),entry(peer=self.local)]
         self.assertEqual(probe._counts(samples,self.peer,start,start+5),
-                         dict(connectCount=1,postCount=3,receiptCount=2,acceptedCount=1,eventCount=3))
+                         dict(connectCount=1,postCount=4,receiptCount=2,acceptedCount=1,eventCount=4))

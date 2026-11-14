@@ -102,11 +102,19 @@ def request_records(body,sent,url,raw):
                  requestType=group if _EVENT.fullmatch(group) else '') for row in decode(body,sent)]
 
 
+def http_status(value):
+    # Proxyman may use 999 when it has no HTTP response from the server.
+    return value if type(value) is int and 100 <= value <= 599 else None
+
+
 def receipt(status,reply):
+    status=http_status(status)
+    if status is None:
+        return dict(httpStatus=None,businessCode=None,responseMessage='',ack='回执未识别')
     code=reply.get('code') if isinstance(reply,dict) and type(reply.get('code')) is int else None
     msg=reply.get('msg') if isinstance(reply,dict) else None
     ack='回执未识别'
-    if status is not None and (status>=400 or code is not None):
+    if status>=400 or code is not None:
         ack='已接收' if 200<=status<300 and code==0 else '上报失败'
     return dict(httpStatus=status,businessCode=code,responseMessage=msg if msg in ('success','ok','OK','成功','操作成功') else '',ack=ack)
 

@@ -14,6 +14,7 @@ window.MobileTrackingReport = (() => {
   function sanitize(e,group,ids,endpoint){
     const time=n=>Number.isFinite(n)&&n>0&&n<1e11?n:null;
     const short=s=>String(s||'').slice(0,100);
+    const http=Number.isInteger(e.httpStatus) && e.httpStatus>=100 && e.httpStatus<=599 ? e.httpStatus : null;
     let address='';
     try{
       const url=new URL(endpoint?.includes('://')?endpoint:'https://'+endpoint);
@@ -22,8 +23,8 @@ window.MobileTrackingReport = (() => {
     return {group,ids,endpoint:address,method:e.method==='POST'?'POST':'',reqId:/^[A-Za-z0-9_-]{1,96}$/.test(e.reqId||'')?e.reqId:'',
       index:Number.isInteger(e.index)?e.index:null,time:time(e.time),sent:time(e.sent),event:short(e.event),name:short(e.name),
       requestType:short(e.requestType),contents:(Array.isArray(e.contents)&&e.contents.length?e.contents:[e.fields]).map(publicObject),
-      httpStatus:Number.isInteger(e.httpStatus)?e.httpStatus:null,businessCode:Number.isInteger(e.businessCode)?e.businessCode:null,
-      ack:['已接收','上报失败'].includes(e.ack)?e.ack:'回执未识别',responseMessage:['success','ok','成功'].includes(e.responseMessage)?e.responseMessage:''};
+      httpStatus:http,businessCode:http!==null && Number.isInteger(e.businessCode)?e.businessCode:null,
+      ack:http!==null && ['已接收','上报失败'].includes(e.ack)?e.ack:'回执未识别',responseMessage:http!==null && ['success','ok','成功'].includes(e.responseMessage)?e.responseMessage:''};
   }
   function variants(rule){
     const pairs=Array.from((rule[3]||'').matchAll(/\(["']([\w-]+)["'],\s*["']([^"']+)["']\)/g),m=>m[2]);
@@ -70,18 +71,20 @@ window.MobileTrackingReport = (() => {
         const exactPosition=canonical(type)==='CS' && !!expected.firstExposurePosition && obj.firstExposurePosition===expected.firstExposurePosition;
         const received=e.ack==='已接收' && e.httpStatus>=200 && e.httpStatus<300 && e.businessCode===0 && !!(e.reqId&&e.method&&e.time&&e.sent&&e.endpoint);
         const missingContext=exactPosition && received ? exposureContext.filter(k=>!String(obj[k]??'').trim()) : [];
-        options.push({e,obj,matched,identity,missingContext});
+        options.push({e,obj,matched,identity,received,missingContext});
       }
     }
     if(!options.length)return result(pending,'已执行操作，窗口内未找到与该需求对应的事件');
     // An explicitly rejected delivery remains visible even when a retry succeeds.
-    options.sort((a,b)=>b.matched-a.matched||Number(b.e.ack==='上报失败')-Number(a.e.ack==='上报失败')||b.missingContext.length-a.missingContext.length);
+    options.sort((a,b)=>b.matched-a.matched||Number(b.e.ack==='上报失败')-Number(a.e.ack==='上报失败')||b.missingContext.length-a.missingContext.length||Number(b.received)-Number(a.received));
     const {e,obj,matched,identity,missingContext}=options[0];
     if(matched<terms.length){
       const mismatch=terms.filter(([k,v])=>obj[k]!==v).map(([k,v])=>k+' 预期 '+v+'，实收 '+(obj[k]??'未见')).join('；');
       return result(identity?difference:pending,mismatch+(identity?'':'；待确认事件归属'),e,obj);
     }
-    if(!e.reqId||!e.endpoint||!e.method||!e.time||!e.sent||e.httpStatus==null||e.businessCode==null)return result(pending,'缺少可关联的请求、时间或业务回执，需更新 Runner 后复测',e,obj);
+    if(!e.reqId||!e.endpoint||!e.method||!e.time||!e.sent||e.httpStatus==null)return result(pending,'尚未取得可归属的请求时间、地址或有效 HTTP 回执',e,obj);
+    if(rule[2] && e.httpStatus>=400)return result('失败','业务字段匹配，上报请求返回 HTTP '+e.httpStatus,e,obj);
+    if(e.businessCode==null)return result(pending,'已有 HTTP 状态，尚未取得可识别的业务码',e,obj);
     if(rule[2] && missingContext.length)return result(difference,'实收 '+e.event+' 的首展位 '+expected.firstExposurePosition+' 已匹配，缺少方案必填字段 '+missingContext.join('、'),e,obj);
     if(unresolved.length || (!terms.length && rule[5]))return result(pending,'已收到 '+e.event+'，待核对 '+(unresolved.join('；')||'原表未明示的内容或触发条件'),e,obj);
     if(rule[2] && e.ack==='上报失败')return result('失败','业务字段匹配，上报请求未被成功接收',e,obj);

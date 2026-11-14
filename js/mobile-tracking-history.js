@@ -235,7 +235,10 @@ window.TrackingHistory = (() => {
               if(run.state!=='done'||!run.device||run.device!==report.device){add(evidence,'p','本条采集尚未取得可核验的设备结果。');continue;}
               const entry=add(evidence,'details');
               add(entry,'summary',(run.performed||[]).map(x=>x.label).join(' → ')||run.note||'采集结果');
-              for(const e of run.events||[])add(entry,'p',[e.reqId,e.event,e.name,'HTTP '+(e.httpStatus??'—'),'业务码 '+(e.businessCode??'—'),e.ack].join(' · '));
+              for(const raw of run.events||[]){
+                const e=window.MobileTrackingReport.sanitize(raw,id,[],run.endpoint);
+                add(entry,'p',[e.reqId,e.event,e.name,'HTTP '+(e.httpStatus??'—'),'业务码 '+(e.businessCode??'—'),e.ack].join(' · '));
+              }
             }catch{if(allowed()&&block.isConnected)add(evidence,'p','有一条采集记录暂时无法读取，可点击重试。');}
           }
           button.disabled=false;
@@ -273,7 +276,14 @@ window.TrackingHistory = (() => {
     }
     refresh.onclick=reload;reload();
     const dispose=()=>{revision++;closeReceipt();section.remove();};
-    dispose.refresh=reload;return dispose;
+    dispose.refresh=reload;
+    dispose.showDevice=name=>{
+      if(!allowed())return;
+      query.value='';
+      if(!Array.from(device.options).some(option=>option.value===name))add(device,'option',name);
+      device.value=name;filterCards();
+    };
+    return dispose;
   }
   return {mount,attach:mount};
 })();

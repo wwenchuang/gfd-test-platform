@@ -5,6 +5,22 @@ const path=require('node:path');
 const {chromium}=require('playwright');
 const root=path.resolve(__dirname,'..');
 
+test('proxy placeholders never count as server responses; real HTTP failures survive missing business codes',()=>{
+  const vm=require('node:vm'),context={window:{},URL};
+  vm.runInNewContext(require('node:fs').readFileSync(path.join(root,'js/mobile-tracking-report.js'),'utf8'),context);
+  const R=context.window.MobileTrackingReport,rule=['首页','AEC',true,'page=home','首页','表1第2行'];
+  const plan={id:0,source:0,path:['首页'],batch:'r',done:true};
+  const raw={reqId:'q',event:'AEC',method:'POST',contents:[{page:'home'}],sent:42,time:41,ack:'上报失败'};
+  for(const [status,code,expected] of [[999,0,'待实测'],[404,null,'失败'],[503,72,'失败']]){
+    const e=R.sanitize({...raw,httpStatus:status,businessCode:code},'r',[0],'https://example.test/a');
+    if(status===999)assert.deepEqual([e.httpStatus,e.businessCode,e.ack],[null,null,'回执未识别']);
+    assert.equal(R.report([rule],[plan],[e]).sources[0].status,expected);
+  }
+  const unknown=R.sanitize({...raw,httpStatus:999,businessCode:null},'r',[0],'https://example.test/a');
+  const accepted=R.sanitize({...raw,httpStatus:200,businessCode:0,ack:'已接收'},'r',[0],'https://example.test/a');
+  assert.equal(R.report([rule],[plan],[unknown,accepted]).sources[0].status,'通过');
+});
+
 test('browser reports reflect exact action windows, evidence, aliases and source coverage',async()=>{
   const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'chrome'});
   try{

@@ -33,6 +33,15 @@ class TrackingEvidenceTests(unittest.TestCase):
         self.assertEqual(receipt(200,{'code':-1,'msg':'private'})['responseMessage'],'')
         self.assertEqual(receipt(503,{'code':0})['ack'],'上报失败')
 
+    def test_status_placeholder_has_no_server_receipt(self):
+        missing = dict(httpStatus=None, businessCode=None, responseMessage='', ack='回执未识别')
+        for status in (999, 0, 600, -1):
+            with self.subTest(status=status):
+                self.assertEqual(receipt(status, {'code':0, 'msg':'success'}), missing)
+        for status in (404, 503):
+            self.assertEqual(receipt(status, None), dict(missing, httpStatus=status, ack='上报失败'))
+        self.assertEqual(receipt(200, {'code':0})['ack'], '已接收')
+
     def test_animated_home_selects_only_the_visible_hot_category_for_the_selected_device(self):
         xml = ('<hierarchy><node package="com.kfb.model" text="热门" resource-id="com.kfb.model:id/title" bounds="[2,3][4,5]"/>'
                '<node package="com.kfb.model" text="热门" resource-id="com.kfb.model:id/tv_tab_title" bounds="[127,311][213,361]"/>'

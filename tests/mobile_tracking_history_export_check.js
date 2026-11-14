@@ -55,7 +55,7 @@ test('a refreshed personal history exports only owned run evidence with exact ro
         window.authHeaders=h=>h;window.nativeFetch=window.fetch.bind(window);window.MobileTracking={libraries:()=>Promise.resolve()};
         window.disposeHistory=TrackingHistory.mount(document.querySelector('main'),()=>true);
       });
-      await page.getByRole('heading',{name:'iPhone 13 · 2026-11-13 设备核验'}).waitFor();
+      await page.getByRole('heading',{name:published.reports.find(item=>item.files.some(f=>f.id==='iphone')).title}).waitFor();
     }
     await openPanel();await openPanel();
     assert.equal(historyCalls,2);
@@ -83,7 +83,7 @@ test('a refreshed personal history exports only owned run evidence with exact ro
     assert.equal(checksum,receiptMap[published.reports[0].rows[0].receiptIds[0]].sha256);
     await dialog.getByRole('button',{name:'返回逐项结论'}).click();
     assert.ok(await receipt.evaluate(el=>el===document.activeElement));
-    await page.getByRole('searchbox').fill('设备核验');
+    await page.getByRole('searchbox').fill('iPhone 13');
     assert.equal(await page.getByRole('article').count(),1);
     await page.getByRole('searchbox').fill('');
     await page.getByRole('combobox',{name:'筛选报告设备'}).selectOption('iPhone 13');

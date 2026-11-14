@@ -270,6 +270,7 @@ def history(owner):
 # Files are addressed by a fixed report key. Browser input never becomes a path.
 PUBLISHED_FILES = {
     'honor': ('honor-tracking.xlsx', '荣耀MagicVs3-线上埋点逐项实测.xlsx'),
+    'honor-nov14': ('honor-followup-20261114.xlsx', '荣耀-11月14日上午抓包复测.xlsx'),
     'honor-pending': ('honor-pending.xlsx', '荣耀MagicVs3-待实测清单.xlsx'),
     'iphone': ('iphone-tracking.xlsx', 'iPhone13-埋点实测对照.xlsx'),
 }

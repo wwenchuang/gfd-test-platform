@@ -11,6 +11,8 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
+from mobile_tracking_observer import receipt
+
 
 IPHONE = '00008110-000150CC21C2801E'
 APP = 'com.kfb.3d'
@@ -163,10 +165,10 @@ def _counts(entries, peer, start, end):
         if isinstance(events, list):
             counts['eventCount'] += sum(isinstance(e, dict) and isinstance(e.get('type'), str) and bool(e['type']) for e in events)
         response = row.get('response') or {}
-        code = _body(response.get('content') or {}).get('code')
-        if type(code) is int:
+        details = receipt(response.get('status'), _body(response.get('content') or {}))
+        if details['businessCode'] is not None:
             counts['receiptCount'] += 1
-            if type(response.get('status')) is int and 200 <= response['status'] < 300 and code == 0:
+            if details['ack'] == '已接收':
                 counts['acceptedCount'] += 1
     return counts
 

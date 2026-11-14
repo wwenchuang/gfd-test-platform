@@ -16,7 +16,7 @@ window.MobileTracking = (() => {
     await libraries();
     return window.MobileTrackingSource.extract(file);
   }
-  function attach(page, canExecute=true){
+  function attach(page, canExecute=true, showDeviceReports){
     function add(parent,tag,text){
       const el=document.createElement(tag);el.textContent=text||'';parent.append(el);return el;
     }
@@ -38,6 +38,16 @@ window.MobileTracking = (() => {
     const deviceState=add(deviceGroup,'p');deviceState.setAttribute('role','status');
     const probe=button(deviceGroup,'验证 iOS 抓包连接');
     const probeStatus=add(deviceGroup,'p');probeStatus.setAttribute('role','status');
+    const onsite=add(deviceGroup,'details');onsite.hidden=true;
+    add(onsite,'summary','iPhone 自动操作未就绪时，如何现场复测？');
+    const instructions=add(onsite,'ol');
+    add(instructions,'li','在连接手机的 Mac 上验证抓包连接，再打开 Xcode 的 Accessibility Inspector，选择与 USB 设备一致的 iPhone 13。');
+    add(instructions,'li','在智小白 3D 点一次「首页」取得焦点。检查器显示对应控件后，用 Next 找到要测的按钮，再用 Activate 执行。');
+    add(instructions,'li','按每次操作的时间核对同一手机的埋点请求及回执。只有点击记录时，该项保留为待实测。');
+    if(showDeviceReports){
+      const reports=button(onsite,'查看 iPhone 实测报告');
+      reports.onclick=()=>showDeviceReports('iPhone 13');
+    }
     const actions=add(panel,'div');actions.className='tracking-actions';
     const start=button(actions,'开始测试'),startHint=add(actions,'span');
     startHint.className='tracking-start-hint';
@@ -61,6 +71,8 @@ window.MobileTracking = (() => {
       device.disabled=busy||probing||fetchingDevices||!available.length;refresh.disabled=busy||probing||fetchingDevices;
       probe.hidden=!d||typeof d.probeReady!=='boolean';probe.disabled=busy||probing||fetchingDevices||!d?.probeReady;
       probe.title=d?.probeReason||'';
+      onsite.hidden=!d?.probeReady||d.ready||!/(?:WDA|WebDriverAgent|XCTest)/i.test(d.reason||'');
+      if(onsite.hidden)onsite.open=false;
       downloads.hidden=!current||busy;save.disabled=!current;word.disabled=!current;
       word.hidden=!current?.file?.name.toLowerCase().endsWith('.docx')||current?.specific;
       startHint.textContent=busy?'测试正在运行':reading?'正在解析方案':!plan.files.length?'先选择埋点方案':!requirements.length?'当前方案中没有可测试的需求':!d?.ready?'选择可采集的手机后开始':'';
