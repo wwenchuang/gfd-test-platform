@@ -1481,3 +1481,12 @@ test('requirement evaluation discards a late result after the caller changes ses
  finish(week7Json({ok:true,report:{groups:[],candidates:[]}}));await wait();await wait();
  assert.equal(w.document.querySelector('[data-requirement-design]'),null);
 });
+
+test('UI execution deep link works without a fabricated report revision', async t => {
+ const {w,calls}=fixture(t),batch='uib_'+'b'.repeat(32);
+ w.history.replaceState({},'',`/task-manager.html?ui_batch=${batch}`);
+ assert.equal(w.uiSimpleReportIntent()?.batchId,batch);assert.equal(w.uiSimpleReportIntent()?.revision,'');
+ await w.initUiSimpleAvailability({navigate:false});assert.equal(w.preferUiSimpleReport(),true);w.showUiSimpleWorkflow();
+ assert.equal(calls.find(item=>item?.reportIntent).reportIntent.batchId,batch);
+ w.history.replaceState({},'',`/task-manager.html?ui_batch=${batch}&report_revision=`);assert.equal(w.uiSimpleReportIntent(),null);
+});

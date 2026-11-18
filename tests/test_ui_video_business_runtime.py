@@ -377,7 +377,7 @@ def test_partial_runtime_routes_exact_schema_and_consumes_one_attempt_option(har
         actual,options=h['calls'][-1]
         observed.append((actual,options))
         assert actual['context_trajectory']==[context] and actual['frames']==fs
-        assert options['video_stage']=='audit' and options['model_config']=={'providerId':'qwen_plus','model':'qwen3.8-max'}
+        assert options['video_stage']=='audit' and options['model_config']=={'providerId':'qwen_plus','model':'qwen3.7-plus'}
         assert 'allow_transport_retry' not in options
         schema=options['output_schema'];props=schema['properties']
         assert props['checks']['items']['properties']['event_id']['enum']==['selected']

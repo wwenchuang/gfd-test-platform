@@ -940,7 +940,7 @@ def build_dashscope_chat_body(
         _validate_trajectory_detail_selection(
             trajectory_detail_frame_ids, image_assets[:image_limit], bounded_trajectory_detail)
     model = dashscope_model_for_images(image_assets)
-    if bounded_trajectory_detail is True and (model != "qwen3.8-max" or not re.match(
+    if bounded_trajectory_detail is True and (model not in {"qwen3.7-plus", "qwen3.8-max"} or not re.match(
             r"^https://dashscope(?:-intl|-us)?\.aliyuncs\.com(?:/|$)", dashscope_base_url(), re.I)):
         raise ValueError("video_perception_route_unsupported")
     if image_assets:
@@ -973,11 +973,11 @@ def build_dashscope_chat_body(
     if json_response:
         body["response_format"] = {"type": "json_object"}
         if re.match(r"^qwen3\.(?:5|6|7|8)(?:-|$)", str(model or "").strip().lower()):
-            # Keep structured calls non-thinking by default. Official Qwen 3.8
-            # supports JSON with thinking; the trajectory exception below is
+            # Keep structured calls non-thinking by default. Supported Qwen models
+            # allow JSON with thinking; the trajectory exception below is
             # bounded explicitly and keeps the existing evidence gates.
             body["enable_thinking"] = False
-        if (bounded_trajectory_reasoning is True and str(model or '').strip().lower() in {'qwen3.8-max','qwen3.8-flash'} and
+        if (bounded_trajectory_reasoning is True and str(model or '').strip().lower() in {'qwen3.7-plus','qwen3.8-max','qwen3.8-flash'} and
                 re.match(r'^https://dashscope(?:-intl|-us)?\.aliyuncs\.com(?:/|$)',dashscope_base_url(),re.I)):
             body['enable_thinking']=True
             body['thinking_budget']=1024

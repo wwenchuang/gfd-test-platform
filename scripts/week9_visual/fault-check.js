@@ -37,7 +37,7 @@ async function main() {
     const credentials={base_url:'https://dashscope.aliyuncs.com/compatible-mode/v1',model_key:'offline-placeholder'};
     async function exercise(id,title,run,otherRuns,step,expectedCount,check) {
       const prior=received,started=Date.now();
-      const report={model:'qwen3.8-max',runs:[run,...otherRuns]};
+      const report={model:'qwen3.7-plus',runs:[run,...otherRuns]};
       const agent=createAgent(page,credentials,run,report,()=>{});
       let caught;
       try {await agent.locate(step,'Locate the button');} catch (error) {caught=error;}

@@ -14,15 +14,15 @@ const DEFAULT_TIMEOUT_MS = 30_000
 export class ApiClient {
   constructor(private readonly timeoutMs = DEFAULT_TIMEOUT_MS) {}
 
-  async get<T>(path: string): Promise<ApiEnvelope<T>> {
-    return this.request<T>(path)
+  async get<T>(path: string, options: { signal?: AbortSignal } = {}): Promise<ApiEnvelope<T>> {
+    return this.request<T>(path, options)
   }
 
   async put<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
     return this.request<T>(path, { method: 'PUT', body })
   }
 
-  async post<T>(path: string, body: unknown, options: { readOnly?: boolean } = {}): Promise<ApiEnvelope<T>> {
+  async post<T>(path: string, body: unknown, options: { readOnly?: boolean; signal?: AbortSignal } = {}): Promise<ApiEnvelope<T>> {
     return this.request<T>(path, { ...options, method: 'POST', body })
   }
 

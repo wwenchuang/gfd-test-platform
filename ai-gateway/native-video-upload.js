@@ -73,7 +73,7 @@ export async function uploadNativeVideo({ source, sourceSha256, sourceBytes, mod
   const now = Date.now();
   if (!Buffer.isBuffer(source) || source.length < 12 || source.length > MAX_SOURCE_BYTES || source.toString('ascii', 4, 8) !== 'ftyp' ||
       sourceBytes !== source.length || !/^[a-f0-9]{64}$/.test(sourceSha256) || hash('sha256', source) !== sourceSha256 ||
-      model !== 'qwen3.8-max' || !/^[a-f0-9]{32}$/.test(correlation) || typeof apiKey !== 'string' || !apiKey.trim() || /[\r\n]/.test(apiKey) ||
+      !['qwen3.7-plus', 'qwen3.8-max'].includes(model) || !/^[a-f0-9]{32}$/.test(correlation) || typeof apiKey !== 'string' || !apiKey.trim() || /[\r\n]/.test(apiKey) ||
       !Number.isFinite(deadlineMs) || deadlineMs > now + 120000 || typeof fetchImpl !== 'function') throw failure('video_native_input_invalid');
   let base;
   try { base = new URL(baseUrl); } catch { throw failure('video_native_input_invalid'); }
@@ -126,7 +126,7 @@ export async function uploadNativeVideo({ source, sourceSha256, sourceBytes, mod
   let phase = 'policy';
   try {
     check();
-    const response = await fetchResponse(`${base.origin}/api/v1/uploads?action=getPolicy&model=qwen3.8-max`, {
+    const response = await fetchResponse(`${base.origin}/api/v1/uploads?action=getPolicy&model=${encodeURIComponent(model)}`, {
       method: 'GET', headers: { Authorization: `Bearer ${apiKey}` }, redirect: 'error', signal: controller.signal,
     });
     if (!response.redirected && (response.status === 429 || response.status >= 500 && response.status <= 599)) throw failure('video_stage_provider_failed');

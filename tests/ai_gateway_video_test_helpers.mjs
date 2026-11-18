@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import {createHash} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 const source=fs.readFileSync(new URL('../ai-gateway/server.js',import.meta.url),'utf8');
-const route={model:'qwen3.8-max',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',temperature:.1};
+const route={model:'qwen3.7-plus',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',temperature:.1};
 const ctx=vm.createContext({Buffer,createHash});
 vm.runInContext(source.slice(source.indexOf('function requestedCompletionTokens('),source.indexOf('async function appendAiLog('))+
  source.slice(source.indexOf('function buildUserMessage('),source.indexOf('\nfunction assistantOutputText')),ctx);

@@ -98,7 +98,7 @@ def _safe_trace(trace, stage=None):
     if trace.get('source') == 'ai_gateway':
         out['source'] = 'ai_gateway'
     for key in ('selectedModel',):
-        if trace.get(key) in ('qwen3.8-max', 'qwen3.8-flash'):
+        if trace.get(key) in ('qwen3.7-plus', 'qwen3.8-max', 'qwen3.8-flash'):
             out[key] = trace[key]
     if type(trace.get('imageCount')) is int and 0 <= trace['imageCount'] <= video_stage_image_limit(stage):
         out['imageCount'] = trace['imageCount']

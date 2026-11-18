@@ -608,7 +608,7 @@ function apiThinkingRouteSupported(route) {
     return url.protocol === 'https:' && !url.username && !url.password && !url.port &&
       !url.search && !url.hash &&
       ['dashscope.aliyuncs.com', 'dashscope-intl.aliyuncs.com', 'dashscope-us.aliyuncs.com'].includes(url.hostname) &&
-      String(route?.model || '').trim().toLowerCase() === 'qwen3.8-max';
+      ['qwen3.7-plus', 'qwen3.8-max'].includes(String(route?.model || '').trim().toLowerCase());
   } catch {
     return false;
   }
@@ -724,15 +724,15 @@ function validateVideoOutputSchema(schema, stage = 'semantic') {
 
 function videoStageConfig(stage) {
   return {
-    timeline: ['ui_video_timeline', 'v1', 'whole-timeline', 'qwen3.8-max', 10000],
-    grounding: ['ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-max', 10000],
-    perception: ['ui_video_perception', 'v1', 'whole-perception', 'qwen3.8-max', 8192],
+    timeline: ['ui_video_timeline', 'v1', 'whole-timeline', 'qwen3.7-plus', 10000],
+    grounding: ['ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.7-plus', 10000],
+    perception: ['ui_video_perception', 'v1', 'whole-perception', 'qwen3.7-plus', 8192],
     overview: ['ui_video_trajectory', 'overview', 'whole-trajectory', 'qwen3.8-flash', 10000],
     semantic: ['ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-flash', 10000],
-    audit: ['ui_video_trajectory', 'audit', 'whole-trajectory', 'qwen3.8-max', 10000],
-    consolidate: ['ui_video_steps', 'consolidate', 'whole-consolidate', 'qwen3.8-max', 10000],
-    outcome: ['ui_video_observe', 'outcome', 'whole-observe', 'qwen3.8-max', 4000],
-    inputs: ['ui_video_observe', 'inputs', 'whole-observe', 'qwen3.8-max', 3000],
+    audit: ['ui_video_trajectory', 'audit', 'whole-trajectory', 'qwen3.7-plus', 10000],
+    consolidate: ['ui_video_steps', 'consolidate', 'whole-consolidate', 'qwen3.7-plus', 10000],
+    outcome: ['ui_video_observe', 'outcome', 'whole-observe', 'qwen3.7-plus', 4000],
+    inputs: ['ui_video_observe', 'inputs', 'whole-observe', 'qwen3.7-plus', 3000],
   }[stage];
 }
 
@@ -929,7 +929,7 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
   }
   if (trajectoryDetailScope && Object.prototype.hasOwnProperty.call(body.payload, 'perception_mode')) {
     if (body.payload.perception_mode !== 'fine-detail') throw new Error('video_perception_mode_invalid');
-    if (route.model !== 'qwen3.8-max' ||
+    if (!['qwen3.7-plus', 'qwen3.8-max'].includes(route.model) ||
         !/^https:\/\/dashscope(?:-intl|-us)?\.aliyuncs\.com(?:\/|$)/i.test(String(route.baseUrl || ''))) {
       throw new Error('video_perception_route_unsupported');
     }
@@ -962,13 +962,13 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
     completionOptions.response_format = {type: 'json_object'};
     if (routeSupportsQwenHybridThinking(route)) {
       // Preserve non-thinking JSON defaults; bounded trajectory reasoning is
-      // explicitly requested only on official Qwen 3.8 Max/Flash routes.
+      // explicitly requested only on supported official Qwen routes.
       completionOptions.enable_thinking = false;
     }
   }
   if (body?.jsonResponse === true && body?.skillName === 'ui_video_trajectory' &&
       body?.payload?.phase === 'whole-trajectory' && body?.payload?.reasoning_mode === 'bounded' &&
-      ['qwen3.8-max', 'qwen3.8-flash'].includes(String(route.model || '').trim().toLowerCase()) &&
+      ['qwen3.7-plus', 'qwen3.8-max', 'qwen3.8-flash'].includes(String(route.model || '').trim().toLowerCase()) &&
       /^https:\/\/dashscope(?:-intl|-us)?\.aliyuncs\.com(?:\/|$)/i.test(String(route.baseUrl || ''))) {
     completionOptions.enable_thinking = true;
     completionOptions.thinking_budget = 1024;
@@ -1278,6 +1278,7 @@ async function callAi(action, body, options = {}) {
           model:route.model, baseUrl:route.baseUrl, apiKey:process.env[route.apiKeyEnv],
           correlation:body.videoCorrelation, deadlineMs:deadline, signal:options.signal,
         });
+        if (nativeResource?.model !== route.model) throw new Error('video_native_resource_model_invalid');
         completionOptions.messages[1].content[0].video_url.url = nativeResource.uri;
       }
       const policy = videoStage ? videoPolicyAttestation(body, completionOptions, nativeResource) : null;
@@ -1355,7 +1356,7 @@ async function callAi(action, body, options = {}) {
         action,
         providerId: action === 'api_case_generation' ? '[omitted]' : route.providerId,
         provider: action === 'api_case_generation' ? '[omitted]' : (route.providerName || route.provider),
-        model: action === 'api_case_generation' ? (route.model === 'qwen3.8-max' ? 'qwen3.8-max' : '[omitted]') : route.model,
+        model: action === 'api_case_generation' ? (['qwen3.7-plus', 'qwen3.8-max'].includes(route.model) ? route.model : '[omitted]') : route.model,
         success,
         durationMs: Date.now() - startedAt,
         fallbackIndex: index,

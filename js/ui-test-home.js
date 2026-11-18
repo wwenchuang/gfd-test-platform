@@ -88,7 +88,7 @@
     const previous={batchId:s.reportId,revision:s.reportRevision};
     s.reportView?.dispose();s.reportView=null;s.reportId='';s.reportRevision='';
     const host=s.node.querySelector('[data-ui-report-preview]');if(host){host.hidden=true;host.replaceChildren();}
-    if(abandonIntent&&previous.revision)s.options.onReportClose?.(previous);
+    if(abandonIntent&&previous.batchId)s.options.onReportClose?.(previous);
   }
   function selectBatch(s,id){
     if(s.batchId!==id)window.UiExecutionReplay?.close();

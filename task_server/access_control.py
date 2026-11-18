@@ -474,6 +474,15 @@ def prepare_request_access(handler, method, path, qs):
     if not profile:
         handler._json({"ok": False, "error": "登录已失效，请重新登录", "code": "unauthorized"}, 401)
         return True
+    # The investigation service checks the bound API project/environment or UI
+    # batch on every request. A UI-only main policy cannot authorize both kinds.
+    if ((path == '/api/failure-analysis/tasks' and method in {'GET', 'HEAD', 'POST'}) or
+            (path == '/api/failure-analysis/cancel' and method == 'POST')):
+        if profile.get('must_change_password'):
+            handler._json({'ok': False, 'error': '请先修改密码'}, 403)
+            return True
+        handler._access_path = path
+        return False
     policy = MainAccess(profile)
     try:
         if machine_only:

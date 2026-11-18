@@ -116,3 +116,9 @@ describe('DiagnosticReport', () => {
     expect(wrapper.emitted('loadEvidence')).toHaveLength(2)
   })
 })
+
+it('embeds explicit failure investigation in the existing API report', () => {
+  const wrapper = mount(DiagnosticReport, { props: { execution } })
+  expect(wrapper.find('[data-api-failure-analysis]').exists()).toBe(true)
+  wrapper.unmount()
+})

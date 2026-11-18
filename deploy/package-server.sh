@@ -69,6 +69,8 @@ cp -R "${SRC_DIR}/ai_skills" "${pkg_dir}/"
 if [ -d "${SRC_DIR}/task_server" ]; then
   cp -R "${SRC_DIR}/task_server" "${pkg_dir}/"
 fi
+install -d -m 0755 "${pkg_dir}/tools"
+install -m 0644 "${SRC_DIR}/tools/failure_agent_acceptance.py" "${pkg_dir}/tools/failure_agent_acceptance.py"
 if [ -f "${SRC_DIR}/scripts/week12_triage/review.py" ]; then
   install -d -m 0755 "${pkg_dir}/scripts/week12_triage"
   for item in review.py fixtures.py; do

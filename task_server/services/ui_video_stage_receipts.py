@@ -27,7 +27,7 @@ def _safe_native_transport(value):
     if type(value) is not dict:
         return {}
     out = {}
-    for key, allowed in (('version', {NATIVE_FILE_TRANSPORT}), ('model', {'qwen3.8-max'}),
+    for key, allowed in (('version', {NATIVE_FILE_TRANSPORT}), ('model', {'qwen3.7-plus', 'qwen3.8-max'}),
                          ('resolve_header', {'enable'})):
         item = value.get(key)
         if type(item) is str and item in allowed:
@@ -79,7 +79,8 @@ def _validated_native_resource(body, native_resource):
     meta = body['payload']['video'];deadline = body.get('videoDeadlineMs')
     timeout_ms = body.get('timeoutMs');now_ms = int(time.time()*1000)
     raw = base64.b64decode(body['imageAssets'][0]['base64'], validate=True)
-    if (resource['source_sha256'] != meta['source_sha256'] or
+    if (resource['model'] != STAGES['timeline'][3] or
+            resource['source_sha256'] != meta['source_sha256'] or
             resource['source_bytes'] != meta['source_bytes'] or
             resource['source_md5'] != hashlib.md5(raw).hexdigest() or
             resource['correlation'] != correlation or
@@ -154,7 +155,7 @@ def safe_attestation(value):
         'version': {POLICY_VERSION}, 'stage': set(STAGES),
         'skill': {config[0] for config in STAGES.values()},
         'skill_version': {config[1] for config in STAGES.values()},
-        'model': {config[3] for config in STAGES.values()},
+        'model': {config[3] for config in STAGES.values()} | {'qwen3.8-max'},
     }
     for key, allowed in enums.items():
         item = value.get(key)

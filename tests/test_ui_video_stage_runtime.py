@@ -40,7 +40,7 @@ def test_perception_8192_reconstructed_options_hash_and_raw_receipt(monkeypatch,
     {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,'+asset['base64']},'min_pixels':1658880}])
   content.append({'type':'text','text':'pixels'})
   # Literal independent policy, rather than deriving the expectation from STAGES.
-  options={'model':'qwen3.8-max','temperature':0.1,'max_tokens':8192,'enable_thinking':False,
+  options={'model':'qwen3.7-plus','temperature':0.1,'max_tokens':8192,'enable_thinking':False,
    'response_format':{'type':'json_object'},'messages':[
     {'role':'system','content':'你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。'},
     {'role':'user','content':content}]}
@@ -49,7 +49,7 @@ def test_perception_8192_reconstructed_options_hash_and_raw_receipt(monkeypatch,
   attestation=make_expected_attestation(body)
   assert attestation['effective_options']['max_tokens']==8192
   assert attestation['provider_options_sha256']==digest
-  return io.BytesIO(json.dumps({'success':True,'content':'raw complete','model':'qwen3.8-max',
+  return io.BytesIO(json.dumps({'success':True,'content':'raw complete','model':'qwen3.7-plus',
    'fallbackUsed':False,'finishReason':'stop','usage':{'completionTokens':5001,'reasoningTokens':0},
    'videoPolicy':attestation}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
@@ -72,7 +72,7 @@ def test_all_stage_proof_then_receipt_then_admission(monkeypatch,stage):
  def http(req,timeout):
   order.append('http');body=json.loads(req.data);bodies.append(body)
   assert 0<timeout<=1.5 and 0<body['timeoutMs']<=1500
-  return io.BytesIO(json.dumps({'success':True,'content':'raw content','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.8-max',
+  return io.BytesIO(json.dumps({'success':True,'content':'raw content','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.7-plus',
    'providerId':'official','fallbackUsed':False,'finishReason':'stop','videoPolicy':make_expected_attestation(body)}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  proofs=[];receipts=[]
@@ -125,7 +125,7 @@ def test_python_matches_actual_gateway_canonical_options_with_unicode(monkeypatc
  skill,kw=request(stage);bodies=[]
  def http(req,timeout):
   body=json.loads(req.data);bodies.append(body)
-  return io.BytesIO(json.dumps({'success':True,'content':'{}','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.8-max',
+  return io.BytesIO(json.dumps({'success':True,'content':'{}','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.7-plus',
    'fallbackUsed':False,'finishReason':'stop','videoPolicy':make_expected_attestation(body)}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  ai.ai_gateway_skill_content(skill,'中文“原文” 😀\nline\t\\ end',**kw)
@@ -224,7 +224,7 @@ def test_normal_skill_call_uses_hooks_before_json_without_thread_or_fallback(mon
  monkeypatch.setattr(ai,'dashscope_chat_content',forbidden)
  def http(req,timeout):
   events.append('http');body=json.loads(req.data)
-  return io.BytesIO(json.dumps({'success':True,'content':'INVALID JSON','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.8-max',
+  return io.BytesIO(json.dumps({'success':True,'content':'INVALID JSON','model': 'qwen3.8-flash' if stage in {'overview','semantic'} else 'qwen3.7-plus',
    'fallbackUsed':False,'finishReason':'stop','videoPolicy':make_expected_attestation(body)}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  with pytest.raises(RuntimeError):
@@ -237,7 +237,7 @@ def test_raw_ack_cannot_admit_after_request_deadline(monkeypatch):
  from task_server.services.ui_video_stage_receipts import make_expected_attestation
  skill,kw=request('inputs');receipts=[]
  def http(req,timeout):
-  return io.BytesIO(json.dumps({'success':True,'content':'raw','model':'qwen3.8-max','fallbackUsed':False,'finishReason':'stop',
+  return io.BytesIO(json.dumps({'success':True,'content':'raw','model':'qwen3.7-plus','fallbackUsed':False,'finishReason':'stop',
    'videoPolicy':make_expected_attestation(json.loads(req.data))}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  def ack(value):receipts.append(value);time.sleep(.02)
@@ -251,7 +251,7 @@ def test_malformed_gateway_metadata_still_retains_content_safely(monkeypatch,met
  from task_server.services.ui_video_stage_receipts import make_expected_attestation
  skill,kw=request('inputs');receipts=[]
  def http(req,timeout):
-  return io.BytesIO(json.dumps({'success':True,'content':'raw','model':'qwen3.8-max','fallbackUsed':False,'finishReason':'stop',
+  return io.BytesIO(json.dumps({'success':True,'content':'raw','model':'qwen3.7-plus','fallbackUsed':False,'finishReason':'stop',
    'videoPolicy':make_expected_attestation(json.loads(req.data)),**metadata}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  if 'usage' in metadata:ai.ai_gateway_skill_content(skill,'pixels',**kw,raw_receipt=receipts.append)
@@ -265,7 +265,7 @@ def test_stage_runtime_trace_excludes_arbitrary_provider_fields(monkeypatch):
  from task_server.services.ui_video_stage_receipts import make_expected_attestation
  skill,kw=request('inputs');trace={}
  def http(req,timeout):
-  return io.BytesIO(json.dumps({'success':True,'content':'raw','model':'qwen3.8-max','fallbackUsed':False,'finishReason':'stop',
+  return io.BytesIO(json.dumps({'success':True,'content':'raw','model':'qwen3.7-plus','fallbackUsed':False,'finishReason':'stop',
    'fallbackReason':'private provider body','usage':{'thoughts':'private reasoning','totalTokens':4},
    'videoPolicy':make_expected_attestation(json.loads(req.data))}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
@@ -343,7 +343,7 @@ def test_run_skill_preserves_raw_content_but_rejects_private_attestation(monkeyp
   else:attestation[root]=value
   originals.append(copy.deepcopy(attestation))
   return io.BytesIO(json.dumps({'success':True,'content':'ORIGINAL provider content 中文',
-   'model':'qwen3.8-max','fallbackUsed':False,'finishReason':'stop','videoPolicy':attestation}).encode())
+   'model':'qwen3.7-plus','fallbackUsed':False,'finishReason':'stop','videoPolicy':attestation}).encode())
  monkeypatch.setattr(ai.urllib.request,'urlopen',http)
  with pytest.raises(RuntimeError) as error:
   ai.run_ai_skill(skill,payload,**kw,retry_count=0,runtime_trace=trace,raw_receipt=receipts.append)
@@ -496,12 +496,12 @@ def test_semantic_flash_literal_options_hash_and_raw_before_admission(monkeypatc
 
 def test_closed_stage_models_versions_and_caps_remain_literal():
  assert policy.STAGES=={
-  'timeline':('ui_video_timeline','v1','whole-timeline','qwen3.8-max',10000),
-  'grounding':('ui_video_trajectory','observe','whole-trajectory','qwen3.8-max',10000),
-  'perception':('ui_video_perception','v1','whole-perception','qwen3.8-max',8192),
+  'timeline':('ui_video_timeline','v1','whole-timeline','qwen3.7-plus',10000),
+  'grounding':('ui_video_trajectory','observe','whole-trajectory','qwen3.7-plus',10000),
+  'perception':('ui_video_perception','v1','whole-perception','qwen3.7-plus',8192),
   'overview':('ui_video_trajectory','overview','whole-trajectory','qwen3.8-flash',10000),
   'semantic':('ui_video_trajectory','observe','whole-trajectory','qwen3.8-flash',10000),
-  'audit':('ui_video_trajectory','audit','whole-trajectory','qwen3.8-max',10000),
-  'consolidate':('ui_video_steps','consolidate','whole-consolidate','qwen3.8-max',10000),
-  'outcome':('ui_video_observe','outcome','whole-observe','qwen3.8-max',4000),
-  'inputs':('ui_video_observe','inputs','whole-observe','qwen3.8-max',3000)}
+  'audit':('ui_video_trajectory','audit','whole-trajectory','qwen3.7-plus',10000),
+  'consolidate':('ui_video_steps','consolidate','whole-consolidate','qwen3.7-plus',10000),
+  'outcome':('ui_video_observe','outcome','whole-observe','qwen3.7-plus',4000),
+  'inputs':('ui_video_observe','inputs','whole-observe','qwen3.7-plus',3000)}

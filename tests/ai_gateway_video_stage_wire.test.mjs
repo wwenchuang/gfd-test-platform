@@ -45,16 +45,16 @@ test('invalid stage/scope/schema/role/image combinations fail before provider di
  const b=input();delete b.videoStage;b.outputSchema=schema();assert.throws(()=>complete(b),/video_/);
 });
 test('stages require official exact stage model route',()=>{
- for(const stage of ['perception','semantic','audit']) for(const change of [{model:stage==='semantic'?'qwen3.8-max':'qwen3.8-flash'},
+ for(const stage of ['perception','semantic','audit']) for(const change of [{model:stage==='semantic'?'qwen3.7-plus':'qwen3.8-flash'},
  {baseUrl:'https://example.com/v1'},{baseUrl:'http://dashscope.aliyuncs.com/v1'},
  {baseUrl:'https://dashscope.aliyuncs.com@evil.example/v1'},{baseUrl:'https://dashscope.aliyuncs.com.evil.example/v1'}])
   assert.throws(()=>complete(input(stage),{...route,...change}),/video_.*route/);
 });
 test('actual /ai/skill forwards capabilities, no fallback, and actual route/usage trace',async()=>{
  for(const stage of ['perception','semantic','audit']) {
-  const b=input(stage);b.providerId='primary';b.fallbackModelConfig={providerId:'backup',model:'qwen3.8-max'};
+  const b=input(stage);b.providerId='primary';b.fallbackModelConfig={providerId:'backup',model:'qwen3.7-plus'};
   const run=orchestration(),response=await run.request(b);
-  assert.equal(run.calls.length,1);assert.equal(response.model,stage==='semantic'?'qwen3.8-flash':'qwen3.8-max');assert.equal(response.providerId,'primary');
+  assert.equal(run.calls.length,1);assert.equal(response.model,stage==='semantic'?'qwen3.8-flash':'qwen3.7-plus');assert.equal(response.providerId,'primary');
   assert.equal(response.fallbackUsed,false);assert.equal(response.finishReason,'stop');assert.equal(response.usage.totalTokens,3);
   assert.equal(run.calls[0].options.max_tokens,stage==='perception'?8192:10000);
   assert.equal(response.videoPolicy.effective_options.max_tokens,stage==='perception'?8192:10000);
@@ -114,7 +114,7 @@ test('new stage audit logs contain only completion metadata, no request or respo
  assert.equal(run.logs.length,1);
  assert.equal(run.logs[0].inputPreview,'[video stage content omitted]');
  assert.equal(run.logs[0].outputPreview,'[video stage content omitted]');
- assert.equal(run.logs[0].model,'qwen3.8-max');assert.equal(run.logs[0].finishReason,'stop');
+ assert.equal(run.logs[0].model,'qwen3.7-plus');assert.equal(run.logs[0].finishReason,'stop');
 });
 
 test('new perception skill cannot silently use generic image truncation without stage',()=>{
@@ -123,7 +123,7 @@ test('new perception skill cannot silently use generic image truncation without 
 
 test('representative legacy final wire remains exactly unchanged',()=>{
  const b={skillName:'ordinary_skill',payload:{unchanged:true},jsonResponse:true,imageAssets:[],maxTokens:321};
- assert.deepEqual(complete(b),{model:'qwen3.8-max',messages:[{role:'system',content:'pixels'},
+ assert.deepEqual(complete(b),{model:'qwen3.7-plus',messages:[{role:'system',content:'pixels'},
   {role:'user',content:`请根据以下 JSON 输入完成任务：\n${JSON.stringify({action:'chat',input:b},null,2)}`}],
   temperature:.1,max_tokens:321,response_format:{type:'json_object'},enable_thinking:false});
 });
@@ -187,9 +187,9 @@ test('exact version and policy metadata cannot be inferred from phase',()=>{
 
 test('seven exact stage policies attest actual canonical provider options',async()=>{
  const configs={overview:['ui_video_trajectory','overview','whole-trajectory',10000,'qwen3.8-flash'],
- consolidate:['ui_video_steps','consolidate','whole-consolidate',10000,'qwen3.8-max'],
- outcome:['ui_video_observe','outcome','whole-observe',4000,'qwen3.8-max'],
- inputs:['ui_video_observe','inputs','whole-observe',3000,'qwen3.8-max']};
+ consolidate:['ui_video_steps','consolidate','whole-consolidate',10000,'qwen3.7-plus'],
+ outcome:['ui_video_observe','outcome','whole-observe',4000,'qwen3.7-plus'],
+ inputs:['ui_video_observe','inputs','whole-observe',3000,'qwen3.7-plus']};
  for(const [stage,[skill,version,phase,tokens,model]] of Object.entries(configs)) {
   const b=input('audit');delete b.payload.perception_mode;delete b.payload.perception_frame_ids;
   Object.assign(b,{videoStage:stage,skillName:skill,skillVersion:version,model});b.payload.phase=phase;
@@ -274,7 +274,7 @@ function finalFrameInput(role) {
 for(const role of ['owned','context'])test(`actual perception handler accepts exact decoder frame-end as ${role}`,async()=>{
  const b=finalFrameInput(role),before=JSON.stringify(b),run=orchestration();
  const response=await run.request(b);
- assert.equal(run.calls.length,1);assert.equal(response.model,'qwen3.8-max');
+ assert.equal(run.calls.length,1);assert.equal(response.model,'qwen3.7-plus');
  assert.deepEqual(Array.from(response.videoPolicy.effective_options.fine_frame_ids),b.imageAssets.map(a=>a.name));
  const parts=run.calls[0].options.messages[1].content;
  assert.equal(parts.filter(p=>p.type==='image_url').length,3);
@@ -355,15 +355,15 @@ test('actual strict audit dispatch attests exact schema and no fallback/retry',a
 
 // Closed policy: callers may supply budget hints, but cannot alter final wire.
 const reasoningStages={
- timeline:['ui_video_timeline','v1','whole-timeline','qwen3.8-max',10000,1024],
- perception:['ui_video_perception','v1','whole-perception','qwen3.8-max',8192,undefined],
+ timeline:['ui_video_timeline','v1','whole-timeline','qwen3.7-plus',10000,1024],
+ perception:['ui_video_perception','v1','whole-perception','qwen3.7-plus',8192,undefined],
  overview:['ui_video_trajectory','overview','whole-trajectory','qwen3.8-flash',10000,1024],
  semantic:['ui_video_trajectory','observe','whole-trajectory','qwen3.8-flash',10000,1024],
- grounding:['ui_video_trajectory','observe','whole-trajectory','qwen3.8-max',10000,2048],
- audit:['ui_video_trajectory','audit','whole-trajectory','qwen3.8-max',10000,2048],
- consolidate:['ui_video_steps','consolidate','whole-consolidate','qwen3.8-max',10000,1024],
- outcome:['ui_video_observe','outcome','whole-observe','qwen3.8-max',4000,1024],
- inputs:['ui_video_observe','inputs','whole-observe','qwen3.8-max',3000,1024],
+ grounding:['ui_video_trajectory','observe','whole-trajectory','qwen3.7-plus',10000,2048],
+ audit:['ui_video_trajectory','audit','whole-trajectory','qwen3.7-plus',10000,2048],
+ consolidate:['ui_video_steps','consolidate','whole-consolidate','qwen3.7-plus',10000,1024],
+ outcome:['ui_video_observe','outcome','whole-observe','qwen3.7-plus',4000,1024],
+ inputs:['ui_video_observe','inputs','whole-observe','qwen3.7-plus',3000,1024],
 };
 for(const [stage,[skill,version,phase,model,tokens,budget]] of Object.entries(reasoningStages))
  test(`closed ${stage} reasoning budget reaches actual orchestration and attestation`,async()=>{

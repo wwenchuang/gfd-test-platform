@@ -53,7 +53,7 @@ def test_skill_strict_audit_wire_and_options(monkeypatch):
     assert expected_provider_options(body)['response_format'] == dict(type='json_schema', json_schema=dict(name='video_audit', strict=True, schema=schema))
     assert receipts[0]['videoPolicy']['output_schema_sha256'] == canonical_sha(schema)
     assert receipts[0]['videoPolicy']['effective_options']['response_format'] == 'json_schema'
-    assert body['model'] == 'qwen3.8-max' and body['fallbackModelConfig'] == {}
+    assert body['model'] == 'qwen3.7-plus' and body['fallbackModelConfig'] == {}
 
 
 def test_authentic_captured_wrong_shape_typed_and_raw_preserved(monkeypatch):

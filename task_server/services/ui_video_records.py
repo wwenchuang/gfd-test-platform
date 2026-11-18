@@ -96,7 +96,7 @@ def safe_record(kind, value):
     out = {'content': value['content'], 'gateway_request_sha256': value['gateway_request_sha256']}
     # IDs are policy metadata, never arbitrary provider strings/actor IDs.
     out['providerId'] = value.get('providerId') if value.get('providerId') in ('official', 'qwen_plus') else None
-    out['model'] = value.get('model') if value.get('model') in ('qwen3.8-max', 'qwen3.8-flash') else None
+    out['model'] = value.get('model') if value.get('model') in ('qwen3.7-plus', 'qwen3.8-max', 'qwen3.8-flash') else None
     out['fallbackUsed'] = value.get('fallbackUsed') if type(value.get('fallbackUsed')) is bool else None
     out['finishReason'] = value.get('finishReason') if type(value.get('finishReason')) is str and value['finishReason'] in {'stop', 'length', 'content_filter', 'tool_calls', 'function_call', ''} else None
     usage = value.get('usage')

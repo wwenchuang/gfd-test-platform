@@ -2,7 +2,7 @@ import pytest
 from task_server.services import ai_skill_service as ai
 
 
-@pytest.mark.parametrize('model',['qwen3.8-max','qwen3.8-flash'])
+@pytest.mark.parametrize('model',['qwen3.7-plus','qwen3.8-max','qwen3.8-flash'])
 def test_direct_bounded_trajectory_reasoning_uses_constant_budget(monkeypatch,model):
     monkeypatch.setattr(ai,'dashscope_model_for_images',lambda _:model)
     monkeypatch.setattr(ai,'dashscope_base_url',lambda:'https://dashscope.aliyuncs.com/compatible-mode/v1')
@@ -14,7 +14,7 @@ def test_direct_bounded_trajectory_reasoning_uses_constant_budget(monkeypatch,mo
     ('qwen3.8-max','https://dashscope.aliyuncs.com/v1',False,True),
     ('qwen3.8-max','https://example.com/v1',True,True),
     ('qwen3.8-max','https://dashscope.aliyuncs.com.evil.example/v1',True,True),
-    ('qwen3.7-plus','https://dashscope.aliyuncs.com/v1',True,True),
+    ('qwen3.6-plus','https://dashscope.aliyuncs.com/v1',True,True),
     ('qwen3.8-unknown','https://dashscope.aliyuncs.com/v1',True,True),
     ('qwen3.8-max','https://dashscope.aliyuncs.com/v1','true',True),
     ('qwen3.8-max','https://dashscope.aliyuncs.com/v1',True,False),

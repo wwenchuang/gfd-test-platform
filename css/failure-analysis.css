@@ -1,0 +1,36 @@
+.failure-analysis{--fa-bg:#10171d;--fa-panel:#182229;--fa-line:#34474f;--fa-mint:#83ebcb;--fa-muted:#afc0c9;background:var(--fa-bg);color:#edf5f4;border:1px solid var(--fa-line);border-radius:12px;padding:20px;margin:16px 0;min-width:0;font:14px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+.failure-analysis *{box-sizing:border-box}
+.failure-analysis .failure-analysis-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.failure-analysis .failure-analysis-head h3{margin:3px 0 6px;font-size:20px;color:#edf5f4;line-height:1.4}
+.failure-analysis .failure-analysis-head p{margin:0;color:var(--fa-muted);font-size:13px}
+.failure-analysis .failure-analysis-head .failure-analysis-eyebrow{color:var(--fa-mint);font-size:11px;font-weight:650;letter-spacing:.08em}
+.failure-analysis [data-analysis-status]{flex:none;color:var(--fa-mint);background:#1d3532;border:1px solid #39574e;border-radius:6px;padding:3px 9px;font-size:12px}
+.failure-analysis [data-analysis-status][data-state=failed],.failure-analysis [data-analysis-status][data-state=limited],.failure-analysis [data-analysis-status][data-state=interrupted]{color:#f3ce8b;background:#332d21;border-color:#655039}
+.failure-analysis .failure-analysis-actions{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 10px}
+.failure-analysis button{border:1px solid #486069;border-radius:6px;padding:7px 12px;background:#1d2c33;color:#e2eeef;font:inherit;font-size:13px;cursor:pointer;box-shadow:none}
+.failure-analysis button:hover:not(:disabled){background:#29423f;border-color:var(--fa-mint)}
+.failure-analysis [data-analysis-start]{background:var(--fa-mint);border-color:var(--fa-mint);color:#12352b;font-weight:650}
+.failure-analysis button:disabled{opacity:.5;cursor:default}
+.failure-analysis button:focus-visible,.failure-analysis summary:focus-visible,.failure-analysis a:focus-visible{outline:2px solid var(--fa-mint);outline-offset:3px}
+.failure-analysis [hidden]{display:none!important}
+.failure-analysis [data-analysis-meta]{margin:8px 0 14px;color:var(--fa-muted);font-size:12px}
+.failure-analysis [data-analysis-error]{color:#ffd1bc;background:#3c2826;border-left:3px solid #d89277;padding:8px 12px}
+.failure-analysis .failure-analysis-section{min-width:0;padding:14px;background:var(--fa-panel);border:1px solid var(--fa-line);border-radius:8px;margin-top:12px}
+.failure-analysis h4{font-size:14px;margin:0 0 8px;color:#e5f5f0;font-weight:650}
+.failure-analysis p{margin:6px 0}
+.failure-analysis .failure-analysis-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.failure-analysis ul{padding-left:18px;margin:6px 0}
+.failure-analysis li+li{margin-top:10px}
+.failure-analysis .failure-analysis-note,.failure-analysis .failure-analysis-empty{font-size:12px;color:var(--fa-muted)}
+.failure-analysis .failure-analysis-missing{border-left:3px solid #c8a66a}
+.failure-analysis button.failure-analysis-ref{display:inline-block;font-size:11px;line-height:1.5;color:#aff0da;background:#213b38;border-color:#386057;padding:2px 7px;margin:3px 5px 0 0;text-align:left}
+.failure-analysis .failure-analysis-evidence,.failure-analysis .failure-analysis-trace{border-top:1px solid var(--fa-line);margin-top:8px;padding-top:8px;color:#ccdadf}
+.failure-analysis summary{font-size:12px;cursor:pointer;color:#c2ded6;line-height:1.7}
+.failure-analysis pre{font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:280px;padding:10px;background:#0d151a;border:1px solid #2a3a43;border-radius:5px;margin:10px 0;color:#cbd8dc}
+.failure-analysis a{font-size:12px;color:var(--fa-mint);text-decoration:underline}
+.execution-detail-evidence>.failure-analysis{margin-top:0}
+@media(max-width:1000px){.failure-analysis .failure-analysis-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.failure-analysis{padding:14px}.failure-analysis .failure-analysis-head{flex-direction:column;gap:10px}.failure-analysis .failure-analysis-head h3{font-size:18px}.failure-analysis .failure-analysis-section{padding:12px}}
+.failure-analysis .failure-analysis-missing-code{margin:4px 0 0;border:0;padding:0;color:var(--fa-muted)}
+.failure-analysis .failure-analysis-missing-code summary{font-size:11px;color:var(--fa-muted)}
+.failure-analysis .failure-analysis-missing-code code{display:block;margin-top:4px;font-size:11px;overflow-wrap:anywhere}

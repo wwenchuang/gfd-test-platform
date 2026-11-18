@@ -58,7 +58,7 @@ test('explicit invalid scoped modes fail rather than silently degrading',()=>{
 
 test('fine detail cannot broaden route or protocol support',()=>{
   for(const change of [
-    {model:'qwen3.8-flash'},{model:'qwen3.7-plus'},{model:'QWEN3.8-MAX'},
+    {model:'qwen3.8-flash'},{model:'qwen3.6-plus'},{model:'QWEN3.8-MAX'},
     {baseUrl:'http://dashscope.aliyuncs.com/v1'}, {baseUrl:'https://example.com/v1'},
     {baseUrl:'https://dashscope.aliyuncs.com.evil.example/v1'},
     {baseUrl:'https://dashscope.aliyuncs.com@evil.example/v1'},

@@ -7,6 +7,7 @@ import { executionMetrics, executionTypeLabel, hasLoadedCaseEvidence } from '../
 import CaseResultList from './CaseResultList.vue'
 import ReportSummary from './ReportSummary.vue'
 import CaseEvidence from './CaseEvidence.vue'
+import FailureAnalysisPanel from './FailureAnalysisPanel.vue'
 
 const props = defineProps<{ execution: ExecutionView; initialCaseId?: string; loadingCaseKeys?: string[]; caseEvidenceErrors?: Record<string, string> }>()
 const emit = defineEmits<{ close: []; edit: [result: ExecutionCaseResult, execution: ExecutionView]; rerunCase: [result: ExecutionCaseResult, execution: ExecutionView]; loadEvidence: [result: ExecutionCaseResult] }>()
@@ -107,6 +108,7 @@ function handleKeydown(event: KeyboardEvent): void {
         <CaseResultList :results="execution.case_results" :active-id="active?.execution_case_id" @select="active = $event" />
       </div>
       <div ref="evidencePane" class="execution-detail-evidence" role="region" aria-label="当前用例证据" tabindex="0">
+        <FailureAnalysisPanel :run-id="execution.id" />
         <CaseEvidence v-if="active" :result="active" :loading="loadingCaseKeys?.includes(evidenceKey(active))" :error="caseEvidenceErrors?.[evidenceKey(active)]" @retry="emit('loadEvidence', $event)" @edit="emit('edit', $event, execution)" @rerun="emit('rerunCase', $event, execution)" />
       </div>
     </div>

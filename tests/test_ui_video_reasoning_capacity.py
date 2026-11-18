@@ -15,15 +15,15 @@ from test_ui_video_business_transport import native
 
 # Deliberately literal: agreement between implementations alone cannot prove this policy.
 POLICIES = [
-    ('timeline', 'ui_video_timeline', 'v1', 'qwen3.8-max', 10000, 1024),
-    ('perception', 'ui_video_perception', 'v1', 'qwen3.8-max', 8192, None),
+    ('timeline', 'ui_video_timeline', 'v1', 'qwen3.7-plus', 10000, 1024),
+    ('perception', 'ui_video_perception', 'v1', 'qwen3.7-plus', 8192, None),
     ('overview', 'ui_video_trajectory', 'overview', 'qwen3.8-flash', 10000, 1024),
     ('semantic', 'ui_video_trajectory', 'observe', 'qwen3.8-flash', 10000, 1024),
-    ('grounding', 'ui_video_trajectory', 'observe', 'qwen3.8-max', 10000, 2048),
-    ('audit', 'ui_video_trajectory', 'audit', 'qwen3.8-max', 10000, 2048),
-    ('consolidate', 'ui_video_steps', 'consolidate', 'qwen3.8-max', 10000, 1024),
-    ('outcome', 'ui_video_observe', 'outcome', 'qwen3.8-max', 4000, 1024),
-    ('inputs', 'ui_video_observe', 'inputs', 'qwen3.8-max', 3000, 1024),
+    ('grounding', 'ui_video_trajectory', 'observe', 'qwen3.7-plus', 10000, 2048),
+    ('audit', 'ui_video_trajectory', 'audit', 'qwen3.7-plus', 10000, 2048),
+    ('consolidate', 'ui_video_steps', 'consolidate', 'qwen3.7-plus', 10000, 1024),
+    ('outcome', 'ui_video_observe', 'outcome', 'qwen3.7-plus', 4000, 1024),
+    ('inputs', 'ui_video_observe', 'inputs', 'qwen3.7-plus', 3000, 1024),
 ]
 
 
@@ -135,7 +135,7 @@ def test_wrong_stage_budget_receipted_before_admission(monkeypatch, stage, budge
         proof = make_expected_attestation(body)
         proof['effective_options']['thinking_budget'] = budget
         proof['provider_options_sha256'] = digest(options)
-        return io.BytesIO(json.dumps(dict(success=True, content='untouched raw output', model='qwen3.8-max',
+        return io.BytesIO(json.dumps(dict(success=True, content='untouched raw output', model='qwen3.7-plus',
             fallbackUsed=False, finishReason='stop', videoPolicy=proof)).encode())
     monkeypatch.setattr(ai.urllib.request, 'urlopen', http)
     with pytest.raises(RuntimeError, match='^video_stage_attestation_invalid$'):

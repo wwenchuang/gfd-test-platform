@@ -322,6 +322,11 @@ if [ -d "${SRC_DIR}/task_server" ]; then
   find "${APP_DIR}/task_server" -type f -exec chmod 0644 {} \;
 fi
 
+if [ -f "${SRC_DIR}/tools/failure_agent_acceptance.py" ]; then
+  install -d -m 0755 "${APP_DIR}/tools"
+  install -m 0644 "${SRC_DIR}/tools/failure_agent_acceptance.py" "${APP_DIR}/tools/failure_agent_acceptance.py"
+fi
+
 # Stdio runs independently with its own pinned npm dependencies.
 if [ -f "${SRC_DIR}/scripts/week12_triage/review.py" ]; then
   install -d -m 0755 "${APP_DIR}/scripts/week12_triage"

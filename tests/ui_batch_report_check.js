@@ -254,3 +254,15 @@ test('revoked report access closes replay and invalidates late replay loads',asy
  await f.view.refresh(true);assert.equal(closed,0);
  denied=true;await f.view.refresh(true);assert.equal(closed,1);assert.equal(opened.isCurrent(),false);assert.equal(f.node.querySelector('[data-report-replay]').hidden,true);
 });
+
+test('ordinary test mounts failure investigation without requesting a release report', async t => {
+ const dom=new JSDOM('<main></main>',{url:'http://localhost',runScripts:'dangerously',pretendToBeVisual:true});
+ const w=dom.window,mounts=[],calls=[];let disposed=0;
+ w.FailureAnalysis={mount:(node,options)=>{mounts.push({node,options});return {refresh:()=>{},dispose:()=>{disposed++;}};}};
+ w.eval(fs.readFileSync('js/ui-batch-report.js','utf8'));
+ const view=w.UiBatchReport.mount(w.document.querySelector('main'),{batchId:'uib_example',identity:()=> 'owner',request:async(path,o={})=>{calls.push([path,o.method]);return path.endsWith('/evidence')?{ok:true,artifacts:[]}:{ok:true,report:{status:'not_requested',snapshot:null}};}});
+ t.after(()=>{view.dispose();dom.window.close();});await tick();
+ assert.equal(mounts.length,1);assert.equal(mounts[0].options.source,'ui');assert.equal(mounts[0].options.runId,'uib_example');
+ assert.equal(mounts[0].node.hidden,false);assert.equal(calls.some(([,method])=>method==='POST'),false);
+ view.dispose();assert.equal(disposed,1);
+});

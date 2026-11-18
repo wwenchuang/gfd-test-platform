@@ -9,12 +9,12 @@ const source=fs.readFileSync(new URL('../ai-gateway/server.js',import.meta.url),
 const ctx=vm.createContext({Buffer,createHash});
 vm.runInContext(source.slice(source.indexOf('function requestedCompletionTokens('),source.indexOf('async function appendAiLog('))+
  source.slice(source.indexOf('function buildUserMessage('),source.indexOf('\nfunction assistantOutputText')),ctx);
-const route={model:'qwen3.8-max',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',temperature:.1};
+const route={model:'qwen3.7-plus',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',temperature:.1};
 const system='你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。';
 function input(size=32) {
  const raw=Buffer.alloc(size);raw.write('ftypisom',4);
  return {skillName:'ui_video_timeline',skillVersion:'v1',videoStage:'timeline',jsonResponse:true,prompt:'business',
- timeoutMs:120000,videoDeadlineMs:Date.now()+120000,videoPolicyVersion:'video-stage-policy-v1',videoCorrelation:'a'.repeat(32),model:'qwen3.8-max',
+ timeoutMs:120000,videoDeadlineMs:Date.now()+120000,videoPolicyVersion:'video-stage-policy-v1',videoCorrelation:'a'.repeat(32),model:'qwen3.7-plus',
  payload:{phase:'whole-timeline',video:{source_sha256:createHash('sha256').update(raw).digest('hex'),source_bytes:size,duration_ms:75380,fps:4,max_pixels:655360,total_pixels:268435456}},
  imageAssets:[{name:'source-video',mime:'video/mp4',base64:raw.toString('base64'),timestamp_ms:0,dataUrl:''}]};
 }
@@ -81,7 +81,7 @@ function grounding() {
 }
 test('actual grounding /ai/skill schema narrowing, exact JPEGs and cross-language proof',async()=>{
  const b=grounding(),run=orchestration(),response=await run.request(b),options=run.calls[0].options;
- assert.equal(options.model,'qwen3.8-max');assert.equal(options.response_format.type,'json_schema');
+ assert.equal(options.model,'qwen3.7-plus');assert.equal(options.response_format.type,'json_schema');
  assert.deepEqual(Array.from(options.response_format.json_schema.schema.properties.events.items.properties.target.enum),['visible button']);
  assert.equal(options.messages[1].content.filter(p=>p.type==='image_url').length,2);
  assert.equal(options.messages[1].content.some(p=>p.min_pixels),false);

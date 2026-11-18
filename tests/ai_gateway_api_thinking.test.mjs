@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const source=fs.readFileSync(new URL('../ai-gateway/server.js',import.meta.url),'utf8');
 const part=(from,to)=>source.slice(source.indexOf(from),source.indexOf(to,source.indexOf(from)));
-const official={action:'api_case_generation',model:'qwen3.8-max',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',providerId:'official'};
+const official={action:'api_case_generation',model:'qwen3.7-plus',baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',providerId:'official'};
 const correlation='01234567-89ab-4cde-8fab-0123456789ab';
 
 function completion(body={},route=official){
@@ -63,7 +63,7 @@ test('API logs correlate success and failure without body, output or provider er
  for(const fail of [false,true]){
   const r=runtime([official],fail), body={messages:[{role:'user',content:'secret prompt'}],thinkingMode:'off',correlationId:correlation};
   if(fail) await assert.rejects(r.call(body));else await r.call(body);
-  assert.equal(r.logs.length,1);assert.equal(r.logs[0].correlationId,correlation);
+  assert.equal(r.logs.length,1);assert.equal(r.logs[0].correlationId,correlation);assert.equal(r.logs[0].model,'qwen3.7-plus');
   const line=JSON.stringify(r.logs);for(const secret of ['secret prompt','secret answer','secret provider message'])assert.equal(line.includes(secret),false);
  }
 });

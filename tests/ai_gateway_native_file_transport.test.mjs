@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {spawnSync} from 'node:child_process';
 const source=fs.readFileSync(new URL('../ai-gateway/server.js',import.meta.url),'utf8');
-const model='qwen3.8-max';
+const model='qwen3.7-plus';
 const route={model,baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',temperature:.1};
 const system='你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。';
 function input(size=7500000) {
@@ -18,14 +18,14 @@ function envelope(body) {
  const uri=`oss://dashscope-instant/test/account/${body.videoCorrelation}.mp4`;
  return {version:'dashscope-temporary-original-v1',uri,source_sha256:body.payload.video.source_sha256,source_bytes:body.payload.video.source_bytes,source_md5:createHash('md5').update(Buffer.from(body.imageAssets[0].base64,'base64')).digest('hex'),model,correlation:body.videoCorrelation,resource_reference_sha256:createHash('sha256').update(uri).digest('hex'),uploaded_at_ms:Date.now(),documented_max_lifetime_seconds:172800,private_acl:true,forbid_overwrite:true,resolve_header:'enable'};
 }
-function sandbox({uploadError,abortAfterUpload=false}={}) {
+function sandbox({uploadError,abortAfterUpload=false,resourceModel=model}={}) {
  const uploads=[],calls=[],logs=[];let handler;
  const provider={...route,apiKeyEnv:'QWEN_TEST_MEMORY_ONLY',name:'primary',type:'openai_compatible'};
  const context=vm.createContext({Buffer,createHash,AbortController,setTimeout,clearTimeout,Date,
   DYNAMIC_PROVIDER_PREFIX:'dynamic:',ROUTER_FILE:'offline',AI_CALL_TIMEOUT_MS:120000,AI_CALL_FALLBACK_RESERVE_MS:10000,MOCK_ENABLED:false,SKILL_ACTION_MAP:{},
   process:{env:{QWEN_TEST_MEMORY_ONLY:'sentinel-never-log'}},
   readJson:async()=>({generate_case:{providerId:'primary',fallbackProviderIds:[]}}),readProviders:async()=>({providers:{primary:provider}}),uuidv4:()=> 'offline',appendAiLog:async e=>logs.push(e),sanitizeError:e=>String(e.message),preview:()=>'',asyncRoute:fn=>fn,app:{post:(_p,fn)=>{handler=fn;}},
-  uploadNativeVideo:async options=>{uploads.push(options);if(uploadError)throw new Error(uploadError);const body=context.currentBody;const value=envelope(body);if(abortAfterUpload)context.activeResponse.emit('close');return value;},
+  uploadNativeVideo:async options=>{uploads.push(options);if(uploadError)throw new Error(uploadError);const body=context.currentBody;const value={...envelope(body),model:resourceModel};if(abortAfterUpload)context.activeResponse.emit('close');return value;},
   clientForRoute:()=>({chat:{completions:{create:async (options,requestOptions)=>{calls.push({options,requestOptions});return {model,choices:[{message:{content:'{"scenes":[],"questions":[]}'},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:2,total_tokens:3}};}}}}),
  });
  for(const [start,end] of [['function normalizeLegacyProviderId(','async function discoverProviderChannel('],['function routeFromProviderConfig(','function clientForRoute('],['function requestedCallTimeoutMs(','async function appendAiLog('],['function stripMarkdownFence(','function mockAiOutput('],["app.post('/ai/skill'","app.post('/ai/analyze-failure'"]])vm.runInContext(source.slice(source.indexOf(start),source.indexOf(end)),context);
@@ -52,6 +52,15 @@ test('native file handler uploads original once, resolves resource and attests a
 test('failed upload and cancellation after upload cannot dispatch model or retry',async()=>{
  for(const options of [{uploadError:'video_native_upload_failed'},{abortAfterUpload:true}]){
   const run=sandbox(options);await assert.rejects(run.request(input()),/video_/);assert.equal(run.uploads.length,1);assert.equal(run.calls.length,0);
+ }
+});
+test('live 3.7 request rejects native upload receipts for another or missing model before dispatch',async()=>{
+ for(const resourceModel of ['qwen3.8-max','',null]){
+  const run=sandbox({resourceModel});
+  await assert.rejects(run.request(input()),/video_native_resource_model_invalid/);
+  assert.equal(run.uploads.length,1);assert.equal(run.uploads[0].model,model);
+  assert.equal(run.calls.length,0,'a mismatched upload receipt must never reach the model');
+  assert.equal(run.logs.length,1);assert.equal(run.logs[0].success,false);
  }
 });
 test('caller resource envelope cannot supply the uploaded resource or provider headers',async()=>{

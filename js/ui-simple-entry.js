@@ -99,9 +99,9 @@ function releaseUiSimplePicture(img){
 }
 function uiSimpleReportIntent(){
   const query=new URLSearchParams(window.location.search);
-  if(query.getAll('ui_batch').length!==1||query.getAll('report_revision').length!==1)return null;
+  if(query.getAll('ui_batch').length!==1||query.getAll('report_revision').length>1)return null;
   const batchId=query.get('ui_batch'),revision=query.get('report_revision');
-  return /^uib_[a-f0-9]{32}$/.test(batchId||'')&&/^[a-f0-9]{64}$/.test(revision||'')?{batchId,revision}:null;
+  return /^uib_[a-f0-9]{32}$/.test(batchId||'')&&(revision===null||/^[a-f0-9]{64}$/.test(revision))?{batchId,revision:revision||''}:null;
 }
 function clearUiSimpleReportIntent(expected){
   const current=uiSimpleReportIntent();

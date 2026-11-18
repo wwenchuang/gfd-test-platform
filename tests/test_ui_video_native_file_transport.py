@@ -27,7 +27,7 @@ def body_for(raw, *, file=True):
 def envelope(body):
     raw=base64.b64decode(body['imageAssets'][0]['base64']);uri='oss://dashscope-instant/account/path/'+body['videoCorrelation']+'.mp4'
     return {'version':TRANSPORT,'uri':uri,'source_sha256':hashlib.sha256(raw).hexdigest(),
-        'source_bytes':len(raw),'source_md5':hashlib.md5(raw).hexdigest(),'model':'qwen3.8-max',
+        'source_bytes':len(raw),'source_md5':hashlib.md5(raw).hexdigest(),'model':'qwen3.7-plus',
         'correlation':body['videoCorrelation'],'resource_reference_sha256':hashlib.sha256(uri.encode()).hexdigest(),
         'uploaded_at_ms':int(time.time()*1000),'documented_max_lifetime_seconds':172800,
         'private_acl':True,'forbid_overwrite':True,'resolve_header':'enable'}
@@ -67,7 +67,7 @@ def test_exact_file_wire_policy_and_no_uri_projection():
 @pytest.mark.parametrize('key,value',[
  ('uri','https://evil.example/a'),('uri','oss://dashscope-instant/a/../'+'a'*32+'.mp4'),
  ('uri','oss://dashscope-instant/a/'+'a'*32+'.mp4?secret=x'),('source_sha256','0'*64),
- ('source_bytes',True),('source_md5','0'*32),('model','qwen3.8-flash'),('correlation','b'*32),
+ ('source_bytes',True),('source_md5','0'*32),('model','qwen3.8-flash'),('model','qwen3.8-max'),('correlation','b'*32),
  ('resource_reference_sha256','0'*64),('uploaded_at_ms',0),('uploaded_at_ms',True),
  ('documented_max_lifetime_seconds',172801),('private_acl',1),('forbid_overwrite',False),
  ('resolve_header','disabled'),('extra','secret')])
@@ -109,7 +109,7 @@ def test_maximum_original_crosses_real_owned_ipc_and_durable_receipt(tmp_path,ta
             resource=envelope(body);resources.append(resource)
             policy=proof.make_expected_attestation(body,native_resource=resource)
             if tampered:resource['source_md5']='0'*32
-            response={'success':True,'content':raw_reply,'providerId':'official','model':'qwen3.8-max',
+            response={'success':True,'content':raw_reply,'providerId':'official','model':'qwen3.7-plus',
                 'fallbackUsed':False,'finishReason':'stop','usage':{},'videoPolicy':policy,'nativeResource':resource}
             encoded=json.dumps(response).encode();self.send_response(200)
             self.send_header('Content-Length',str(len(encoded)));self.end_headers();self.wfile.write(encoded)
@@ -264,3 +264,12 @@ def test_upload_absolute_age_bound_with_older_request_deadline(monkeypatch,offse
     else:
         with pytest.raises(RuntimeError,match='video_stage_attestation_invalid'):
             proof.validate_attestation(policy,body,native_resource=resource)
+
+
+def test_current_native_resource_model_must_match_new_stage_before_attesting():
+    body = body_for(source(7499998))
+    resource = envelope(body)
+    resource['model'] = 'qwen3.8-max'
+    assert proof._safe_native_transport(resource)['model'] == 'qwen3.8-max'
+    with pytest.raises(ValueError, match='video_native_resource_invalid'):
+        proof.make_expected_attestation(body, native_resource=resource)

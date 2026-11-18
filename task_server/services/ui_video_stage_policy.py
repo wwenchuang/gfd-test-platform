@@ -8,16 +8,16 @@ import re
 UNSET = object()
 POLICY_VERSION = 'video-stage-policy-v1'
 STAGES = {
-    'timeline': ('ui_video_timeline', 'v1', 'whole-timeline', 'qwen3.8-max', 10000),
-    'perception': ('ui_video_perception', 'v1', 'whole-perception', 'qwen3.8-max', 8192),
+    'timeline': ('ui_video_timeline', 'v1', 'whole-timeline', 'qwen3.7-plus', 10000),
+    'perception': ('ui_video_perception', 'v1', 'whole-perception', 'qwen3.7-plus', 8192),
     'overview': ('ui_video_trajectory', 'overview', 'whole-trajectory', 'qwen3.8-flash', 10000),
     'semantic': ('ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-flash', 10000),
-    'audit': ('ui_video_trajectory', 'audit', 'whole-trajectory', 'qwen3.8-max', 10000),
-    'consolidate': ('ui_video_steps', 'consolidate', 'whole-consolidate', 'qwen3.8-max', 10000),
-    'outcome': ('ui_video_observe', 'outcome', 'whole-observe', 'qwen3.8-max', 4000),
-    'inputs': ('ui_video_observe', 'inputs', 'whole-observe', 'qwen3.8-max', 3000),
+    'audit': ('ui_video_trajectory', 'audit', 'whole-trajectory', 'qwen3.7-plus', 10000),
+    'consolidate': ('ui_video_steps', 'consolidate', 'whole-consolidate', 'qwen3.7-plus', 10000),
+    'outcome': ('ui_video_observe', 'outcome', 'whole-observe', 'qwen3.7-plus', 4000),
+    'inputs': ('ui_video_observe', 'inputs', 'whole-observe', 'qwen3.7-plus', 3000),
     # Existing bank runner resolves observe by first match; semantic must stay first.
-    'grounding': ('ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.8-max', 10000),
+    'grounding': ('ui_video_trajectory', 'observe', 'whole-trajectory', 'qwen3.7-plus', 10000),
 }
 _SEMANTIC_FIELDS = {'states', 'events', 'checks', 'uncertainties', 'multiple_scenarios'}
 

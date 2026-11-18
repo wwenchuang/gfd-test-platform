@@ -74,7 +74,7 @@ for(const value of [undefined,0,7,-1,true,'7',1.5,11,null])test(`cached token re
 test('legacy actual skill visual text-first and no-image options remain exact',async()=>{
  const {orchestration}=await helpers;
  const base={skillName:'ordinary_skill',payload:{unchanged:true},jsonResponse:true,maxTokens:321};
- const expected={model:'qwen3.8-max',temperature:.1,max_tokens:321,response_format:{type:'json_object'},enable_thinking:false};
+ const expected={model:'qwen3.7-plus',temperature:.1,max_tokens:321,response_format:{type:'json_object'},enable_thinking:false};
  for(const imageAssets of [[],[{name:'legacy',timestamp_ms:0,mime:'image/jpeg',base64:'YQ=='}]]) {
   const b={...base,imageAssets},run=orchestration();await run.request(b,'complete legacy prompt');
   const content=imageAssets.length?[{type:'text',text:'complete legacy prompt'},{type:'image_url',image_url:{url:'data:image/jpeg;base64,YQ=='}}]:'complete legacy prompt';

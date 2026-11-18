@@ -141,3 +141,12 @@ test('policy body transport failure is optional but malformed JSON stays hard', 
   assert.equal(calls, 1);
  }
 });
+
+test('3.7 Plus native upload policy and receipt use the selected model while retaining 3.8 compatibility',async()=>{
+ const {uploadNativeVideo}=await mod();
+ for(const model of ['qwen3.7-plus','qwen3.8-max']){
+  const calls=[];const result=await uploadNativeVideo({...args(),model,fetchImpl:successfulFetch(calls)});
+  assert.equal(new URL(calls[0].url).searchParams.get('model'),model);
+  assert.equal(result.model,model);
+ }
+});

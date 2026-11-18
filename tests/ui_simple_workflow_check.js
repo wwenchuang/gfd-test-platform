@@ -793,3 +793,10 @@ test('history cards render untrusted titles as text and avoid invented legacy co
  const f=fixture(t,path=>path.startsWith('/ui-executions?')?{ok:true,items:[row]}:undefined);f.mount('reports');await wait();
  const card=f.node.querySelector('.ui-simple-report-row');assert.equal(card.querySelector('img'),null);assert.match(card.textContent,/等 2 条用例/);assert.match(card.textContent,/排队中/);assert.doesNotMatch(card.textContent,/通过 0|undefined|NaN/);
 });
+
+test('closing a revisionless UI execution link abandons the exact retained intent', async t => {
+ const f=fixture(t),closed=[];let options;
+ f.w.UiBatchReport={mount:(node,value)=>{options=value;return {refresh:()=>{},dispose:()=>{}};}};
+ f.mount('reports',{download:()=>{},reportIntent:{batchId:'uib_link',revision:''},onReportClose:value=>closed.push(value)});await wait();
+ options.onClose();assert.deepEqual(JSON.parse(JSON.stringify(closed)),[{batchId:'uib_link',revision:''}]);
+});

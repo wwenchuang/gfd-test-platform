@@ -82,7 +82,7 @@ def test_fine_detail_changes_only_fixed_sibling_pixels(monkeypatch, host, json_r
 
 @pytest.mark.parametrize('model,base', [
     ('qwen3.8-flash', 'https://dashscope.aliyuncs.com/v1'),
-    ('qwen3.7-plus', 'https://dashscope.aliyuncs.com/v1'),
+    ('qwen3.6-plus', 'https://dashscope.aliyuncs.com/v1'),
     ('QWEN3.8-MAX', 'https://dashscope.aliyuncs.com/v1'),
     ('qwen3.8-max', 'http://dashscope.aliyuncs.com/v1'),
     ('qwen3.8-max', 'https://example.com/v1'),

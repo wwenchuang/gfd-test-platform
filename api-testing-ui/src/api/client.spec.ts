@@ -341,3 +341,19 @@ describe('ApiClient', () => {
     })
   })
 })
+
+describe('analysis request lifetime', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('forwards an upstream cancellation from a report to its GET request', async () => {
+    vi.stubGlobal('sessionStorage', { getItem: () => 'session-value' })
+    const upstream = new AbortController()
+    let signal: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn(async (_path, options) => {
+      signal = options.signal
+      upstream.abort()
+      return response(200, { ok: true, task: null })
+    }))
+    await new ApiClient().get('/api/failure-analysis/tasks?id=analysis-1', { signal: upstream.signal })
+    expect(signal?.aborted).toBe(true)
+  })
+})

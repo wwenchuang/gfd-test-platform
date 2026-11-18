@@ -36,10 +36,10 @@
     },
     "qwen_plus": {
       "type": "openai_compatible",
-      "name": "千问 Qwen 3.8 Max",
+      "name": "千问 Qwen 3.7 Plus",
       "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "apiKeyEnv": "QWEN_API_KEY",
-      "model": "qwen3.8-max",
+      "model": "qwen3.7-plus",
       "catalogMode": "static",
       "defaultMaxTokens": 4096,
       "temperatureLocked": false

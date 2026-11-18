@@ -185,3 +185,9 @@ describe('ExecutionDetailDrawer', () => {
     expect(wrapper.emitted('loadEvidence')).toHaveLength(2)
   })
 })
+
+it('embeds failure investigation within the scrollable evidence pane', () => {
+  const wrapper = mount(ExecutionDetailDrawer, { props: { execution } })
+  expect(wrapper.find('.execution-detail-evidence [data-api-failure-analysis]').exists()).toBe(true)
+  wrapper.unmount()
+})

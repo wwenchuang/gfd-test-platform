@@ -198,7 +198,7 @@ def test_audit_rejects_selection_before_transport(monkeypatch,selected):
 def test_receipt_uses_only_safe_usage_fields(monkeypatch):
     p,a=evidence();receipts=[]
     def urlopen(req,timeout):
-        return io.BytesIO(json.dumps({'success':True,'content':'{}','providerId':'official','model':'qwen3.8-max',
+        return io.BytesIO(json.dumps({'success':True,'content':'{}','providerId':'official','model':'qwen3.7-plus',
           'fallbackUsed':False,'finishReason':'stop','usage':{'totalTokens':3,'promptTokens':1,'completionTokens':2,'thoughts':'private','bad':{},'reasoningTokens':-1},'videoPolicy':make_expected_attestation(json.loads(req.data))}).encode())
     monkeypatch.setattr(ai.urllib.request,'urlopen',urlopen)
     ai.ai_gateway_skill_content('ui_video_perception','pixels',payload=p,image_assets=a,video_stage='perception',raw_receipt=receipts.append)
@@ -281,7 +281,7 @@ def test_image_audit_with_empty_trajectory_and_no_fine_selection_is_valid(monkey
                                   {'finishReason':'content_filter'},{'finishReason':''}])
 def test_stage_reply_guard_runs_after_safe_raw_receipt(monkeypatch,change):
     p,a=evidence();receipts=[]
-    response={'success':True,'content':'unparsed raw','providerId':'official','model':'qwen3.8-max',
+    response={'success':True,'content':'unparsed raw','providerId':'official','model':'qwen3.7-plus',
               'fallbackUsed':False,'finishReason':'stop',**change}
     monkeypatch.setattr(ai.urllib.request,'urlopen',lambda req,**kw:io.BytesIO(json.dumps({**response,'videoPolicy':make_expected_attestation(json.loads(req.data))}).encode()))
     with pytest.raises(RuntimeError,match='video_stage_reply_invalid'):
