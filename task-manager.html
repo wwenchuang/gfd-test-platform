@@ -78,6 +78,7 @@
         <button class="workflow-step" data-workflow="ui_library" onclick="activateWorkflow('ui_library')" hidden><span class="workflow-index" aria-hidden="true">☷</span><span class="workflow-main"><span class="workflow-name">用例库</span></span></button>
         <button class="workflow-step" title="查看我发起的 UI 测试与发版报告" data-workflow="ui_reports" onclick="activateWorkflow('ui_reports')" hidden><span class="workflow-index" aria-hidden="true">▤</span><span class="workflow-main"><span class="workflow-name">我的测试</span></span></button>
         <button class="workflow-step" data-workflow="ai_practice" onclick="activateWorkflow('ai_practice')" hidden><span class="workflow-index" aria-hidden="true">✦</span><span class="workflow-main"><span class="workflow-name">测试工作台</span></span></button>
+        <button class="workflow-step" onclick="document.getElementById('ai-billing').showModal()"><span class="workflow-index" aria-hidden="true">¥</span><span class="workflow-main"><span class="workflow-name">AI 费用账单</span></span></button>
         <details data-ui-advanced open><summary>高级工具</summary>
         <!-- Agent -->
         <details class="nav-group" data-nav-group="agent" open>
@@ -1046,5 +1047,14 @@
 <script src="js/ui-simple-entry.js?v=20261118-deep-link-20261111-video-first-pass-tracking-page"></script>
 <script src="js/app.js?v=20260831-identity-20260904-report-evidence-20260921-phone-cards-live-device-auto-status-20260924-platform-audit-round2-v36-step-delete-v37-runner-progress-v1-download-message-v2-report-defects-v1-mindmap-library-v1-ios-preview-20261013-ios-execution-v1-device-select-v2-generation-draft-v3"></script>
 <!-- legacy-static-check: 半自动 Agent 工作台 启动半自动 Agent 半自动 Agent 启动 Agent 进度 Agent 产物 SEMI_AUTO 半自动 AUTO_SAFE 安全自动（后续开放） 自动生成测试用例 自动生成 Midscene YAML 自动校验 YAML 生成后等待确认执行 Sonic 生成飞书缺陷草稿（不自动提交） autoRun: false autoCreateBug: false 执行与 AI 诊断中心 运行轨迹 从失败任务或测试目标出发 模型策略摘要 去模型配置 -->
+<dialog id="ai-billing" aria-labelledby="ai-billing-title" style="background:#152426;color:#edf5f2;border:1px solid #52736d;border-radius:12px;width:min(540px,90vw)">
+  <form method="dialog" style="float:right"><button class="btn">关闭</button></form>
+  <h2 id="ai-billing-title">AI 费用账单</h2>
+  <p>从百炼账单明细导出人民币 CSV，在这里查看每日应付金额。文件仅在当前页面读取。</p>
+  <label>导入账单 <input type="file" id="ai-bill-file" accept=".csv,text/csv"></label>
+  <p role="status" id="ai-bill-status">尚未导入账单</p>
+  <table style="width:100%;text-align:left"><thead><tr><th>日期</th><th>账单明细数</th><th>应付金额（元）</th></tr></thead><tbody id="ai-bill-days"></tbody></table>
+</dialog>
+<script src="js/billing-panel.js"></script>
 </body>
 </html>
