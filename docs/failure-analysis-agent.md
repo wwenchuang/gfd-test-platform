@@ -64,7 +64,17 @@ bash deploy/package-server.sh
 
 页面已分别说明鉴权失败、无模型权限和限流；失败时保存原报告与此前已有的证据。真实模型正确率、生产页面验收以及定时巡检不属于已完成项。
 
-用户随后要求将 `qwen3.8-max` 降一档，当前代码默认统一回到 `qwen3.7-plus`。原有 `qwen3.8-flash` 轻量阶段和旧报告中的实际模型记录保留。平台文本／视觉、网关 provider、原 Max 视频阶段和细节感知能力检查同步更新；Runner 仍使用 `MIDSCENE_MODEL_FAMILY=qwen3`。官方能力依据：[Qwen3.7 Plus](https://help.aliyun.com/zh/model-studio/qwen3-7-plus)、[结构化输出](https://help.aliyun.com/zh/model-studio/qwen-structured-output)。
+### 2026-11-18 接口分析可用与模型鉴权失败的区别
+
+使用现有 Gateway 相同的 SDK、provider 地址和凭证发送最小请求，同样返回 HTTP 401、`invalid_api_key`。运行进程中的 Qwen Key、dotenv 解析结果与 Python 选中 Key 在服务器内比较相等；没有输出 Key。公开健康接口与堡垒机进程 PID 一致。此结果将当前故障定位到所配置凭证与上游鉴权，尚不能区分 Key 失效、撤销或地域错误；降级型号不会修复该类鉴权错误。
+
+- 工作台“已有接口分析与证据”重新检查数据库中保存的执行证据，运行17项固定检查；不调用千问。
+- “生成基础正向用例”按接口定义构造；“接口合同与风险”只填入提示文本。
+- AI 助手“生成测试用例”和报告 AI 失败分析才会发起模型请求；查看已有结果不代表本次请求成功。
+
+现场页面显示的部分完成及3个草稿与11月10日最近保存的AI任务一致。点击重新生成时平台会话过期，新的网页请求尚未验收。不能仅凭用户所说的“接口分析”确定具体按钮，也不能把固定检查成功解释为当前模型调用成功。
+
+按用户要求将 `qwen3.8-max` 降一档，当前代码默认统一回到 `qwen3.7-plus`。原有 `qwen3.8-flash` 轻量阶段和旧报告中的实际模型记录保留。平台文本／视觉、网关 provider、原 Max 视频阶段和细节感知能力检查同步更新；Runner 仍使用 `MIDSCENE_MODEL_FAMILY=qwen3`。官方能力依据：[Qwen3.7 Plus](https://help.aliyun.com/zh/model-studio/qwen3-7-plus)、[结构化输出](https://help.aliyun.com/zh/model-studio/qwen-structured-output)。
 
 同一服务器、同一凭证、同一历史失败报告改用 `qwen3.7-plus` 后再次返回 `model_http_401`，仍没有工具调用。验收记录为 `/var/tmp/failure-analysis-real-qwen37-20261118-r1.json`。此次隔离命令只覆盖该进程的型号，未修改线上进程或重启服务；旧服务器显式模型配置需要部署时一并迁移。
 
