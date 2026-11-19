@@ -33,7 +33,7 @@ def snapshot(workspace, now):
                     raise ValueError('invalid token count')
                 row = days[(stop - timedelta(seconds=1)).date().isoformat()]
                 row[key] = row.get(key, 0) + int(value)
-    return {'updated': now.isoformat(timespec='minutes'), 'through': end.isoformat(timespec='minutes'),
+    return {'workspace': workspace, 'updated': now.isoformat(timespec='minutes'), 'through': end.isoformat(timespec='minutes'),
             'days': [dict(date=date, **counts) for date, counts in reversed(days.items())]}
 
 

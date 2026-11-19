@@ -3,5 +3,6 @@ Description=Sync daily AI bill totals
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/midscene-billing.env
+EnvironmentFile=/etc/midscene-token-usage.env
 ExecStart=/usr/bin/python3 /opt/midscene-task-platform/deploy/billing/sync.py
 TimeoutStartSec=15min

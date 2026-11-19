@@ -6783,6 +6783,16 @@ def get_ai_daily_bill(handler, qs):
         snapshot = json.loads(Path('/var/lib/midscene-billing/token-usage.json').read_text())
     except FileNotFoundError:
         snapshot = None
+    if snapshot and snapshot.get('workspace'):
+        try:
+            costs = json.loads(Path('/var/lib/midscene-billing/token-cost.json').read_text())
+        except FileNotFoundError:
+            costs = {}
+        if costs.get('workspace') == snapshot['workspace']:
+            by_date = {item['date']: item for item in costs['days']}
+            for day in snapshot['days']:
+                item = by_date.get(day['date'], {})
+                day.update(token_cost=item.get('amount'), token_gross=item.get('gross'))
     handler._json({'ok': True, 'bill': snapshot})
 
 

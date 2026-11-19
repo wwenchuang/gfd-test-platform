@@ -1,6 +1,7 @@
 """Publish seven days of Beijing-time BSS daily bills, scoped to one product."""
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timedelta
@@ -9,10 +10,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 
-def daily(day, product, profile):
+def daily(day, product, profile, workspace):
     token = ''
     seen = set()
     total = Decimal(0)
+    gross = Decimal(0)
     count = 0
     while True:
         args = ['aliyun', 'bssopenapi', 'DescribeInstanceBill', '--profile', profile,
@@ -29,16 +31,26 @@ def daily(day, product, profile):
         if isinstance(rows, dict):
             rows = rows['Item']
         for row in rows:
+            parts = row.get('InstanceID', '').split(';')
+            workspace_match = re.search(r'(?<![A-Za-z0-9-])' + re.escape(workspace) + r'(?![A-Za-z0-9-])', row.get('InstanceID', ''))
+            if (not workspace_match or len(parts) < 4
+                    or row.get('ProductDetail') != '百炼大模型推理'
+                    or not re.search(r'_(input|output)_token(_cache)?$', parts[3])):
+                continue
             if row['Currency'] != 'CNY' or row['BillingDate'] != day:
                 raise ValueError('账单币种或日期不符')
             amount = Decimal(str(row['PretaxAmount']))
             if not amount.is_finite():
                 raise ValueError('无效账单金额')
+            original = Decimal(str(row['PretaxGrossAmount']))
+            if not original.is_finite():
+                raise ValueError('无效原价')
+            gross += original
             total += amount
             count += 1
         token = data.get('NextToken')
         if not token:
-            return dict(date=day, amount=str(total) if count else None, count=count)
+            return dict(date=day, amount=str(total) if count else None, gross=str(gross) if count else None, count=count)
         if token in seen:
             raise ValueError('账单分页重复')
         seen.add(token)
@@ -50,11 +62,14 @@ def main():
     profile = os.environ['BILLING_CLI_PROFILE']
     if not product.strip() or not profile.strip():
         raise ValueError('账单配置为空')
-    days = [daily((now.date()-timedelta(days=i)).isoformat(), product, profile) for i in range(7)]
-    target = Path('/var/lib/midscene-billing/daily.json')
+    workspace = os.environ['BAILIAN_WORKSPACE_ID'].strip()
+    if not workspace:
+        raise ValueError('缺少工作空间')
+    days = [daily((now.date()-timedelta(days=i)).isoformat(), product, profile, workspace) for i in range(7)]
+    target = Path('/var/lib/midscene-billing/token-cost.json')
     target.parent.mkdir(exist_ok=True)
     with tempfile.NamedTemporaryFile('w', dir=target.parent, delete=False) as file:
-        json.dump(dict(updated=now.isoformat(timespec='minutes'), days=days), file)
+        json.dump(dict(workspace=workspace, updated=now.isoformat(timespec='minutes'), days=days), file)
     os.chmod(file.name, 0o644)
     os.replace(file.name, target)
 

@@ -2,7 +2,7 @@ async function showBillingPage() {
   const host = document.getElementById('editor-area');
   const page = document.createElement('section');
   page.className = 'billing-page';
-  page.innerHTML = `<header><div><h1>Token 用量</h1><p>百炼北京工作空间 · 实时推理 · 最近 7 天</p></div><button type="button">刷新</button></header>
+  page.innerHTML = `<header><div><h1>Token 用量与费用</h1><p>百炼北京工作空间 · 实时推理 · 最近 7 天</p></div><button type="button">刷新</button></header>
     <section class="billing-sheet"><div class="billing-sheet-head"><h2>每日 Token 用量</h2><small></small></div>
     <div class="billing-state" role="status">正在读取用量…</div></section>`;
   host.replaceChildren(page);
@@ -19,11 +19,11 @@ async function showBillingPage() {
       return;
     }
     const table = document.createElement('table');
-    table.innerHTML = '<thead><tr><th>日期</th><th>输入 Token</th><th>输出 Token</th><th>总 Token</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>日期</th><th>输入 Token</th><th>输出 Token</th><th>总 Token</th><th>Token 原价（元）</th><th>抵扣后应付（元）</th></tr></thead>';
     const body = table.createTBody();
     for (const day of bill.days) {
       const row = body.insertRow();
-      for (const value of [day.date, ...['input_tokens','output_tokens','total_tokens'].map(key => day[key]?.toLocaleString('zh-CN') ?? '暂无数据')]) row.insertCell().textContent = value;
+      for (const value of [day.date, ...['input_tokens','output_tokens','total_tokens'].map(key => day[key]?.toLocaleString('zh-CN') ?? '暂无数据'), day.token_gross ?? '待同步', day.token_cost ?? '待同步']) row.insertCell().textContent = value;
     }
     page.querySelector('small').textContent = '统计截至 ' + bill.through;
     state.replaceWith(table);
