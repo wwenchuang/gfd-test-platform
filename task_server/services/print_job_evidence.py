@@ -19,16 +19,17 @@ SELECT j.created_at,j.finished_at,j.status INTO @start,@end,@status
 FROM print3d.print_job j JOIN print3d.devices d ON d.sn=j.device_sn
 WHERE j.sn=@job AND d.mac IN (@mac,'{colon_mac}');
 SELECT JSON_OBJECT('source','print3d.print_job','id',@job,'time',COALESCE(@end,@start),'created_at',@start,'finished_at',@end,'stage',@status,'match','任务号与设备')
-WHERE @start IS NOT NULL;
+FROM DUAL WHERE @start IS NOT NULL;
 SELECT JSON_OBJECT('source','print3d_gcp.iot_downs','id',id,'time',created_at,'stage',cmd_code,'match','设备与请求号')
 FROM print3d_gcp.iot_downs WHERE @start IS NOT NULL AND device_id=@mac AND request_id=@job
 AND cmd_code='print' ORDER BY id LIMIT 10;
 SELECT JSON_OBJECT('source','print3d_gcp.iot_ups','id',id,'time',created_at,
 'stage',CONCAT(content->>'$.operation','/',content->>'$.status'),'match','设备与请求号')
 FROM print3d_gcp.iot_ups WHERE @start IS NOT NULL AND device_id=@mac AND request_id=@job
+AND created_at BETWEEN @start AND LEAST(COALESCE(@end,NOW()),@start+INTERVAL 24 HOUR)
 AND IF(JSON_VALID(content),JSON_UNQUOTE(JSON_EXTRACT(content,'$.operation')),NULL) IN ('download','print')
 AND IF(JSON_VALID(content),JSON_UNQUOTE(JSON_EXTRACT(content,'$.status')),NULL) IN ('started','completed','failed')
-ORDER BY id LIMIT 50;
+ORDER BY created_at,id LIMIT 50;
 SELECT JSON_OBJECT('source','print3d_gcp.iot_ups','id',id,'time',created_at,
 'stage','PowerLoss','match','同设备、结束前后两分钟；物理原因待核实')
 FROM print3d_gcp.iot_ups WHERE device_id=@mac AND created_at BETWEEN
@@ -38,7 +39,7 @@ ORDER BY created_at,id LIMIT 1;
 ROLLBACK;
 """
     output = subprocess.run(
-        ['mysql', '--defaults-file=' + str(Path.home() / '.print-patrol-qa.cnf'), '--ssl-mode=REQUIRED',
+        ['mysql', '--defaults-file=' + '/opt/midscene-auth/print-patrol-qa.cnf', '--ssl-mode=REQUIRED',
          '--connect-timeout=4', '--batch', '--skip-column-names'],
         env=dict(os.environ, MYSQL_TEST_LOGIN_FILE="/dev/null"), input=sql, text=True, capture_output=True, timeout=18, check=True)
     return [json.loads(line) for line in output.stdout.splitlines() if line]
