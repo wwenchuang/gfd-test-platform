@@ -6,6 +6,7 @@ import copy
 import json
 import os
 import re
+import subprocess
 import uuid
 from collections.abc import Mapping
 from datetime import date, datetime
@@ -261,6 +262,26 @@ class EvidenceSource:
         self._api_case(case_id)
         def missing(reason):
             return self._finish({'evidence': [], 'missing': [reason]})
+
+        # Operator-owned bindings associate an authorized case with its QA device/job.
+        # Never accept device or job selectors supplied by the model.
+        bindings = os.environ.get('MIDSCENE_PRINT_CASE_BINDINGS')
+        if bindings:
+            from .print_job_evidence import read_events
+            try:
+                key = '/'.join(map(str, (run['project_id'], run['environment_revision_id'],
+                                         self.run_id, case_id)))
+                reference = json.loads(bindings).get(key)
+                if reference:
+                    rows = read_events(reference['machine'], reference['job'])
+                    evidence = [self._evidence('device_logs', case_id, row['stage'], row)
+                                for row in rows]
+                    for item, row in zip(evidence, rows):
+                        item['id'] += ':' + row['source'] + ':' + str(row['id'])
+                    return self._finish({'evidence': evidence, 'missing': [] if rows else
+                                         ['测试库未找到匹配设备和任务的记录。']})
+            except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError, KeyError):
+                return missing('测试库取证失败，请检查服务账号连接与报告绑定。')
 
         if os.environ.get('MIDSCENE_DEVICE_LOG_VIEW_ENABLED') != '1':
             return missing('尚未接入设备日志只读视图。')
