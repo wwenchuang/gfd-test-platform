@@ -43,6 +43,13 @@ def _scan_once(*, settings=None):
     for schedule_id in LoadScheduleService(factory).dispatch_due():
         advance_load_schedule.delay(schedule_id)
     dispatched = ScheduledJobService(factory, enqueue=_enqueue_execution).dispatch_due()
+    patrol_jobs = os.getenv('MIDSCENE_AGENT_PATROL_JOB_IDS', '')
+    if patrol_jobs.strip():
+        from .services.agent_patrol import scan
+        try:
+            scan(factory, [item.strip() for item in patrol_jobs.split(',') if item.strip()])
+        except Exception:
+            logger.exception("Scheduled failure investigation scan failed")
     if dispatched:
         logger.info("API testing scheduler dispatched due jobs count=%s", len(dispatched))
     else:

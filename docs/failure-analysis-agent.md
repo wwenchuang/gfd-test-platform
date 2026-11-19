@@ -97,3 +97,7 @@ sudo bash deploy/install-server.sh
 ### 打印机事件日志接入
 
 接口失败报告可按执行用例读取设备事件。接入约定为平台数据库中的只读视图 agent_device_log_events，默认关闭。数据提供方应在视图中按真实打印任务、故障时设备归属和用例关联，只暴露该报告读者可见的已脱敏事件。项目、执行环境修订、执行记录、执行用例四个字段分别为 project_id、environment_revision_id、execution_id、execution_case_id。事件字段为 event_id、event_time、stage、error_code。stage 为状态名称，error_code 为错误码；禁止把原始日志正文、账号、手机号或凭证塞入这两个字段。记录号应稳定，时间需带时区。准备好视图后为平台服务配置 MIDSCENE_DEVICE_LOG_VIEW_ENABLED=1。缺少视图、缺少记录、读取失败均不支持推断设备离线。
+
+### 每日回归自动调查
+
+在 API scheduler 进程环境变量 MIDSCENE_AGENT_PATROL_JOB_IDS 中配置希望巡检的定时任务 ID，多个用逗号分隔。调度器使用与报告服务相同的身份库和调查存储路径，以及已授权的模型配置。每次扫描最近 24 小时结束的最多 100 份报告，选择指定计划自动触发、已完成且含失败或异常用例的执行。以执行发起者当前权限读取报告，结果可由该账号在已有报告详情打开。已存在调查则复用；用户正在分析其他报告时下轮再检查。此入口会产生模型用量。
