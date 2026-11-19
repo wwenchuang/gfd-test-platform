@@ -39,6 +39,12 @@ const canRerunActive = computed(() => Boolean(props.active && terminalStates.has
 const caseLabels = computed(() => Object.fromEntries((props.active?.case_results || []).map(result => [result.execution_case_id, result.case_name || result.endpoint_summary || result.path])))
 const metrics = computed(() => props.active ? executionMetrics(props.active) : null)
 const buckets = computed(() => props.active ? executionFailureBuckets(props.active) : null)
+const patrol = computed(() => props.active?.summary?.agent_patrol as unknown as
+  {message: string; 上次执行: string | null; 对比明细: Record<string, {本次用例: string[]}[]>} | undefined)
+function patrolCases(rows: {本次用例: string[]}[]) {
+  const ids = new Set(rows.flatMap(row => row.本次用例))
+  return props.active?.case_results.filter(row => ids.has(row.execution_case_id)) || []
+}
 const reportCounts = computed(() => {
   const results = props.active?.case_results || []
   return {
@@ -258,6 +264,13 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
           <div><button v-if="connectionState === 'failed'" class="secondary-command" type="button" @click="emit('reconnect', active.id)"><RotateCw :size="14" />重新连接日志</button><button v-if="running" class="secondary-command" type="button" @click="emit('cancel', active.id)"><Square :size="14" />取消</button><button v-else-if="canRerunActive" data-testid="rerun-active-execution" class="primary-command" type="button" @click="emit('rerun', active)"><RotateCw :size="14" />重新执行此记录</button></div>
         </div>
         <ExecutionOverview :execution="active" />
+        <section v-if="patrol" class="panel" aria-label="主动巡检通知">
+          <header class="panel-header"><h2>{{ patrol.message }}</h2>
+            <a v-if="patrol.上次执行" :href="'#/runs?executionId=' + encodeURIComponent(patrol.上次执行)">上次执行</a></header>
+          <template v-for="(rows, category) in patrol.对比明细" :key="category">
+            <button v-for="item in patrolCases(rows)" :key="item.execution_case_id" class="secondary-command" @click="selectCase(item)">{{ category }} · {{ item.case_name || item.path }} · 查看证据</button>
+          </template>
+        </section>
         <nav class="execution-tabs" aria-label="执行详情视图">
           <button type="button" :class="{ active: tab === 'trace' }" @click="tab = 'trace'">实时轨迹</button>
           <button data-testid="execution-tab-cases" type="button" :class="{ active: tab === 'cases' }" @click="openCases">用例明细</button>

@@ -42,6 +42,8 @@ def publish(factory, run_id, username, job_ids, analysis):
         notice = db.scalar(select(ApiExecutionEvent).where(ApiExecutionEvent.execution_id == run_id,
                 ApiExecutionEvent.event_type == 'agent_patrol_notice').limit(1))
         if notice and (not analysis or notice.payload.get('调查编号') == analysis.get('id')):
+            if not (run.summary or {}).get('agent_patrol'):
+                run.summary = {**(run.summary or {}), 'agent_patrol': notice.payload}
             return
         job = db.scalar(select(ApiScheduledJobRun.job_id).where(ApiScheduledJobRun.execution_id == run_id,
             ApiScheduledJobRun.trigger_type == 'schedule', ApiScheduledJobRun.job_id.in_(job_ids)))
@@ -62,6 +64,7 @@ def publish(factory, run_id, username, job_ids, analysis):
         payload = dict(message=message, 对比明细=groups,
             上次执行=prior, 本次执行=run_id, 调查状态=analysis['status'] if analysis else '本次无失败',
             调查编号=analysis.get('id') if analysis else None)
+        run.summary = {**(run.summary or {}), 'agent_patrol': payload}
         if notice:
             notice.payload = payload
         else:
