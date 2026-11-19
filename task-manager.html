@@ -78,7 +78,7 @@
         <button class="workflow-step" data-workflow="ui_library" onclick="activateWorkflow('ui_library')" hidden><span class="workflow-index" aria-hidden="true">☷</span><span class="workflow-main"><span class="workflow-name">用例库</span></span></button>
         <button class="workflow-step" title="查看我发起的 UI 测试与发版报告" data-workflow="ui_reports" onclick="activateWorkflow('ui_reports')" hidden><span class="workflow-index" aria-hidden="true">▤</span><span class="workflow-main"><span class="workflow-name">我的测试</span></span></button>
         <button class="workflow-step" data-workflow="ai_practice" onclick="activateWorkflow('ai_practice')" hidden><span class="workflow-index" aria-hidden="true">✦</span><span class="workflow-main"><span class="workflow-name">测试工作台</span></span></button>
-        <button class="workflow-step" onclick="document.getElementById('ai-billing').showModal()"><span class="workflow-index" aria-hidden="true">¥</span><span class="workflow-main"><span class="workflow-name">AI 费用账单</span></span></button>
+        <button class="workflow-step" onclick="openAiBilling()"><span class="workflow-index" aria-hidden="true">¥</span><span class="workflow-main"><span class="workflow-name">AI 费用账单</span></span></button>
         <details data-ui-advanced open><summary>高级工具</summary>
         <!-- Agent -->
         <details class="nav-group" data-nav-group="agent" open>
@@ -1050,6 +1050,7 @@
 <dialog id="ai-billing" aria-labelledby="ai-billing-title" style="background:#152426;color:#edf5f2;border:1px solid #52736d;border-radius:12px;width:min(540px,90vw)">
   <form method="dialog" style="float:right"><button class="btn">关闭</button></form>
   <h2 id="ai-billing-title">AI 费用账单</h2>
+  <p id="ai-bill-sync" role="status"></p><div id="ai-bill-cloud"></div>
   <p>从百炼账单明细导出人民币 CSV，在这里查看每日应付金额。文件仅在当前页面读取。</p>
   <label>导入账单 <input type="file" id="ai-bill-file" accept=".csv,text/csv"></label>
   <p role="status" id="ai-bill-status">尚未导入账单</p>

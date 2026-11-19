@@ -474,6 +474,11 @@ def prepare_request_access(handler, method, path, qs):
     if not profile:
         handler._json({"ok": False, "error": "登录已失效，请重新登录", "code": "unauthorized"}, 401)
         return True
+    if path == '/api/platform/ai-billing' and method in {'GET', 'HEAD'}:
+        if not profile.get('is_superuser') or profile.get('must_change_password'):
+            handler._json({'ok': False, 'error': '仅平台管理员可查看同步账单'}, 403)
+            return True
+        return False
     # The investigation service checks the bound API project/environment or UI
     # batch on every request. A UI-only main policy cannot authorize both kinds.
     if ((path == '/api/failure-analysis/tasks' and method in {'GET', 'HEAD', 'POST'}) or

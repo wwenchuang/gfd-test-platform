@@ -6775,6 +6775,17 @@ def _post_ui_execution_confirm_stop(handler, qs, match):
         handler._json({"ok": True, "batch": batch})
 
 
+@route_get('/api/platform/ai-billing')
+def get_ai_daily_bill(handler, qs):
+    from pathlib import Path
+    import json
+    try:
+        snapshot = json.loads(Path('/var/lib/midscene-billing/daily.json').read_text())
+    except FileNotFoundError:
+        snapshot = None
+    handler._json({'ok': True, 'bill': snapshot})
+
+
 from task_server.requirement_design_http import register_routes as register_requirement_design_routes
 register_requirement_design_routes(route_get, route_post)
 from task_server.failure_analysis_http import register_routes as register_failure_analysis_routes

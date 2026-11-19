@@ -55,3 +55,29 @@ if (typeof document !== 'undefined') {
     } catch (error) { status.textContent = '导入失败：' + error.message + '。保留上次结果。'; }
   });
 }
+
+async function openAiBilling() {
+  const dialog = document.querySelector('#ai-billing');
+  const status = dialog.querySelector('#ai-bill-sync');
+  const cloud = dialog.querySelector('#ai-bill-cloud');
+  cloud.replaceChildren();
+  dialog.showModal();
+  status.textContent = '正在读取最近七天的云账单…';
+  try {
+    const response = await fetch('/api/platform/ai-billing', {
+      headers: {Authorization: 'Bearer ' + (sessionStorage.getItem('sessionToken') || '')},
+      cache: 'no-store'
+    });
+    if (!response.ok) throw Error(response.status === 403 ? '同步账单仅管理员可查看' : '读取云账单失败');
+    const {bill} = await response.json();
+    if (!bill) { status.textContent = '等待首次账单同步'; return; }
+    status.textContent = '最近七天 · 应付金额 · 上次同步 ' + bill.updated;
+    const list = document.createElement('ul');
+    for (const day of bill.days) {
+      const line = document.createElement('li');
+      line.textContent = day.date + '　' + (day.amount === null ? '暂无账单明细' : day.amount + ' 元（' + day.count + ' 条）');
+      list.append(line);
+    }
+    cloud.append(list);
+  } catch (e) { status.textContent = e.message; }
+}
