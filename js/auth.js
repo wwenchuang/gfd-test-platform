@@ -99,6 +99,7 @@ const WORKFLOW_PERMISSIONS = {
 };
 
 function canAccessWorkflow(key) {
+  if (key === "ai_billing") return currentAccessProfile?.is_superuser === true;
   if (key === 'mobile_tracking') {
     const apps=currentAccessProfile?.scope?.ui_apps;
     return hasPermission('ui.view') && (currentAccessProfile?.is_superuser===true || apps==='*' || (Array.isArray(apps)&&apps.includes('com.kfb.model')));

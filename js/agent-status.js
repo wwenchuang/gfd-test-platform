@@ -2442,6 +2442,7 @@ function updateNavigationBadges() {
 function renderActiveWorkflowPage(options = {}) {
   if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow)) return showUiSimpleWorkflow();
   if (activeWorkflow === 'mobile_tracking') return window.MobileTrackingPage.mount();
+  if (activeWorkflow === 'ai_billing') { showBillingPage(); return true; }
   if (activeWorkflow === 'ai_practice') return showAiPractice();
   if (activeWorkflow === 'operation_history') return showOperationHistory(options) || true;
   if (activeWorkflow === 'identity') return showIdentityManagement() || true;
@@ -2578,6 +2579,7 @@ async function activateWorkflow(sectionKey) {
   applyLazyLoadForSection(activeWorkflow);
   if (typeof isUiSimpleWorkflow === 'function' && isUiSimpleWorkflow(activeWorkflow)) { showUiSimpleWorkflow(); return; }
   if (activeWorkflow === 'mobile_tracking') { window.MobileTrackingPage.mount(); return; }
+  if (activeWorkflow === 'ai_billing') { showBillingPage(); return; }
   if (activeWorkflow === 'ai_practice') { showAiPractice(); return; }
   if (keepFileContext) {
     document.getElementById('toolbar-help').textContent = '当前 YAML 已保留；编辑后先保存，再选择单条调试或整文件执行。';

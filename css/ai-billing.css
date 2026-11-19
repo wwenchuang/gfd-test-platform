@@ -1,0 +1,16 @@
+.billing-page {box-sizing:border-box;width:100%;max-width:1080px;margin:0 auto;padding:clamp(18px,4vw,48px);color:#e6f2ef;text-align:left}
+.billing-page header,.billing-sheet-head {display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.billing-page h1 {margin:0;font-size:28px;line-height:1.35}
+.billing-page p,.billing-page small {color:#aac0bb;margin:6px 0 0;font-size:14px}
+.billing-page button {border:1px solid #41675e;border-radius:8px;background:#193630;color:#c4f2e4;padding:8px 16px;cursor:pointer}
+.billing-page button:focus-visible {outline:2px solid #7bdfbc;outline-offset:3px}
+.billing-sheet {margin-top:26px;border:1px solid #304743;border-radius:14px;background:#142220;overflow:hidden}
+.billing-sheet-head {padding:18px 22px;border-bottom:1px solid #304743}
+.billing-sheet h2 {font-size:16px;margin:0}
+.billing-state {padding:44px 22px;text-align:center;line-height:1.6}
+.billing-state strong {font-size:18px}
+.billing-page table {width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.billing-page th,.billing-page td {padding:12px clamp(8px,2vw,22px);text-align:right;border-bottom:1px solid #293c38}
+.billing-page th {font-size:13px;color:#a9c0b9}
+.billing-page :is(th,td):first-child {text-align:left}
+.billing-page tbody tr:last-child td {border-bottom:0}
