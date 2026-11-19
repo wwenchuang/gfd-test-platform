@@ -297,6 +297,12 @@ class EvidenceSource:
                     ApiExecutionCase.status.in_(_FAILED_API)).order_by(ApiExecutionCase.ordinal).limit(CASE_LIMIT + 1)).mappings().all()
             for row in rows[:CASE_LIMIT]:
                 if secrets is None:
+                    # Only bounded server categories and counts may cross this boundary.
+                    failures = [a for a in (row['assertions'] or []) if isinstance(a, dict) and a.get('passed') is False]
+                    kinds = sorted({a['type'] for a in failures if isinstance(a.get('type'), str)
+                                    and a['type'] in {'json_path', 'business_code', 'status_code', 'json_schema'}})
+                    data = {'status': row['status'], 'failed_assertion_count': len(failures), 'assertion_types': kinds}
+                    result['evidence'].append(self._evidence('failed_steps', row['case_id'], '用例失败断言统计', data))
                     result['cases'].append({'case_id': row['case_id'], 'name': 'API 用例', 'status': row['status']})
                     continue
                 assertions = row['assertions'] if isinstance(row['assertions'], list) else []

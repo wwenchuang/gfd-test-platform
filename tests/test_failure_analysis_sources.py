@@ -188,7 +188,8 @@ def test_incomplete_secret_context_never_emits_unredacted_free_text(api, monkeyp
         source = adapter()(api.actor, 'api', api.run_id, session_factory=api.factory)
         for result in (source.get_failed_steps(), source.get_request_trace(api.child_id), source.compare_last_pass(api.child_id)):
             assert 'secret_context_incomplete' in result['missing']
-            assert result['evidence'] == []
+            for evidence in result['evidence']:
+                assert set(evidence['data']) == {'status', 'failed_assertion_count', 'assertion_types'}
             assert 'Expected one item' not in json.dumps(result)
 
 

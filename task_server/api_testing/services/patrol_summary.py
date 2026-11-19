@@ -39,8 +39,9 @@ def publish(factory, run_id, username, job_ids, analysis):
         run = repo.get_execution(run_id, for_update=True)
         if not run or not access.resource_allowed(db, run, username):
             return
-        if db.scalar(select(ApiExecutionEvent.id).where(ApiExecutionEvent.execution_id == run_id,
-                ApiExecutionEvent.event_type == 'agent_patrol_notice').limit(1)):
+        notice = db.scalar(select(ApiExecutionEvent).where(ApiExecutionEvent.execution_id == run_id,
+                ApiExecutionEvent.event_type == 'agent_patrol_notice').limit(1))
+        if notice and (not analysis or notice.payload.get('调查编号') == analysis.get('id')):
             return
         job = db.scalar(select(ApiScheduledJobRun.job_id).where(ApiScheduledJobRun.execution_id == run_id,
             ApiScheduledJobRun.trigger_type == 'schedule', ApiScheduledJobRun.job_id.in_(job_ids)))
@@ -58,6 +59,10 @@ def publish(factory, run_id, username, job_ids, analysis):
                 access.resource_predicate(username, ApiExecutionCase))).all()
         groups = compare(cases(run_id), cases(prior) if prior else [])
         message = '回归巡检 · ' + '，'.join(f'{k} {len(v)}' for k,v in groups.items())
-        repo.append_event(run_id, 'agent_patrol_notice', dict(message=message, 对比明细=groups,
+        payload = dict(message=message, 对比明细=groups,
             上次执行=prior, 本次执行=run_id, 调查状态=analysis['status'] if analysis else '本次无失败',
-            调查编号=analysis.get('id') if analysis else None), username)
+            调查编号=analysis.get('id') if analysis else None)
+        if notice:
+            notice.payload = payload
+        else:
+            repo.append_event(run_id, 'agent_patrol_notice', payload, username)
