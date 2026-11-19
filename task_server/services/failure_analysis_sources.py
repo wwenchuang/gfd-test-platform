@@ -4,12 +4,14 @@ No runner, network, report-generation or historical AI-analysis calls belong her
 """
 import copy
 import json
+import os
 import re
 import uuid
 from collections.abc import Mapping
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from task_server.api_testing import access
 from task_server.api_testing.executor import discover_sensitive_values, redact
@@ -250,6 +252,39 @@ class EvidenceSource:
             if 'evidence_output_truncated' not in result['missing']:
                 result['missing'].append('evidence_output_truncated')
         return result
+
+    def get_device_logs(self, case_id):
+        """Read a sanitized, execution-correlated projection in the platform database."""
+        run = self.authorize()
+        if self.source != 'api':
+            return self._finish({'evidence': [], 'missing': ['当前 UI 记录尚未关联打印任务。']})
+        self._api_case(case_id)
+        def missing(reason):
+            return self._finish({'evidence': [], 'missing': [reason]})
+
+        if os.environ.get('MIDSCENE_DEVICE_LOG_VIEW_ENABLED') != '1':
+            return missing('尚未接入设备日志只读视图。')
+        secrets = self._api_secrets(self.run_id)
+        if secrets is None:
+            return missing('缺少完整的脱敏上下文。')
+        query = text("""SELECT event_id, event_time, stage, error_code
+                        FROM agent_device_log_events
+                        WHERE project_id = :project AND environment_revision_id = :environment
+                          AND execution_id = :run AND execution_case_id = :case_id
+                        ORDER BY event_time, event_id LIMIT 26""")
+        try:
+            with self._factory()() as db:
+                rows = db.execute(query, dict(project=run['project_id'],
+                    environment=run['environment_revision_id'], run=self.run_id,
+                    case_id=case_id)).mappings().all()
+        except SQLAlchemyError:
+            return missing('设备日志视图读取失败，请核对连接、视图和只读权限。')
+        if not rows:
+            return missing('未找到与本次用例关联的设备日志，无法确认设备是否收到任务。')
+        records = [dict(row) for row in rows[:25]]
+        return self._finish({'evidence': [self._evidence('device_logs', case_id,
+            '打印任务设备日志', records, secrets=secrets)],
+            'missing': ['仅显示最早的25条设备事件，后续状态待核对。'] if len(rows) > 25 else []})
 
     def get_failed_steps(self):
         run = self.authorize()

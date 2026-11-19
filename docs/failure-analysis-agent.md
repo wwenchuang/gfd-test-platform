@@ -93,3 +93,7 @@ sudo bash deploy/install-server.sh
 迁移只替换指定模型字段的精确旧值 `qwen3.8-max`，保留其他自定义型号和 Key。工具在校验全部输入后生成私有备份、保留文件原权限与所有者；遇到格式错误或缺失文件则停止，重复执行不重复变更。此工具不自动调用模型、不自动重启服务；HTTP 401 仍需单独修复凭证或地域匹配。
 
 最终本地验收：Agent与迁移87项、API Vue组件49项、主平台Node/Chromium249项、Gateway221项、三组静态检查通过；视频协议及本地IPC分组回归通过。旧week9受控浏览器故障演练依赖固定Chromium，本机未安装，未计为通过。实际模型推理、真机执行及部署后网页验收仍须单独记录。
+
+### 打印机事件日志接入
+
+接口失败报告可按执行用例读取设备事件。接入约定为平台数据库中的只读视图 agent_device_log_events，默认关闭。数据提供方应在视图中按真实打印任务、故障时设备归属和用例关联，只暴露该报告读者可见的已脱敏事件。项目、执行环境修订、执行记录、执行用例四个字段分别为 project_id、environment_revision_id、execution_id、execution_case_id。事件字段为 event_id、event_time、stage、error_code。stage 为状态名称，error_code 为错误码；禁止把原始日志正文、账号、手机号或凭证塞入这两个字段。记录号应稳定，时间需带时区。准备好视图后为平台服务配置 MIDSCENE_DEVICE_LOG_VIEW_ENABLED=1。缺少视图、缺少记录、读取失败均不支持推断设备离线。

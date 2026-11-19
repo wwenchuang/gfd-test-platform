@@ -333,3 +333,22 @@ def test_ui_incomplete_input_secret_context_does_not_emit_logs(environment, monk
 def test_invalid_source_and_identifiers_rejected(source, run_id):
     with pytest.raises(ValueError):
         adapter()(ACTORS['b'], source, run_id)
+
+
+def test_device_logs_match_only_authorized_execution(api, monkeypatch):
+    from sqlalchemy import text
+    source = adapter()(api.actor, 'api', api.run_id, session_factory=api.factory)
+    with actor_context(api.actor):
+        monkeypatch.delenv('MIDSCENE_DEVICE_LOG_VIEW_ENABLED', raising=False)
+        assert source.get_device_logs(api.child_id)['missing']
+        monkeypatch.setenv('MIDSCENE_DEVICE_LOG_VIEW_ENABLED', '1')
+        assert source.get_device_logs(api.child_id)['evidence'] == []
+        with api.factory.begin() as db:
+            db.execute(text('CREATE TABLE agent_device_log_events (project_id, environment_revision_id, execution_id, execution_case_id, event_id, event_time, stage, error_code)'))
+            for project in (api.project, 'other-project'):
+                db.execute(text("INSERT INTO agent_device_log_events VALUES (:p,:e,:r,:c,:p,'12:01','received',null)"),
+                           dict(p=project, e=api.revision, r=api.run_id, c=api.child_id))
+        records = source.get_device_logs(api.child_id)['evidence'][0]['data']
+        assert [row['event_id'] for row in records] == [api.project]
+        with pytest.raises(LookupError):
+            source.get_device_logs(uid())
