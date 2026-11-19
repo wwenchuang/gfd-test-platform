@@ -1,5 +1,7 @@
 """Read a QA print job through the service user's named MySQL login."""
 import json
+import os
+from pathlib import Path
 import re
 import subprocess
 
@@ -36,7 +38,49 @@ ORDER BY created_at,id LIMIT 1;
 ROLLBACK;
 """
     output = subprocess.run(
-        ['mysql', '--no-defaults', '--login-path=print-patrol-qa', '--ssl-mode=REQUIRED',
+        ['mysql', '--defaults-file=' + str(Path.home() / '.print-patrol-qa.cnf'), '--ssl-mode=REQUIRED',
          '--connect-timeout=4', '--batch', '--skip-column-names'],
-        input=sql, text=True, capture_output=True, timeout=18, check=True)
+        env=dict(os.environ, MYSQL_TEST_LOGIN_FILE="/dev/null"), input=sql, text=True, capture_output=True, timeout=18, check=True)
     return [json.loads(line) for line in output.stdout.splitlines() if line]
+
+
+class PrintInvestigation:
+    """Standalone print failure, with an operator-bound owner and device."""
+    def __init__(self, actor, job):
+        self.actor = actor
+        self.job = job
+
+    def authorize(self):
+        from .failure_analysis_tasks import _profile
+        _profile(self.actor)
+        config = Path('/opt/midscene-auth/print-investigations.json')
+        if not config.exists():
+            raise LookupError('print_job_unavailable')
+        entry = json.loads(config.read_text()).get(self.job, {})
+        if self.actor['username'] not in entry.get('readers', []):
+            raise PermissionError('print_job_unavailable')
+        return entry['machine']
+
+    def get_failed_steps(self):
+        self.authorize()
+        return {'cases': [{'case_id': self.job, 'name': '测试库打印失败任务，请查设备上下行回执并区分任务号与时间关联'}],
+                'evidence': [], 'missing': []}
+
+    def get_device_logs(self, case_id):
+        machine = self.authorize()
+        if case_id != self.job:
+            raise LookupError('case_not_found')
+        rows = read_events(machine, self.job)
+        self.authorize()
+        return {'evidence': [dict(id=f"{r['source']}:{r['id']}", kind='device_logs',
+                                  title=r['stage'], href=None,
+                                  data=dict(r, device=machine, job=self.job)) for r in rows],
+                'missing': [] if rows else ['设备与业务任务未匹配。']}
+
+    def compare_last_pass(self, case_id):
+        self.authorize()
+        return {'evidence': [], 'missing': ['没有已授权的同条件成功打印任务。']}
+
+    def get_request_trace(self, case_id):
+        self.authorize()
+        return {'evidence': [], 'missing': ['本报告是独立打印任务，请查询 get_device_logs。']}

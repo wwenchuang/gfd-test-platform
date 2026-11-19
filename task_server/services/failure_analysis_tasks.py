@@ -35,6 +35,9 @@ def _profile(actor):
 
 
 def _source(actor, source, run_id):
+    if source == 'print':
+        from .print_job_evidence import PrintInvestigation
+        return PrintInvestigation(actor, run_id)
     from .failure_analysis_sources import EvidenceSource
     return EvidenceSource(actor, source, run_id)
 
@@ -46,7 +49,7 @@ def _investigate(source, **kwargs):
 
 def _bound_source(actor, source, run_id):
     _profile(actor)
-    if source not in ('api', 'ui') or not isinstance(run_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', run_id):
+    if source not in ('api', 'ui', 'print') or not isinstance(run_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', run_id):
         raise ValueError('报告来源或运行编号无效')
     result = _source(actor, source, run_id)
     result.authorize()

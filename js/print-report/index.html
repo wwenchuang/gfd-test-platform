@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>打印任务调查 · 测试工作台</title>
+<link rel="stylesheet" href="/css/failure-analysis.css"><style>body{background:#10171d;color:#e4eeeb;font:16px system-ui;margin:5vh auto;padding:0 24px;max-width:1000px}a{color:#8ce2c4}</style>
+<a href="/task-manager.html">返回测试工作台</a><h1>打印任务调查</h1><p id="job"></p><main id="analysis"></main>
+<script src="/js/utils.js"></script><script src="/js/failure-analysis.js"></script><script>
+const job=new URLSearchParams(location.search).get('job');
+if (/^[0-9]{1,20}$/.test(job)) {
+ document.querySelector('#job').textContent='测试环境 · 任务 '+job;
+ FailureAnalysis.mount(document.querySelector('main'),{source:'print',runId:job,identity:()=>sessionStorage.getItem('sessionToken'),request:apiRequest});
+}
+</script></html>
