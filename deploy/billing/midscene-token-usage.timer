@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh model token usage hourly
+[Timer]
+OnCalendar=hourly
+Persistent=true
+[Install]
+WantedBy=timers.target

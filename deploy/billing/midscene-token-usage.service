@@ -1,0 +1,7 @@
+[Unit]
+Description=Sync Bailian model token usage
+[Service]
+Type=oneshot
+Environment=HOME=/root
+EnvironmentFile=/etc/midscene-token-usage.env
+ExecStart=/usr/bin/python3 /opt/midscene-task-platform/deploy/billing/sync_tokens.py --workspace ${BAILIAN_WORKSPACE_ID} --output /var/lib/midscene-billing/token-usage.json
