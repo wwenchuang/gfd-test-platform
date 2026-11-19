@@ -37,12 +37,15 @@ def scan(factory, job_ids):
         try:
             with actor_context(actor):
                 task = investigations.latest(actor, 'api', run_id)
-                if task or not has_failures:
+                needs_repair = (task and task.get('status') == 'limited' and not task.get('evidence')
+                                and 'secret_context_incomplete' in (task.get('result') or {}).get('missing_evidence', []))
+                if (task and not needs_repair) or not has_failures:
                     if not task or task['status'] not in ('queued', 'running'):
                         from .patrol_summary import publish
                         publish(factory, run_id, username, job_ids, task)
                     continue
-                request_id = uuid.uuid5(uuid.NAMESPACE_URL, 'midscene:regression-patrol:' + run_id)
+                prefix = 'midscene:patrol-safe-stats:' if needs_repair else 'midscene:regression-patrol:'
+                request_id = uuid.uuid5(uuid.NAMESPACE_URL, prefix + run_id)
                 investigations.start(actor, dict(source='api', run_id=run_id, request_id=str(request_id)))
         except (investigations.Busy, PermissionError, LookupError):
             continue
