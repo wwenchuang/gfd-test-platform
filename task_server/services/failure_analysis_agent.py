@@ -208,6 +208,7 @@ def investigate(source, *, model_call=None, progress=None, cancelled=None, timeo
                    'estimate_method': 'weighted_characters'},
                'elapsed_ms': 0, 'model': transport.model_name()}
     messages = [{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': '请调查服务端绑定的本次失败运行，使用可用只读工具获取证据。'}]
+    format_retry = False
     repetitions, ids, tool_count = {}, set(), 0
 
     def emit():
@@ -291,7 +292,15 @@ def investigate(source, *, model_call=None, progress=None, cancelled=None, timeo
                 continue
             if choices[0].get('finish_reason') not in (None, 'stop'):
                 raise InvestigationStop('incomplete_model_output')
-            result = _final_result(message.get('content'), payload['evidence'])
+            try:
+                result = _final_result(message.get('content'), payload['evidence'])
+            except InvestigationStop as exc:
+                if (exc.reason != 'invalid_final_output' or format_retry or not payload['evidence']
+                        or round_index + 1 >= rounds_limit):
+                    raise
+                format_retry = True
+                messages.append({'role': 'user', 'content': '上一份结论格式无效。请直接依据已有工具证据，按系统规定的五个字段重新输出纯 JSON。请求只写路径，不写完整网址；每个事实须引用原证据ID。'})
+                continue
             for missing in payload['result']['missing_evidence']:
                 if missing not in result['missing_evidence']:
                     result['missing_evidence'].append(missing)

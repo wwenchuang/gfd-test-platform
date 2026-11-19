@@ -135,7 +135,7 @@ def test_forged_tools_and_scope_arguments_never_dispatch(agent, tool):
 
 @pytest.mark.parametrize("content, reason", [(answer(refs=["forged"]), "invalid_evidence_references"), (dict(answer(), facts=[{"text": "database definitely destroyed", "evidence_ids": []}]), "invalid_evidence_references"), ("not JSON secret", "invalid_final_output")])
 def test_invalid_final_preserves_collected_evidence_without_success(agent, content, reason):
-    result = agent.investigate(Source(), model_call=Script(response(calls=[call()]), response(content)))
+    result = agent.investigate(Source(), model_call=Script(response(calls=[call()]), response(content), response(content)))
     assert result["status"] == "limited"
     assert result["stop_reason"] == reason
     assert result["result"]["facts"] == []
@@ -261,7 +261,7 @@ def test_large_tool_result_is_bounded_without_losing_prior_evidence(agent):
 def test_model_cannot_supply_external_evidence_links(agent):
     content = answer()
     content["facts"][0]["href"] = "https://evil.test"
-    result = agent.investigate(Source(), model_call=Script(response(calls=[call()]), response(content)))
+    result = agent.investigate(Source(), model_call=Script(response(calls=[call()]), response(content), response(content)))
     assert result["status"] == "limited"
     assert "evil.test" not in json.dumps(result)
 
@@ -431,3 +431,10 @@ def test_twenty_five_chinese_failures_still_reach_model_for_analysis(agent):
     assert result['result']['summary']
     assert len(json.loads(model.inputs[1]['messages'][-1]['content'])['evidence']) == 25
     assert result['usage']['estimate_method'] == 'weighted_characters'
+
+def test_format_retry_reuses_real_evidence(agent):
+    result = agent.investigate(Source(), model_call=Script(response(calls=[call()]),
+                               response("invalid"), response(answer())))
+    assert result["status"] == "completed"
+    assert result["rounds"] == 3
+    assert result["result"]["facts"][0]["evidence_ids"] == ["failure:1"]
