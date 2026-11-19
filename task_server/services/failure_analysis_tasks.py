@@ -226,6 +226,8 @@ def _run(key, _request):
                                (encoded, time.time(), key, time.time()))
             result = _investigate(source, progress=progress, cancelled=cancelled)
             source.authorize()
+            if row['source'] == 'print':
+                source.qualify_result(result)
             progress(result)
             status = result.get('status')
             if status not in TERMINAL:

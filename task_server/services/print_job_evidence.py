@@ -85,3 +85,22 @@ class PrintInvestigation:
     def get_request_trace(self, case_id):
         self.authorize()
         return {'evidence': [], 'missing': ['本报告是独立打印任务，请查询 get_device_logs。']}
+
+    def qualify_result(self, payload):
+        """Anchor observations to typed events; keep causal explanations hypothetical."""
+        if payload['status'] != 'completed':
+            return
+        labels = {'print': '记录了打印指令下发', 'download/started': '设备回报开始下载',
+                  'download/completed': '设备回报下载完成', 'print/started': '设备回报开始打印',
+                  'PowerLoss': '同一设备在任务结束前后两分钟内上报 PowerLoss，按设备与时间关联',
+                  'printFail': '业务任务最终标记为 printFail'}
+        facts = []
+        for item in payload['evidence']:
+            row = item['data']
+            if row['stage'] in labels:
+                facts.append({'text': f"{row['time']}，{labels[row['stage']]}。",
+                              'evidence_ids': [item['id']]})
+        result = payload['result']
+        result['facts'] = facts
+        result['summary'] = ('已核对下列任务记录和设备回执。设备上报的状态可用于定位异常时段，'
+                             '具体物理原因仍待核实。' if facts else '缺少可核对的任务或设备记录。')
