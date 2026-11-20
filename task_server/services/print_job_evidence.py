@@ -57,6 +57,11 @@ SELECT JSON_OBJECT('source','print3d_pmc.iot_downs','id',id,'stage',cmd_code,'ti
 FROM print3d_pmc.iot_downs WHERE device_id='{machine}' AND (request_id='{job}' OR BINARY request_id=BINARY @external)
 AND created_at BETWEEN @start-INTERVAL 1 MINUTE AND LEAST(@updated+INTERVAL 1 MINUTE,@start+INTERVAL 24 HOUR)
 AND cmd_code='print' ORDER BY created_at,id LIMIT 8;
+SELECT JSON_OBJECT('source','print3d_pmc.iot_downs','id',id,'stage','print_command_observed',
+'time',created_at,'request_id',request_id,'match','同设备、创建前后两分钟；请求号为空，任务归属待核实')
+FROM print3d_pmc.iot_downs WHERE device_id='{machine}' AND request_id IS NULL AND cmd_code='print'
+AND created_at BETWEEN @start-INTERVAL 2 MINUTE AND @start+INTERVAL 2 MINUTE
+ORDER BY created_at,id LIMIT 8;
 SELECT JSON_OBJECT('source','print3d_pmc.iot_ups','id',id,'stage',
 CONCAT(content->>'$.operation','/',content->>'$.status'),'time',created_at,
 'request_id',request_id,'match','同设备和任务标识')
@@ -127,7 +132,7 @@ class PrintInvestigation:
         """Anchor observations to typed events; keep causal explanations hypothetical."""
         if payload['status'] != 'completed':
             return
-        labels = {'print': '记录了打印指令下发', 'download/started': '设备回报开始下载',
+        labels = {'print_command_observed': '同设备有打印指令记录，请求号为空，仅按时间关联', 'print': '记录了打印指令下发', 'download/started': '设备回报开始下载',
                   'download/completed': '设备回报下载完成', 'print/started': '设备回报开始打印',
                   'PowerLoss': '同一设备在任务结束前后两分钟内上报 PowerLoss，按设备与时间关联',
                   'printFail': '业务任务最终标记为 printFail'}
@@ -143,7 +148,8 @@ class PrintInvestigation:
         result = payload['result']
         result['facts'] = facts
         if self.production:
-            result['summary'] = '已读取生产库任务与匹配的回执，详见下列已确认事实。' if facts else '缺少可核对的生产记录。'
+            has_receipt = any(item['data']['source'] == 'print3d_pmc.iot_ups' for item in payload['evidence'])
+            result['summary'] = '已核对生产任务及其设备回执。' if has_receipt else '本次未取得按任务标识匹配的设备回执，实际打印结果待核实。'
             return
         result['summary'] = ('已核对下列任务记录和设备回执。设备上报的状态可用于定位异常时段，'
                              '具体物理原因仍待核实。' if facts else '缺少可核对的任务或设备记录。')
