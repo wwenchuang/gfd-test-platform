@@ -38,8 +38,42 @@ AND IF(JSON_VALID(content),JSON_UNQUOTE(JSON_EXTRACT(content,'$.print_state')),N
 ORDER BY created_at,id LIMIT 1;
 ROLLBACK;
 """
+    return _query(sql, 'qa')
+
+
+def read_production_events(machine, job):
+    if not re.fullmatch(r'[0-9A-F]{12}', machine) or not re.fullmatch(r'[0-9]{1,20}', job):
+        raise ValueError('invalid_print_reference')
+    sql = f"""
+SET SESSION MAX_EXECUTION_TIME=3000;
+START TRANSACTION READ ONLY;
+SELECT created_at,updated_at,NULLIF(ext_job_id,'') INTO @start,@updated,@external
+FROM print3d_pmc.devices_print_job WHERE print_sn='{job}' AND device_id='{machine}';
+SELECT JSON_OBJECT('source','print3d_pmc.devices_print_job','id',print_sn,'stage',print_state,
+'time',updated_at,'created_at',created_at,'match','设备和打印任务主键')
+FROM print3d_pmc.devices_print_job WHERE print_sn='{job}' AND device_id='{machine}';
+SELECT JSON_OBJECT('source','print3d_pmc.iot_downs','id',id,'stage',cmd_code,'time',created_at,
+'request_id',request_id,'match','同设备和任务标识')
+FROM print3d_pmc.iot_downs WHERE device_id='{machine}' AND request_id IN ('{job}',@external)
+AND created_at BETWEEN @start-INTERVAL 1 MINUTE AND LEAST(@updated+INTERVAL 1 MINUTE,@start+INTERVAL 24 HOUR)
+AND cmd_code='print' ORDER BY created_at,id LIMIT 8;
+SELECT JSON_OBJECT('source','print3d_pmc.iot_ups','id',id,'stage',
+CONCAT(content->>'$.operation','/',content->>'$.status'),'time',created_at,
+'request_id',request_id,'match','同设备和任务标识')
+FROM print3d_pmc.iot_ups WHERE device_id='{machine}' AND request_id IN ('{job}',@external)
+AND created_at BETWEEN @start-INTERVAL 1 MINUTE AND LEAST(@updated+INTERVAL 1 MINUTE,@start+INTERVAL 24 HOUR)
+AND IF(JSON_VALID(content),content->>'$.operation',NULL) IN ('download','print')
+AND IF(JSON_VALID(content),content->>'$.status',NULL) IN ('started','completed','failed')
+ORDER BY created_at,id LIMIT 40;
+ROLLBACK;
+"""
+    return _query(sql, 'prod')
+
+
+def _query(sql, environment):
+    options = ['--ssl-mode=REQUIRED'] if environment == 'qa' else []
     output = subprocess.run(
-        ['mysql', '--defaults-file=' + '/opt/midscene-auth/print-patrol-qa.cnf', '--ssl-mode=REQUIRED',
+        ['mysql', '--defaults-file=' + f'/opt/midscene-auth/print-patrol-{environment}.cnf', *options,
          '--connect-timeout=4', '--batch', '--skip-column-names'],
         env=dict(os.environ, MYSQL_TEST_LOGIN_FILE="/dev/null"), input=sql, text=True, capture_output=True, timeout=18, check=True)
     return [json.loads(line) for line in output.stdout.splitlines() if line]
@@ -47,14 +81,16 @@ ROLLBACK;
 
 class PrintInvestigation:
     """Standalone print failure, with an operator-bound owner and device."""
-    def __init__(self, actor, job):
+    def __init__(self, actor, job, *, production=False):
+        self.production = production
         self.actor = actor
         self.job = job
 
     def authorize(self):
         from .failure_analysis_tasks import _profile
         _profile(self.actor)
-        config = Path('/opt/midscene-auth/print-investigations.json')
+        name = 'print-investigations-prod.json' if self.production else 'print-investigations.json'
+        config = Path('/opt/midscene-auth') / name
         if not config.exists():
             raise LookupError('print_job_unavailable')
         entry = json.loads(config.read_text()).get(self.job, {})
@@ -64,18 +100,19 @@ class PrintInvestigation:
 
     def get_failed_steps(self):
         self.authorize()
-        return {'cases': [{'case_id': self.job, 'name': '测试库打印失败任务，请查设备上下行回执并区分任务号与时间关联'}],
+        return {'cases': [{'case_id': self.job, 'name': '打印任务调查，请查设备上下行回执。依据实际任务状态判断是否有失败证据。'}],
                 'evidence': [], 'missing': []}
 
     def get_device_logs(self, case_id):
         machine = self.authorize()
         if case_id != self.job:
             raise LookupError('case_not_found')
-        rows = read_events(machine, self.job)
+        read = read_production_events if self.production else read_events
+        rows = read(machine, self.job)
         self.authorize()
         return {'evidence': [dict(id=f"{r['source']}:{r['id']}", kind='device_logs',
                                   title=r['stage'], href=None,
-                                  data=dict(r, device=machine, job=self.job)) for r in rows],
+                                  data=dict(r, device=machine, job=self.job, environment="生产" if self.production else "测试")) for r in rows],
                 'missing': [] if rows else ['设备与业务任务未匹配。']}
 
     def compare_last_pass(self, case_id):
@@ -97,10 +134,16 @@ class PrintInvestigation:
         facts = []
         for item in payload['evidence']:
             row = item['data']
-            if row['stage'] in labels:
+            if self.production and row['source'] == 'print3d_pmc.devices_print_job':
+                facts.append({'text': f"{row['time']}，生产任务表记录状态为 {row['stage']}。",
+                              'evidence_ids': [item['id']]})
+            elif row['stage'] in labels:
                 facts.append({'text': f"{row['time']}，{labels[row['stage']]}。",
                               'evidence_ids': [item['id']]})
         result = payload['result']
         result['facts'] = facts
+        if self.production:
+            result['summary'] = '已读取生产库任务与匹配的回执，详见下列已确认事实。' if facts else '缺少可核对的生产记录。'
+            return
         result['summary'] = ('已核对下列任务记录和设备回执。设备上报的状态可用于定位异常时段，'
                              '具体物理原因仍待核实。' if facts else '缺少可核对的任务或设备记录。')

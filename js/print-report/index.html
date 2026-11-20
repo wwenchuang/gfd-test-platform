@@ -8,9 +8,11 @@ async function reportRequest(path, {method,body,signal}) {
  if (!response.ok) throw Object.assign(new Error(result.error || '调查读取失败'),{status:response.status});
  return result;
 }
-const job=new URLSearchParams(location.search).get('job');
+const params=new URLSearchParams(location.search);
+const job=params.get('job');
+const production=params.get('environment')==='prod';
 if (/^[0-9]{1,20}$/.test(job)) {
- document.querySelector('#job').textContent='测试环境 · 任务 '+job;
- FailureAnalysis.mount(document.querySelector('main'),{source:'print',runId:job,identity:()=>sessionStorage.getItem('sessionToken'),request:reportRequest});
+ document.querySelector('#job').textContent=(production?'生产环境':'测试环境')+' · 任务 '+job;
+ FailureAnalysis.mount(document.querySelector('main'),{source:production?'print_prod':'print',runId:job,identity:()=>sessionStorage.getItem('sessionToken'),request:reportRequest});
 }
 </script></html>

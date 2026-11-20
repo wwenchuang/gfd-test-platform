@@ -35,9 +35,9 @@ def _profile(actor):
 
 
 def _source(actor, source, run_id):
-    if source == 'print':
+    if source in ('print', 'print_prod'):
         from .print_job_evidence import PrintInvestigation
-        return PrintInvestigation(actor, run_id)
+        return PrintInvestigation(actor, run_id, production=source == 'print_prod')
     from .failure_analysis_sources import EvidenceSource
     return EvidenceSource(actor, source, run_id)
 
@@ -49,7 +49,7 @@ def _investigate(source, **kwargs):
 
 def _bound_source(actor, source, run_id):
     _profile(actor)
-    if source not in ('api', 'ui', 'print') or not isinstance(run_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', run_id):
+    if source not in ('api', 'ui', 'print', 'print_prod') or not isinstance(run_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', run_id):
         raise ValueError('报告来源或运行编号无效')
     result = _source(actor, source, run_id)
     result.authorize()
@@ -226,7 +226,7 @@ def _run(key, _request):
                                (encoded, time.time(), key, time.time()))
             result = _investigate(source, progress=progress, cancelled=cancelled)
             source.authorize()
-            if row['source'] == 'print':
+            if row['source'] in ('print', 'print_prod'):
                 source.qualify_result(result)
             progress(result)
             status = result.get('status')
