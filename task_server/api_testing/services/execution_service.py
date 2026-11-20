@@ -1183,6 +1183,8 @@ class ExecutionService:
         if not isinstance(task, dict):
             return None
         rerun_task = {**task, "trigger": "rerun"}
+        if rerun_task.pop("notify_feishu_after_patrol", False):
+            rerun_task["notify_feishu"] = True
         if 0 < selected_count < source_count:
             source_name = str(task.get("name") or "未命名任务").strip()
             scope_suffix = f" · 部分重跑 {selected_count}/{source_count} 条"
@@ -1222,6 +1224,8 @@ class ExecutionService:
             snapshot["trigger"] = trigger.strip()[:32]
         if isinstance(notify_feishu, bool):
             snapshot["notify_feishu"] = notify_feishu
+        if isinstance(task, dict) and task.get("notify_feishu_after_patrol") is True and trigger == "schedule":
+            snapshot["notify_feishu_after_patrol"] = True
         return snapshot
 
     @staticmethod

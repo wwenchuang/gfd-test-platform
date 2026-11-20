@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 from typing import Optional
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse
 
 from sqlalchemy import select
@@ -36,6 +37,12 @@ class NotificationInputError(ValueError):
 
 class NotificationNotConfiguredError(LookupError):
     pass
+
+
+class NotificationDeliveryError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -157,7 +164,7 @@ class NotificationService:
             repository.flush()
             return self._view(project_id, record)
 
-    def send_execution_report(self, execution_id, actor_id):
+    def send_execution_report(self, execution_id, actor_id, *, patrol=False):
         access.require_permission(actor_id, "platform.notify")
         with self.session_factory() as session:
             execution_repository = ExecutionRepository(session)
@@ -184,16 +191,35 @@ class NotificationService:
             webhook = _validate_api_testing_feishu_webhook(
                 decrypt_secret(notification.ciphertext)
             )
-            send_feishu_notification(
-                {"card": self._card(execution, children, metadata)},
-                webhook=webhook,
-            )
+            card = self._card(execution, children, metadata)
+            if patrol:
+                if not self._report_url(execution.id, execution.project_id):
+                    raise NotificationDeliveryError("failed", "未配置执行报告的公开地址")
+                self._send_patrol_card(card, webhook)
+            else:
+                send_feishu_notification({"card": card}, webhook=webhook)
             return NotificationSendView(
                 execution_id=execution.id,
                 channel_type=FEISHU_CHANNEL,
                 sent=True,
                 message="飞书通知已发",
             )
+
+    @staticmethod
+    def _send_patrol_card(card, webhook):
+        try:
+            receipt = send_feishu_notification({"card": card}, webhook=webhook)
+        except HTTPError as error:
+            if error.code in {400, 401, 403, 404, 413, 422, 429}:
+                raise NotificationDeliveryError("failed", f"飞书拒绝卡片（HTTP {error.code}）") from None
+            raise NotificationDeliveryError("unknown", "飞书未返回可确认的送达回执") from None
+        except Exception:
+            raise NotificationDeliveryError("unknown", "发送后未取得可确认的飞书回执") from None
+        code = receipt.get("code", receipt.get("StatusCode")) if isinstance(receipt, dict) else None
+        if type(code) is not int:
+            raise NotificationDeliveryError("unknown", "飞书回执缺少有效业务码")
+        if code != 0:
+            raise NotificationDeliveryError("failed", f"飞书拒绝卡片（业务码 {code}）")
 
     def send_load_test_report(self, run_id, actor_id, report=None):
         """Send a compact performance card without raw samples or credentials."""
@@ -466,6 +492,14 @@ class NotificationService:
             },
             {"tag": "div", "text": {"tag": "lark_md", "content": f"**执行范围：** 共 {total} 条用例"}},
         ]
+        patrol = summary.get("agent_patrol")
+        if isinstance(patrol, dict) and patrol.get("结论"):
+            elements.extend([
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "plain_text", "content": "\n".join([
+                    patrol["message"], "巡检结论：" + patrol["结论"], "下一步：" + patrol["下一步"],
+                ])}},
+            ])
         warnings = metadata.get('response_time_warnings') or {}
         slow = [item for item in children if warnings.get(getattr(item, 'id', ''), {}).get('status') == 'slow']
         if slow:

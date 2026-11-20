@@ -7,6 +7,7 @@ function acceptAuthSession(data) {
   sessionStorage.setItem('user', typeof data.user === 'string' ? data.user : data.profile?.username || '');
   // Older visual fixtures omit profile. An explicit empty profile fails closed.
   currentAccessProfile = Object.hasOwn(data, 'profile') ? (data.profile || {}) : null;
+  window.RegressionPatrol?.reset();
   if (typeof resetOperationHistory === 'function') resetOperationHistory();
   if (typeof resetUiSimpleWorkflow === 'function') resetUiSimpleWorkflow();
   if (typeof refreshTaskWorkbenchAfterSession === 'function') void refreshTaskWorkbenchAfterSession();
@@ -112,6 +113,7 @@ function canAccessWorkflow(key) {
 }
 
 function applyAccessNavigation() {
+  window.RegressionPatrol?.sync();
   document.querySelectorAll('[data-workflow]').forEach(node => {
     node.hidden = node.dataset.workflow === 'generate' ? !hasPermission('ui.edit') : !canAccessWorkflow(node.dataset.workflow);
   });
@@ -129,6 +131,7 @@ function clearAuthSession() {
   sessionStorage.removeItem('user');
   sessionStorage.removeItem('sessionToken');
   currentAccessProfile = null;
+  window.RegressionPatrol?.reset();
   if (typeof resetOperationHistory === 'function') resetOperationHistory();
   if (typeof resetUiSimpleWorkflow === 'function') resetUiSimpleWorkflow();
   if (typeof closeIdentityDialog === 'function') closeIdentityDialog();
@@ -166,7 +169,7 @@ async function showAuthedApp() {
   if (new URLSearchParams(location.search).get('view')==='tracking' && canAccessWorkflow('mobile_tracking')) activeWorkflow='mobile_tracking';
   if (typeof isUiSimpleAvailable === 'function' && isUiSimpleAvailable() && activeWorkflow==='dashboard') activeWorkflow='ui_start';
   if (!canAccessWorkflow(activeWorkflow)) {
-    activeWorkflow = ['dashboard', 'assets', 'identity', 'config', 'feishu_config'].find(canAccessWorkflow) || 'account';
+    activeWorkflow = ['dashboard', 'assets', 'identity', 'config', 'feishu_config', 'ai_practice'].find(canAccessWorkflow) || 'account';
   }
   if (typeof updateWorkbenchPanelMode === 'function') updateWorkbenchPanelMode();
   document.getElementById('toolbar-help').textContent = WORKFLOW_SECTIONS[activeWorkflow]?.help || '';

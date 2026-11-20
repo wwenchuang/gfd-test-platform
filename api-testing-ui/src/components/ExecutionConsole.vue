@@ -40,7 +40,14 @@ const caseLabels = computed(() => Object.fromEntries((props.active?.case_results
 const metrics = computed(() => props.active ? executionMetrics(props.active) : null)
 const buckets = computed(() => props.active ? executionFailureBuckets(props.active) : null)
 const patrol = computed(() => props.active?.summary?.agent_patrol as unknown as
-  {message: string; 上次执行: string | null; 对比明细: Record<string, {本次用例: string[]}[]>} | undefined)
+  {message: string; 结论?: string; 下一步?: string; 上次执行: string | null; 对比明细: Record<string, {本次用例: string[]}[]>} | undefined)
+const patrolDelivery = computed(() => {
+  const receipt = props.active?.summary?.agent_patrol_notification as unknown as { status?: string } | undefined
+  if (!receipt) return ''
+  if (receipt.status === 'sent') return '飞书已接收'
+  if (receipt.status === 'failed') return '飞书发送失败'
+  return '飞书送达待确认'
+})
 function patrolCases(rows: {本次用例: string[]}[]) {
   const ids = new Set(rows.flatMap(row => row.本次用例))
   return props.active?.case_results.filter(row => ids.has(row.execution_case_id)) || []
@@ -267,6 +274,9 @@ function executionRowConclusion(execution: ExecutionView): { label: string; tone
         <section v-if="patrol" class="panel" aria-label="主动巡检通知">
           <header class="panel-header"><h2>{{ patrol.message }}</h2>
             <a v-if="patrol.上次执行" :href="'#/runs?executionId=' + encodeURIComponent(patrol.上次执行)">上次执行</a></header>
+          <p v-if="patrol.结论">{{ patrol.结论 }}</p>
+          <p v-if="patrol.下一步"><strong>建议操作</strong> {{ patrol.下一步 }}</p>
+          <p v-if="patrolDelivery" role="status">{{ patrolDelivery }}</p>
           <template v-for="(rows, category) in patrol.对比明细" :key="category">
             <button v-for="item in patrolCases(rows)" :key="item.execution_case_id" class="secondary-command" @click="selectCase(item)">{{ category }} · {{ item.case_name || item.path }} · 查看证据</button>
           </template>

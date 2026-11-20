@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="css/failure-analysis.css?v=20261118-investigation-1">
 <link rel="stylesheet" href="css/ui-simple.css?v=20261019-replay-v2">
 <link rel="stylesheet" href="css/platform-workbench.css?v=20261015-feedback-v1">
-<link rel="stylesheet" href="css/ui-workbench.css?v=20261110-requirement-design">
+<link rel="stylesheet" href="css/ui-workbench.css?v=20261110-requirement-design-20261120-patrol">
 <link rel="stylesheet" href="css/ui-case-draft.css?v=tracking-receipts-2">
 <link rel="stylesheet" href="css/mobile-tracking-page.css?v=20261113">
 <link rel="stylesheet" href="css/ai-billing.css?v=20261119-page">
@@ -292,6 +292,14 @@
         </div>
       </div>
 
+      <section id="regression-patrol" aria-labelledby="regression-patrol-heading" hidden>
+        <header>
+          <h2 id="regression-patrol-heading">定时回归巡检</h2>
+          <span data-patrol-count></span>
+          <button type="button" class="btn-sm" aria-label="刷新巡检状态">刷新</button>
+        </header>
+        <div data-patrol-results role="status" aria-live="polite"></div>
+      </section>
       <div class="workbench">
         <div class="editor-area" id="editor-area">
           <!-- 动态生成工作流引导或编辑器 -->
@@ -1017,7 +1025,8 @@
 <script src="js/loading-manager.js?v=20261015-feedback-v1"></script>
 <script src="js/form-steps.js?v=20260828-full-platform-ux"></script>
 <script src="js/state.js?v=20260828-full-platform-ux-20260904-report-evidence-20260921-device-auto-status-mindmap-library-v1"></script>
-<script src="js/auth.js?v=20260828-full-platform-ux-20260831-identity-sonic-readonly-20260921-device-auto-status-device-recorder-v1-20260928-history-v1-ui-simple-20261013-20261105-draft-leave-v1-practice-v3-tracking-page-billing-tokens"></script>
+<script src="js/regression-patrol.js?v=20261120-patrol"></script>
+<script src="js/auth.js?v=20260828-full-platform-ux-20260831-identity-sonic-readonly-20260921-device-auto-status-device-recorder-v1-20260928-history-v1-ui-simple-20261013-20261105-draft-leave-v1-practice-v3-tracking-page-billing-tokens-20261120-patrol"></script>
 <script src="js/identity-management.js?v=20260902-a108-workflow-clarity-20260928-history-v1"></script>
 <script src="js/operation-history.js?v=20261014-release-purpose-v1"></script>
 <script src="js/navigation.js?v=20260828-full-platform-ux-20260902-a112-history-save-20261015-navigation-guidance-v1"></script>

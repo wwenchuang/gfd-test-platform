@@ -523,3 +523,78 @@ def test_due_scheduled_job_dispatches_once_per_matching_minute(scheduled_factory
     assert missed == ()
     assert enqueued == [first[0].id]
     assert first[0].task_name == job.name
+
+
+@pytest.mark.parametrize(("receipt", "expected"), [
+    ({"code": 0}, "sent"), ({"StatusCode": 19}, "failed"), ({"ok": True}, "unknown"),
+    (TimeoutError("secret-webhook-in-exception"), "unknown"),
+])
+def test_patrol_delivery_is_claimed_once_and_requires_receipt(
+    scheduled_factory, scheduled_records, monkeypatch, receipt, expected,
+):
+    from sqlalchemy import select
+    from task_server.api_testing.models.execution import ApiExecutionEvent
+    from task_server.api_testing.services import notification_service, patrol_summary
+    from task_server.api_testing.services.execution_service import ExecutionService
+    from task_server.api_testing.services.scheduled_job_service import ScheduledJobService
+    from task_server.api_testing.tasks import _should_send_execution_notification
+
+    dbs = scheduled_factory
+    actor = "owner-a"
+    project = scheduled_records["project"].id
+    job = ScheduledJobService(dbs).create({
+        "project_id": project, "name": "家用业务每日回归", "schedule_type": "daily",
+        "environment_strategy": "fixed_revision", "environment_revision_id": scheduled_records["environment_revision"].id,
+        "target_type": "cases", "target_ids": [scheduled_records["case_version"].id],
+        "enabled": True, "notify_feishu": True,
+    }, actor)
+    sender = notification_service.NotificationService(dbs)
+    monkeypatch.setenv("API_TESTING_REPORT_BASE_URL", "https://report.example.test")
+    sender.save_feishu(project, {"enabled": True, "webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/fixture"}, actor)
+    svc = ScheduledJobService(dbs)
+    monkeypatch.delenv("MIDSCENE_AGENT_PATROL_JOB_IDS", raising=False)
+    historical = svc.run_once(job.id, actor, idempotency_key="before-" + job.id, trigger_type="schedule").id
+    monkeypatch.setenv("MIDSCENE_AGENT_PATROL_JOB_IDS", "other, " + job.id)
+    run_id = svc.run_once(job.id, actor, idempotency_key="after-" + job.id, trigger_type="schedule").id
+    monkeypatch.delenv("MIDSCENE_AGENT_PATROL_JOB_IDS")  # Worker doesn't inherit the scheduler's settings.
+    with dbs.begin() as db:
+        before, run = [db.get(ApiExecution, key) for key in (historical, run_id)]
+        assert _should_send_execution_notification(before)
+        assert not _should_send_execution_notification(run)
+        assert run.request_snapshot["task"]["notify_feishu"] is False  # Also suppresses pre-upgrade workers.
+        rerun = ExecutionService._rerun_task_snapshot(run.request_snapshot["task"], selected_count=1, source_count=1)
+        assert rerun["notify_feishu"] is True and not rerun.get("notify_feishu_after_patrol")
+        for index, entry in enumerate([before, run], start=1):
+            entry.started_at = entry.finished_at = datetime(2026, 11, index)
+            entry.state = "DONE"
+            status = "PASSED" if entry is before else "FAILED"
+            entry.summary = {"total": 1, status.lower(): 1}
+            db.scalar(select(ApiExecutionCase).where(ApiExecutionCase.execution_id == entry.id)).status = status
+    analysis = {"id": "analysis", "status": "completed", "evidence": [{"id": "trace-1"}],
+                "result": {"facts": [{"text": "主请求的业务码断言失败", "evidence_ids": ["trace-1"]}],
+                           "recommendations": [{"text": "核对主请求的预期业务码", "evidence_ids": ["trace-1"]}],
+                           "hypotheses": [{"text": "未经证实的推测"}]}}
+    sent = []
+    def transmit(payload, *, webhook):
+        assert webhook.endswith("/fixture")
+        sent.append(payload)
+        # Another scan occurs after the claim committed, before the first HTTP call returns.
+        patrol_summary.publish(dbs, run_id, actor, [job.id], analysis)
+        if isinstance(receipt, Exception):
+            raise receipt
+        return receipt
+    monkeypatch.setattr(notification_service, "send_feishu_notification", transmit)
+    patrol_summary.publish(dbs, historical, actor, [job.id], None)
+    patrol_summary.publish(dbs, run_id, actor, [job.id], analysis)
+    patrol_summary.publish(dbs, run_id, actor, [job.id], {**analysis, "id": "later-analysis"})
+    assert len(sent) == 1
+    card = json.dumps(sent, ensure_ascii=False)
+    for value in ["新增 1", "重复 0", "恢复 0", "主请求的业务码断言失败", "核对主请求的预期业务码", "execution_id=" + run_id]:
+        assert value in card
+    assert "未经证实的推测" not in card
+    with dbs() as db:
+        delivery = db.get(ApiExecution, run_id).summary["agent_patrol_notification"]
+        events = list(db.scalars(select(ApiExecutionEvent).where(ApiExecutionEvent.execution_id == run_id)))
+        assert delivery["status"] == expected
+        assert delivery["message"] and "secret-webhook" not in str(delivery)
+        assert sum(e.event_type == "agent_patrol_delivery" for e in events) == 1

@@ -20,6 +20,28 @@ const execution: ExecutionView = {
 }
 
 describe('ExecutionConsole', () => {
+  it('shows the patrol conclusion, next action and delivery acknowledgement alongside evidence', async () => {
+    const summary = {
+      ...execution.summary,
+      agent_patrol: {
+        message: '回归巡检 · 重复 1', 上次执行: null, 对比明细: { 重复: [{ 本次用例: ['case-2'] }] },
+        结论: '取消收藏未通过业务断言', 下一步: '核对取消收藏接口的业务码',
+      },
+      agent_patrol_notification: { status: 'unknown', message: '尚未收到飞书回执' },
+    }
+    const wrapper = mount(ExecutionConsole, { props: {
+      executions: [execution], active: { ...execution, summary: summary as unknown as ExecutionView['summary'] },
+      events: [], connectionState: 'complete',
+    } })
+    const panel = wrapper.get('[aria-label="主动巡检通知"]')
+    expect(panel.text()).toContain('取消收藏未通过业务断言')
+    expect(panel.text()).toContain('核对取消收藏接口的业务码')
+    expect(panel.text()).toContain('飞书送达待确认')
+    expect(panel.text()).not.toContain('飞书已接收')
+    await panel.get('button').trigger('click')
+    expect(wrapper.emitted('inspect')?.[0]?.[0]).toMatchObject({ execution_case_id: 'case-2' })
+  })
+
   it('labels a completed historical execution as ended without hiding active connection failures', async () => {
     const wrapper = mount(ExecutionConsole, { props: { executions: [execution], active: execution, events: [], connectionState: 'idle' } })
     expect(wrapper.text()).toContain('执行已结束')

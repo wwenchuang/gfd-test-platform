@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import os
 from typing import Optional
 
 from sqlalchemy import select
@@ -395,6 +396,12 @@ class ScheduledJobService:
                 "trigger": trigger_type,
                 "notify_feishu": bool(job.notify_feishu),
             }
+            if trigger_type == "schedule" and job.notify_feishu:
+                patrol_jobs = os.getenv("MIDSCENE_AGENT_PATROL_JOB_IDS", "").split(",")
+                if job.id in {item.strip() for item in patrol_jobs}:
+                    # Older workers also honor this immediate-send switch during a rolling upgrade.
+                    task["notify_feishu"] = False
+                    task["notify_feishu_after_patrol"] = True
 
         service = ExecutionService(
             self.session_factory,

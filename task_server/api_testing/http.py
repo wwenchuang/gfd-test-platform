@@ -360,6 +360,9 @@ def _get(segments, qs, actor, settings):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
         return {"tasks": _view(TestTaskService(factory).list(project_id, actor))}
+    if segments == ("patrol", "status"):
+        from .services.patrol_status import current_status
+        return current_status(factory, actor, stale_seconds=settings.execution_stale_seconds)
     if segments == ("scheduled-jobs",):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
