@@ -378,15 +378,9 @@ def check_midscene_model_family_protocol():
 
 
 def check_sonic_3d_baseline_regression_guards():
-    sign_yaml = (ROOT / "server-tasks" / "3D打印基线" / "标牌打印.yaml").read_text(encoding="utf-8")
-    zodiac_yaml = (ROOT / "server-tasks" / "3D打印基线" / "十二生肖印章打印.yaml").read_text(encoding="utf-8")
-    nameplate_yaml = (ROOT / "server-tasks" / "3D打印基线" / "姓名牌打印.yaml").read_text(encoding="utf-8")
-    bowling_yaml = (ROOT / "server-tasks" / "3D打印基线" / "OBJ保龄球打印.yaml").read_text(encoding="utf-8")
-    for case_name, source in (("标牌打印", sign_yaml), ("十二生肖印章打印", zodiac_yaml)):
-        require("已离开模型打印预览确认页" in source and "底部不再同时显示「取消打印」和「确认打印」按钮" in source, f"{case_name} must verify cancel-print exit by visible page controls")
-        require("已退出打印流程，页面出现返回按钮或回到模型详情相关页面" not in source, f"{case_name} must not rely on the unstable generic cancel-print assertion")
-    require("模型列表中出现「姓名牌」模型卡片" in nameplate_yaml and "可编辑模型列表中出现「姓名牌」模型卡片" not in nameplate_yaml, "Nameplate baseline must locate the visible card before validating the edit entry")
-    require("底部主按钮仍显示「去打印」" in bowling_yaml and "再次点击底部「去打印」" in bowling_yaml, "OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open")
+    from tests.sonic_yaml_regression_checks import test_published_baselines
+
+    test_published_baselines()
 
 
 def check_agent_failure_ai_payload_has_primary_evidence():

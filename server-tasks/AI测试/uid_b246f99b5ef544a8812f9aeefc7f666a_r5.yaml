@@ -1,0 +1,13 @@
+android: {}
+tasks:
+- name: 我的页面入口跨端验收20261015
+  # baseline.case_id: COM_KFB_MODEL_b399ad26499b
+  # baseline.path: 我的 → 我的设备与打印记录入口
+  flow:
+  - launch: com.kfb.model
+  - aiWaitFor: 底部导航栏右侧可见「我的」
+    timeout: 12000
+  - aiTap: 底部导航栏的「我的」
+  - aiWaitFor: 当前为个人页，显示「我的设备」和「打印记录」
+    timeout: 12000
+  - aiAssert: 「我的」底部标签已选中，个人页同时显示「我的设备」和「打印记录」，页面没有加载失败提示

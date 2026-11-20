@@ -1,0 +1,17 @@
+android: {}
+tasks:
+- name: 智小白3D跨端导航验收
+  # baseline.case_id: COM_KFB_MODEL_4e03b147af27
+  # baseline.path: 我的 → 查看收藏入口 → 返回首页 → 新手必学、AI建模、导入打印
+  flow:
+  - launch: com.kfb.model
+  - aiWaitFor: 底部导航栏右侧可见「我的」
+    timeout: 12000
+  - aiTap: 底部导航栏的「我的」
+  - aiWaitFor: 当前为个人页，显示「我的设备」和「打印记录」
+    timeout: 12000
+  - aiAssert: 个人页有「我的设备」入口和内容区域的「收藏」标签
+  - aiTap: 底部导航栏最左侧的首页图标
+  - aiWaitFor: 首页有「新手必学」区域和「导入打印」入口
+    timeout: 12000
+  - aiAssert: 当前首页同时显示新手必学、AI建模和导入打印；底部首页图标已选中
