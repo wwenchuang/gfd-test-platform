@@ -16,6 +16,7 @@ const staticPaths = new Set([
   '/js/ui-simple-entry.a5a4cffebf79000d.js',
   '/js/ui-practice-results.cd1a9970aa904f16.js',
   '/js/ui-simple-entry.646bd2bdf3e59095.js',
+  '/js/ui-simple-entry.d064736c3a4bc04b.js', '/js/ui-test-home.93b1425323318867.js', '/js/ui-practice-results.12069f2fad35a71b.js',
   '/js/regression-patrol.js', '/css/failure-analysis.css', '/css/mobile-tracking-page.css', '/css/ai-billing.css',
   '/js/failure-analysis.js', '/js/mobile-tracking-source.js', '/js/mobile-tracking-report.js',
   '/js/mobile-tracking-word.js', '/js/mobile-tracking.js', '/js/mobile-tracking-history.js',
