@@ -54,13 +54,13 @@ SELECT JSON_OBJECT('source','print3d_pmc.devices_print_job','id',print_sn,'stage
 FROM print3d_pmc.devices_print_job WHERE print_sn='{job}' AND device_id='{machine}';
 SELECT JSON_OBJECT('source','print3d_pmc.iot_downs','id',id,'stage',cmd_code,'time',created_at,
 'request_id',request_id,'match','同设备和任务标识')
-FROM print3d_pmc.iot_downs WHERE device_id='{machine}' AND request_id IN ('{job}',@external)
+FROM print3d_pmc.iot_downs WHERE device_id='{machine}' AND (request_id='{job}' OR BINARY request_id=BINARY @external)
 AND created_at BETWEEN @start-INTERVAL 1 MINUTE AND LEAST(@updated+INTERVAL 1 MINUTE,@start+INTERVAL 24 HOUR)
 AND cmd_code='print' ORDER BY created_at,id LIMIT 8;
 SELECT JSON_OBJECT('source','print3d_pmc.iot_ups','id',id,'stage',
 CONCAT(content->>'$.operation','/',content->>'$.status'),'time',created_at,
 'request_id',request_id,'match','同设备和任务标识')
-FROM print3d_pmc.iot_ups WHERE device_id='{machine}' AND request_id IN ('{job}',@external)
+FROM print3d_pmc.iot_ups WHERE device_id='{machine}' AND (request_id='{job}' OR BINARY request_id=BINARY @external)
 AND created_at BETWEEN @start-INTERVAL 1 MINUTE AND LEAST(@updated+INTERVAL 1 MINUTE,@start+INTERVAL 24 HOUR)
 AND IF(JSON_VALID(content),content->>'$.operation',NULL) IN ('download','print')
 AND IF(JSON_VALID(content),content->>'$.status',NULL) IN ('started','completed','failed')
