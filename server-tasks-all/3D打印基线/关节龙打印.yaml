@@ -46,7 +46,68 @@ tasks:
       input tap "$((($1+$3)/2))" "$((($2+$4)/2))"; exit $?; fi;
       if tr '>' '\n' < "$file" | grep -F 'text="模型打印预览"' | grep -F 'resource-id="com.kfb.model:id/web_title_tv_middle"' > /dev/null; then exit 0; fi;
       done; exit 1
-  - aiWaitFor: 三维画布中央完整显示盘曲成环的立体关节龙，能看清龙头轮廓和沿弯曲龙身连续的分节。
+  - &dragon_preview_ready
+    runAdbShell: |-
+      # Verify the rendered GCode canvas in two consecutive Android accessibility snapshots.
+      set -eu
+      file=$(mktemp /data/local/tmp/qa-kfb-render.XXXXXX)
+      trap 'rm -f "$file"' EXIT
+      deadline=$(($(date +%s)+210))
+      stable=0
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        : > "$file"
+        uiautomator dump "$file" >/dev/null || exit 1
+        if awk '
+          BEGIN { RS=">" }
+          function attr(key, v) {
+            v=$0; if (!sub(".* " key "=\"", "", v)) return ""
+            sub("\".*", "", v); return v
+          }
+          function coords(box, a) {
+            if (box !~ /^\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]$/) return 0
+            gsub(/[^0-9]+/, " ", box); split(substr(box,2),a," ")
+            return a[3]+0>a[1]+0 && a[4]+0>a[2]+0
+          }
+          /<node / {
+            d++; t=attr("text"); c=attr("class"); id=attr("resource-id"); box=attr("bounds")
+            if (attr("package")!="com.kfb.model") bad=1
+            if (id=="com.kfb.model:id/web_title_tv_middle" && t=="模型打印预览") title++
+            if (c=="android.webkit.WebView" && t=="GCode 查看器 - 3D打印文件预览") {
+              viewers++; viewer=d; if (!coords(box,web)) bad=1
+            }
+            if (viewer && id=="app" && c=="android.view.View") { apps++; app=d }
+            if (app) {
+              if (t ~ /正在加载|正在渲染|模型处理中|处理完成后直接打印|取消处理/) busy++
+              if (c=="android.widget.TextView" && attr("enabled")=="true") {
+                if (t=="预计时间") estimate++
+                if (t ~ /^([0-9]+小时)?([0-9]+分钟)?([0-9]+秒)?$/ && t ~ /[1-9]/) times++
+                if (t=="模型耗材") material++
+                if (t ~ /^[0-9]+([.][0-9]+)?g$/ && t+0>0) weight++
+                if (t=="设备状态完美") ready++
+                if (t=="" && $0 ~ /\/$/ && kind[d-1]=="android.view.View" && box==boxes[d-1] &&
+                    coords(box,rect) && rect[1]==web[1] && rect[2]==web[2] && rect[3]==web[3] && rect[4]+0<web[4]+0) canvas++
+              }
+              if (c=="android.widget.Button" && attr("enabled")=="true" && attr("clickable")=="true") {
+                if (t=="取消打印") cancel++
+                if (t=="确认打印") confirm++
+              }
+            }
+            boxes[d]=box; kind[d]=c
+            if ($0 !~ /\/$/) next
+          }
+          /<node |<\/node/ { if (d==app) app=0; if (d==viewer) viewer=0; d-- }
+          END { exit (bad || d || busy || title!=1 || viewers!=1 || apps!=1 || canvas!=1 || estimate!=1 ||
+                      times!=1 || material!=1 || weight!=1 || ready!=1 || cancel!=1 || confirm!=1) }
+        ' "$file"; then
+          stable=$((stable+1))
+          if [ "$stable" -eq 2 ]; then echo 'preview canvas ready in two successive observations'; exit 0; fi
+        else stable=0; fi
+        sleep 1
+      done
+      echo 'GCode preview did not reach a stable rendered canvas' >&2
+      exit 1
+    timeout: 240000
+  - aiWaitFor: 浅灰色预览画布中央完整显示红色盘曲成环的立体关节龙，能看清龙头轮廓和沿弯曲龙身连续的分节。
     timeout: 240000
   - aiAssert: 预览中清楚显示盘曲的分节龙形模型、预计时间、耗材重量及设备就绪提示，底部同时有「取消打印」和「确认打印」。出现「网络信号差」、设备忙、离线、排队、已有任务「去处理」或切片失败时均失败
   # 打开此前实机验证能返回预览的记录标题。仅在同一设备、本次切片时间窗内出现唯一新记录时继续。
@@ -137,7 +198,8 @@ tasks:
       printf '%s %s %s\n' "$1" "$pid" "$now" > "$state.bound"
       printf 'verified slice=%s printer=9888E0094F2A model=关节龙\n' "$1"
       input tap "$2" "$3"
-  - aiWaitFor: 三维画布中央完整显示盘曲成环的立体关节龙，能看清龙头轮廓和沿弯曲龙身连续的分节。
+  - *dragon_preview_ready
+  - aiWaitFor: 浅灰色预览画布中央完整显示红色盘曲成环的立体关节龙，能看清龙头轮廓和沿弯曲龙身连续的分节。
     timeout: 90000
   - aiAssert: 当前记录的预览中有盘曲的分节龙形模型、正数的预计时间和模型耗材，设备状态完美，底部并列「取消打印」和「确认打印」；设备忙、需选择打印机或待处理任务均失败
   - aiTap: 本次模型打印预览底部右侧的「确认打印」

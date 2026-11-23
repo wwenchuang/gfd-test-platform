@@ -147,7 +147,7 @@ ROUTES = {
     ],
     DRAGON: [
         (ASSERT, DEVICE, "空闲"), (INPUT, "关节龙"), (TAP, "关节龙"), (ASSERT, "关节龙"), (TAP, "去打印"),
-        (WAIT, "关节龙", "分节龙形"), (TAP, "下一步"), (WAIT, "三维画布中央", "龙头", "连续的分节"),
+        (WAIT, "关节龙", "分节龙形"), (TAP, "下一步"), (WAIT, "浅灰色预览画布中央", "红色", "龙头", "连续的分节"),
         (ASSERT, "分节龙形", "设备就绪", "网络信号差"), (TAP, "打印记录"),
         (WAIT, DEVICE, "模型处理完成", "打印编号"), ("runAdbShell", "open the fresh record"),
         (ASSERT, "分节龙形", "设备状态完美"), (TAP, "确认打印"),
@@ -196,6 +196,57 @@ set -- $bounds; [ "$#" -eq 4 ] && [ "$3" -gt "$1" ] && [ "$4" -gt "$2" ] || exit
 input tap "$((($1+$3)/2))" "$((($2+$4)/2))"
 """.strip().splitlines())
 
+
+
+def test_dragon_preview_canvas():
+    path = ROOT / "server-tasks" / "3D打印基线" / (DRAGON + ".yaml")
+    flow = yaml.safe_load(path.read_bytes())["tasks"][0]["flow"]
+    guards = [step for step in flow if "rendered GCode canvas" in step.get("runAdbShell", "")]
+    assert len(guards) == 2 and guards[0] == guards[1]
+    command = guards[0]["runAdbShell"]
+
+    def node(text="", kind="android.widget.TextView", *, rid="", box="[0,100][300,900]", inside="", click=False):
+        attrs = (f'text="{text}" class="{kind}" resource-id="{rid}" package="com.kfb.model" '
+                 f'enabled="true" clickable="{str(click).lower()}" bounds="{box}"')
+        return f"<node {attrs}>{inside}</node>" if inside else f"<node {attrs}/>"
+
+    canvas = "[0,100][300,510]"
+    leaf = node(box=canvas)
+    viewport = node(kind="android.view.View", box=canvas, inside=leaf)
+    controls = (node("预计时间") + node("3小时55分钟") + node("模型耗材") + node("27.3g") + node("设备状态完美") +
+                node("取消打印", "android.widget.Button", click=True) + node("确认打印", "android.widget.Button", click=True))
+    html = node(kind="android.view.View", rid="app", inside=viewport + controls)
+    ready = (node("模型打印预览", rid="com.kfb.model:id/web_title_tv_middle") +
+             node("GCode 查看器 - 3D打印文件预览", "android.webkit.WebView", inside=html))
+    partial = ready.replace(leaf, node(box="[121,240][180,260]"))
+    cases = [
+        ([partial, ready, ready], True), ([ready, partial, ready], False),
+        ([ready.replace("确认打印", "处理完成后直接打印")], False),
+        ([ready.replace("取消打印", "取消处理")], False),
+        ([ready.replace("27.3g", "0g")], False), ([ready.replace("3小时55分钟", "0分钟")], False),
+        ([ready.replace("com.kfb.model", "other.package")], False),
+        ([ready.replace("clickable=\"true\"", "clickable=\"false\"")], False),
+        ([ready.replace("GCode 查看器 - 3D打印文件预览", "商品预览")], False),
+        ([ready.replace(node("设备状态完美"), "")], False),
+    ]
+    for label in ("正在加载...", "正在加载...72%", "正在渲染模型..."):
+        cases.append(([ready.replace(leaf, leaf + node(label))], False))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for frames, ok in cases:
+            for i, xml in enumerate(frames):
+                (root / str(i)).write_text(xml)
+            harness = """
+                i=0
+                uiautomator() { cp "$PROBE/$i" "$2" || return 1; i=$((i+1)); }
+                sleep() { :; }
+                date() { if [ "$i" -lt "$FRAME_COUNT" ]; then echo 100; else echo 500; fi; }
+                input() { echo 'unexpected input' >&2; exit 99; }
+            """
+            res = subprocess.run(["sh", "-c", harness + command.replace("/data/local/tmp", tmp)],
+                                 env={"PROBE": tmp, "FRAME_COUNT": str(len(frames))}, capture_output=True, text=True, timeout=8)
+            assert (res.returncode == 0) == ok and "unexpected input" not in res.stderr, (frames, res.stdout, res.stderr)
+            assert (res.stdout.strip() == "preview canvas ready in two successive observations") == ok
 
 
 def test_dragon_bound_submission():
@@ -405,12 +456,15 @@ def check_print_actions(name, flow):
         # Both visits must wait solely for the dragon's actual geometry before assertions.
         first = next(i for i, s in enumerate(flow) if s.get("runAdbShell") == PREVIEW_COLOR_CONFIRM)
         second = next(i for i, s in enumerate(flow) if s.get("runAdbShell") == select)
-        geometry = "三维画布中央完整显示盘曲成环的立体关节龙，能看清龙头轮廓和沿弯曲龙身连续的分节。"
+        geometry = "浅灰色预览画布中央完整显示红色盘曲成环的立体关节龙，能看清龙头轮廓和沿弯曲龙身连续的分节。"
+        render = flow[first + 1]["runAdbShell"]
+        assert hashlib.sha256(render.encode()).hexdigest() == "eb29e4ab566b028dd143e8222c96977b5030f19aa2c87ce786ca6b2fa6e65de6"
         for index in (first, second):
-            assert flow[index + 1].get(WAIT) == geometry
-            assert ASSERT in flow[index + 2] and "分节龙形" in flow[index + 2][ASSERT]
+            assert flow[index + 1] == {"runAdbShell": render, "timeout": 240000}
+            assert flow[index + 2].get(WAIT) == geometry
+            assert ASSERT in flow[index + 3] and "分节龙形" in flow[index + 3][ASSERT]
         assert all("${" not in command for command in native), "Midscene may interpolate shell expressions"
-        allowed_start_commands.update({PREVIEW_COLOR_CONFIRM, DRAGON_WEAK_SIGNAL_CONTINUE, *native})
+        allowed_start_commands.update({PREVIEW_COLOR_CONFIRM, DRAGON_WEAK_SIGNAL_CONTINUE, render, *native})
         check_order(name, flow, [(ASSERT, DEVICE, "空闲"), ("runAdbShell", arm), (TAP, "下一步"),
                     (WAIT, "修改设置", "模型打印预览"), ("runAdbShell", PREVIEW_COLOR_CONFIRM),
                     (ASSERT, "分节龙形"), ("runAdbShell", reset_activity), (WAIT, DEVICE, "空闲"),
@@ -421,7 +475,7 @@ def check_print_actions(name, flow):
         selected = next(i for i, step in enumerate(flow) if step.get("runAdbShell") == select)
         submitted = next(i for i, step in enumerate(flow) if step.get("runAdbShell") == submit)
         action_steps = [s for s in flow[selected + 1:submitted] if set(s) - {WAIT, ASSERT, "timeout"}]
-        assert action_steps == [{TAP: "本次模型打印预览底部右侧的「确认打印」"}, {"runAdbShell": DRAGON_WEAK_SIGNAL_CONTINUE}]
+        assert action_steps == [{"runAdbShell": render, "timeout": 240000}, {TAP: "本次模型打印预览底部右侧的「确认打印」"}, {"runAdbShell": DRAGON_WEAK_SIGNAL_CONTINUE}]
         assert not any({"ai", "aiAct", "aiAction"} & step.keys() for step in flow), name
     for index, step in enumerate(flow):
         assert "javascript" not in step and "runWdaRequest" not in step, f"{name}: unreviewed device action"
@@ -537,6 +591,7 @@ def test_published_baselines():
 
 if __name__ == "__main__":
     test_dragon_weak_signal_action()
+    test_dragon_preview_canvas()
     test_dragon_bound_submission()
     test_preview_native_actions()
     test_published_baselines()
