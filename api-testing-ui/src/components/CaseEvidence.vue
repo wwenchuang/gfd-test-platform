@@ -50,7 +50,7 @@ const cleanupEvidence = computed(() => {
   if (statuses.includes('SKIPPED')) return 'skipped'
   return statuses.every(status => status === 'PASSED') ? 'passed' : 'missing'
 })
-const requestUrl = computed(() => String(request.value.url || request.value.resolved_url || ''))
+const requestUrl = computed(() => String(request.value.url || request.value.resolved_url || request.value.path || ''))
 const responseStatus = computed(() => Number(response.value.status_code || response.value.status || 0))
 const responseDuration = computed(() => {
   if (props.result.failure_category === 'setup') return '未记录'
@@ -148,7 +148,7 @@ function toggleBlock(key: string): void {
     <FailureAnalysis :result="result" />
     <div class="evidence-summary">
       <div><span>状态</span><strong :class="`status-${result.status.toLowerCase()}`">{{ statusLabel(result.status) }}</strong></div>
-      <div><span>请求</span><strong>{{ result.method }} {{ requestUrl || result.path }}</strong></div>
+      <div><span>请求</span><strong>{{ request.method || '' }} {{ requestUrl || '请求地址未记录' }}</strong></div>
       <div><span>响应</span><strong>{{ responseStatus ? `HTTP ${responseStatus}` : '未收到响应' }}</strong></div>
       <div data-testid="response-duration"><span>接口响应耗时</span><strong>{{ responseDuration }}</strong></div>
       <div data-testid="workflow-duration"><span>用例总耗时（含前后置）</span><strong>{{ result.duration_ms == null ? '未记录' : `${result.duration_ms} ms` }}</strong></div>

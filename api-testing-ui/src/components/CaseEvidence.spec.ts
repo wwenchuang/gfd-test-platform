@@ -22,6 +22,14 @@ const result: ExecutionCaseResult = {
 }
 
 describe('CaseEvidence', () => {
+  it('pairs the recorded setup method with its URL even when the case targets a POST', () => {
+    const wrapper = mount(CaseEvidence, { props: { result: { ...result, failure_category: 'setup',
+      sanitized_result: { request: { method: 'GET', url: '/printJob/currentSliceJob' } },
+    } } })
+    expect(wrapper.get('.evidence-summary').text()).toContain('GET /printJob/currentSliceJob')
+    expect(wrapper.get('.evidence-summary').text()).not.toContain('POST /printJob/currentSliceJob')
+  })
+
   it('does not infer missing assertion configuration from an interrupted execution', () => {
     const wrapper = mount(CaseEvidence, { props: { result: {
       ...result, status: 'BROKEN', failure_category: 'environment', evidence_loaded: true,
