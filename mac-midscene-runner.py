@@ -2465,6 +2465,52 @@ def should_defer_zxb_update(job):
     return job.get("module") == "3D打印基线" and name in ZXB_REGRESSION_FILES and filename == name + ".yaml"
 
 
+def configure_zxb_model_transport(env, eligible):
+    env.pop("MIDSCENE_ZXB_MODEL_CONNECT_RETRY", None)
+    if not eligible or env.get("MIDSCENE_MODEL_BASE_URL", "").rstrip("/") != "https://dashscope.aliyuncs.com/compatible-mode/v1":
+        return
+    if ("MIDSCENE_MODEL_RETRY_COUNT" in env or "MIDSCENE_MODEL_RETRY_INTERVAL" in env
+            or any(key.startswith(("MIDSCENE_PLANNING_MODEL_", "MIDSCENE_INSIGHT_MODEL_")) for key in env)):
+        return
+    # Midscene 1.13 retries every model error, including 401. Use one retry owner.
+    env["MIDSCENE_MODEL_RETRY_COUNT"] = "0"
+    env["MIDSCENE_ZXB_MODEL_CONNECT_RETRY"] = "1"
+
+
+RUNNER_ZXB_MODEL_TRANSPORT = r'''
+function zxbModelConnectFetch(fetch, wait = require('node:timers/promises').setTimeout) {
+  const endpoint = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+  return async function(input, init) {
+    if ((typeof input !== 'string' && !(input instanceof URL)) || String(input) !== endpoint ||
+        init?.method !== 'POST' || typeof init.body !== 'string' ||
+        !new Headers(init.headers).has('x-midscene-execution-id')) {
+      return fetch(input, init);
+    }
+    // A redirect is already an HTTP response. Surface it before another connection can start.
+    const request = {...init, redirect: 'manual'};
+    for (let attempt = 1; ; attempt++) {
+      init.signal?.throwIfAborted();
+      try {
+        return await fetch(input, request);
+      } catch (error) {
+        init.signal?.throwIfAborted();
+        const cause = error?.cause;
+        const preconnect = cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+          (cause?.syscall === 'connect' && ['ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'].includes(cause.code)) ||
+          (cause?.syscall === 'getaddrinfo' && cause.code === 'EAI_AGAIN');
+        if (!preconnect || attempt >= 4) throw error;
+        console.warn('Model connection retry: ' + cause.code + ', attempt ' + (attempt + 1) + '/4');
+        await wait(3000, undefined, {signal: init.signal});
+      }
+    }
+  };
+}
+if (process.env.MIDSCENE_ZXB_MODEL_CONNECT_RETRY === '1') {
+  globalThis.fetch = zxbModelConnectFetch(globalThis.fetch);
+}
+'''
+
+
 RUNNER_ZXB_UPDATE_ADAPTER = r'''
 function installOptionalAppUpdateGuard(agent) {
   if (process.env.MIDSCENE_ZXB_OPTIONAL_UPDATE !== '1') return;
@@ -2842,7 +2888,7 @@ def progress_observer_env(job_dir, device_id, dynamic_required=False, target_pac
     env["MIDSCENE_DYNAMIC_OBJECT_REQUIRED"] = "1" if dynamic_required else "0"
     try:
         path = (job_dir / "runner-progress-observer.cjs").resolve()
-        path.write_text(RUNNER_ZXB_UPDATE_ADAPTER + RUNNER_KEYBOARD_DISMISS_ADAPTER + RUNNER_PRINT_RECOVERY_ADAPTER + RUNNER_DYNAMIC_OBJECT_ADAPTER + RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
+        path.write_text(RUNNER_ZXB_MODEL_TRANSPORT + RUNNER_ZXB_UPDATE_ADAPTER + RUNNER_KEYBOARD_DISMISS_ADAPTER + RUNNER_PRINT_RECOVERY_ADAPTER + RUNNER_DYNAMIC_OBJECT_ADAPTER + RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
         # NODE_OPTIONS is scoped to this CLI subprocess, not the machine.
         option = '--require ' + json.dumps(str(path), ensure_ascii=False)
         env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " " + option).strip()
@@ -2988,6 +3034,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id, target_p
             return {"status":"cancelled", "stdout":"", "stderr":"平台已取消执行", "returncode":-1, "duration":0}
         midscene_command = execution_command(midscene_bin, yaml_path, device_id)
         observer_env = progress_observer_env(job_dir, device_id, validate_dynamic_yaml(yaml_path.read_text(encoding="utf-8"), target_package), target_package)
+        configure_zxb_model_transport(observer_env, defer_zxb_update)
         observer_env["MIDSCENE_ZXB_OPTIONAL_UPDATE"] = "1" if defer_zxb_update else "0"
         if defer_zxb_update and not (job_dir / "runner-progress-observer.cjs").is_file():
             raise RuntimeError("智小白3D 回归更新提示处理器不可用")
