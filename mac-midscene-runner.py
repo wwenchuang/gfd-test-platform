@@ -2523,18 +2523,35 @@ function installOptionalAppUpdateGuard(agent) {
   const update = app + '/com.mango.bridge.ui.update.AppUpdateTransAct';
   const isHome = name => name === app+'/.MainActivity' || name === app+'/com.kfb.model.MainActivity';
   const foreground = async adb => {
-    const state = await adb.shell("dumpsys activity activities | grep -E 'topResumedActivity=|mLastPausedActivity:'");
-    const matches = [...String(state).matchAll(/topResumedActivity=.*?\bu\d+\s+([\w.$/]+)\s+t(-?\d+)/g)];
-    if (matches.length > 1) throw Error('Ambiguous Android foreground');
-    const [, current, task] = matches[0] || [];
-    const paused = [...String(state).matchAll(/mLastPausedActivity:.*?\bu\d+\s+([\w.$/]+)\s+t(-?\d+)/g)];
-    return {current, homeBelow: paused.some(m => m[2] === task && isHome(m[1]))};
+    const state = await adb.shell("dumpsys activity activities | grep -E '^[[:space:]]*(topResumedActivity=|[*] (Task[{]|Hist[[:space:]]))'");
+    const lines = String(state).split(/\r?\n/).map(line => line.trim())
+      .filter(line => /^(topResumedActivity=|\* (?:Task\{|Hist\s))/.test(line));
+    const resumed = lines.filter(line => line.startsWith('topResumedActivity='));
+    if (resumed.length !== 1) throw Error('Ambiguous Android foreground');
+    const parseRecord = line => /ActivityRecord\{([\w]+) u(\d+) ([\w.$/]+) t(\d+)\}$/.exec(line || '');
+    const current = parseRecord(resumed[0]);
+    if (!current) throw Error('Unknown Android foreground');
+    const [, record, user, name, task] = current;
+    const result = {name, record, user, task};
+    if (name !== update) return result;
+
+    const at = lines.indexOf(resumed[0]);
+    const header = /^\* Task\{\w+ #(\d+)\s/.exec(lines[at - 1] || '');
+    const entries = lines.slice(at + 1, at + 3);
+    const [upper, lower] = entries.map(parseRecord);
+    const [upperIndex, lowerIndex] = entries.map(line => /^\* Hist\s+#(\d+): ActivityRecord\{/.exec(line)?.[1]);
+    if (header?.[1] === task && upperIndex !== undefined && lowerIndex !== undefined &&
+        Number(upperIndex) === Number(lowerIndex) + 1 && upper?.[0] === current[0] &&
+        lower && lower[1] !== record && lower[2] === user && isHome(lower[3]) && lower[4] === task) {
+      result.homeRecord = lower[1];
+    }
+    return result;
   };
   async function handle() {
     const adb = await device.getAdb();
     const before = await foreground(adb);
-    if (before.current !== update) return false;
-    if (!before.homeBelow) throw Error('Update dialog outside the expected home task');
+    if (before.name !== update) return false;
+    if (!before.homeRecord) throw Error('Update dialog outside the expected home task');
     const xml = await adb.shell('file=$(mktemp /data/local/tmp/qa-kfb-update.XXXXXX) || exit 1; trap \'rm -f "$file"\' EXIT; uiautomator dump "$file" >/dev/null && cat "$file"');
     const nodes = [...String(xml).matchAll(/<node\s+([^>]+)>/g)].map(match =>
       Object.fromEntries([...match[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(attr => [attr[1], attr[2]])));
@@ -2550,10 +2567,12 @@ function installOptionalAppUpdateGuard(agent) {
     const rect = /^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/.exec(later.bounds);
     if (!rect || +rect[3] <= +rect[1] || +rect[4] <= +rect[2]) throw Error('Invalid bounds for defer update');
     const ready = await foreground(adb);
-    if (ready.current !== update || !ready.homeBelow) throw Error('Update dialog changed before dismissal');
+    if (ready.name !== update || ready.task !== before.task || ready.user !== before.user ||
+        ready.record !== before.record || ready.homeRecord !== before.homeRecord) throw Error('Update dialog changed before dismissal');
     await adb.shell('input tap '+Math.floor((+rect[1]+ +rect[3])/2)+' '+Math.floor((+rect[2]+ +rect[4])/2));
     for (let i=0;i<10;i++) {
-      if (isHome((await foreground(adb)).current)) {
+      const resumed = await foreground(adb);
+      if (isHome(resumed.name) && resumed.record === before.homeRecord && resumed.task === before.task && resumed.user === before.user) {
         console.log('Optional 智小白3D update dismissed via 下次再说; verified MainActivity');
         return true;
       }

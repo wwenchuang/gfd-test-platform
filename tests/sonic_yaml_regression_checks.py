@@ -23,7 +23,7 @@ CUBE = "qa-import-cube-10mm.stl"
 DRAGON = "关节龙打印"
 DRAGON_NATIVE_SHA256 = (
     "d8310d8c1180ea3e05813dff88579ab2e7670412866f53f3e923f328cd88fc2f",  # start slice window
-    "caa09189513a8d8ffdab125c9962389391928832d3e2a6c4c7131efb0bea6356",  # open the fresh record for the selected printer
+    "0560decdc9ab2b793fd30ab58944bf7ee697b6c94ffd92c2489e16050d7d561f",  # open the fresh record for the selected printer
     "dea1e66ff7e5c2c66a3438532a9fb20b40617d13333333dae4dbd81a65656a3e",  # consume the bound record at the native safety dialog
 )
 # Published case IDs stay stable even for the two AI cases with different filenames.
@@ -142,7 +142,7 @@ ROUTES = {
     ],
     DRAGON: [
         (ASSERT, DEVICE, "空闲"), (INPUT, "关节龙"), (TAP, "关节龙"), (ASSERT, "关节龙"), (TAP, "去打印"),
-        (WAIT, "关节龙", "分节龙形"), (TAP, "下一步"), (WAIT, "分节龙形", "耗材"),
+        (WAIT, "关节龙", "分节龙形"), (TAP, "下一步"), (WAIT, "三维画布中央", "龙头", "连续的分节"),
         (ASSERT, "分节龙形", "设备就绪", "网络信号差"), (TAP, "打印记录"),
         (WAIT, DEVICE, "模型处理完成", "打印编号"), ("runAdbShell", "open the fresh record"),
         (ASSERT, "分节龙形", "设备状态完美"), (TAP, "确认打印"),
@@ -210,10 +210,13 @@ def test_dragon_bound_submission():
     def node(text, attrs=""):
         return f'<node text="{text}" class="android.widget.TextView" package="com.kfb.model" {attrs}/>'
 
+    action_attrs = 'enabled="true" bounds="[777,894][1002,981]"'
+    metric_icon = '<node text="打印" class="android.widget.Image" package="com.kfb.model" enabled="true"/>'
+
     def row(stamp, model, sn, status="模型处理完成", action="打印"):
         return (f'<node class="android.view.View" package="com.kfb.model">{node(stamp)}{node(status)}'
                 f'<node class="android.view.View" package="com.kfb.model">'
-                f'{node(model, bounds)}{node("打印编号：" + sn)}</node>{node(action)}</node>')
+                f'{node(model, bounds)}{metric_icon}{metric_icon}{node("打印编号：" + sn)}</node>{node(action, action_attrs)}</node>')
 
     bounds = 'bounds="[345,642][1002,702]"'
     first = row("2026-11-23 12:51:20", "关节龙", "1574407263092404224")
@@ -239,6 +242,12 @@ def test_dragon_bound_submission():
             listing.replace("关节龙", "姓名牌", 1),
             listing.replace("模型处理完成", "取消模型处理", 1),
             listing.replace('text="打印"', 'text="重新编辑"'),
+            listing.replace(node("打印", action_attrs), ""),
+            listing.replace(node("打印", action_attrs), node("打印", action_attrs) * 2),
+            listing.replace(action_attrs, action_attrs.replace("true", "false")),
+            listing.replace(action_attrs, 'enabled="true" bounds="[0,0][0,0]"'),
+            listing.replace(node("打印", action_attrs), '<node class="android.view.View" package="com.kfb.model">' +
+                            node("打印", action_attrs) + '</node>'),
             listing.replace("12:51:20", "11:59:00"),
             listing.replace("12:51:20", "12:50:00"),
             listing.replace("12:51:20", "12:53:00"),
@@ -379,6 +388,14 @@ def check_print_actions(name, flow):
         native = [step["runAdbShell"] for step in flow if step.get("runAdbShell", "").startswith("# dragon:")]
         assert tuple(hashlib.sha256(command.encode()).hexdigest() for command in native) == DRAGON_NATIVE_SHA256
         arm, select, submit = native
+        # The ready controls, weight and estimate are already visible at 70% render.
+        # Both visits must wait solely for the dragon's actual geometry before assertions.
+        first = next(i for i, s in enumerate(flow) if s.get("runAdbShell") == PREVIEW_COLOR_CONFIRM)
+        second = next(i for i, s in enumerate(flow) if s.get("runAdbShell") == select)
+        geometry = "三维画布中央完整显示盘曲成环的立体关节龙，能看清龙头轮廓和沿弯曲龙身连续的分节。"
+        for index in (first, second):
+            assert flow[index + 1].get(WAIT) == geometry
+            assert ASSERT in flow[index + 2] and "分节龙形" in flow[index + 2][ASSERT]
         assert all("${" not in command for command in native), "Midscene may interpolate shell expressions"
         allowed_start_commands.update({PREVIEW_COLOR_CONFIRM, DRAGON_WEAK_SIGNAL_CONTINUE, *native})
         check_order(name, flow, [(ASSERT, DEVICE, "空闲"), ("runAdbShell", arm), (TAP, "下一步"),

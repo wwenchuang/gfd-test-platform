@@ -40,7 +40,15 @@ const title=node('title','发布新版本啦','[5,5][100,25]',false);
 const later=node('btn_later','下次再说','[8,55][48,71]',true);
 const upgrade=node('btn_update','立即更新','[54,55][105,71]',true);
 const xml = '<hierarchy>'+title+later+upgrade+'</hierarchy>';
-function scene(body=xml, behind=home) {
+// The selected rows retain the tokens and spacing of the OPPO task 4997 capture.
+const taskHeader='  * Task{c436927 #4997 type=standard A=11039:com.kfb.model U=0 visible=true}';
+const paused='    mLastPausedActivity: ActivityRecord{232ecfb u0 '+update+' t-1 f}}';
+const foreground=(id,name)=>'    topResumedActivity=ActivityRecord{'+id+' u0 '+name+' t4997}';
+const topHistory='    * Hist  #1: ActivityRecord{128d54a u0 '+update+' t4997}';
+const homeHistory='    * Hist  #0: ActivityRecord{71cbc93 u0 '+home+' t4997}';
+const stack=[taskHeader,paused,foreground('128d54a',update),topHistory,homeHistory].join('\n');
+function scene(body=xml, behind=home, mutate=s=>s, after=s=>s) {
+  let reads=0;
   let activity=home;
   const commands=[], taps=[];
   const device={
@@ -48,7 +56,9 @@ function scene(body=xml, behind=home) {
     tapPoint: async point => taps.push(point),
     getAdb: async () => ({shell: async command=>{
       commands.push(command);
-      if (command.startsWith('dumpsys activity')) return 'topResumedActivity=ActivityRecord{x u0 '+activity+' t15}\nmLastPausedActivity: ActivityRecord{y u0 '+behind+' t15}';
+      if (command.startsWith('dumpsys activity')) return activity===update ?
+        mutate(stack.replace(homeHistory,homeHistory.replace(home,behind)), ++reads) :
+        after([taskHeader, foreground('71cbc93',home),homeHistory].join('\n'));
       if (command.startsWith('file=')) return body;
       if (command==='input tap 28 63') {activity=home;return '';}
       throw Error('Unexpected adb action: '+command);
@@ -78,6 +88,31 @@ function scene(body=xml, behind=home) {
     assert.deepEqual(blocked.commands.filter(s=>s.startsWith('input')),[]);
     assert.deepEqual(blocked.taps,[]);
   }
+  for (const change of [
+    s=>s.replace(homeHistory,homeHistory.replace('t4997','t20')),
+    s=>s.replace(homeHistory,homeHistory.replace('u0','u10')),
+    s=>s.replace(homeHistory,homeHistory.replace('#0','#3')),
+    s=>s.replace(homeHistory,'    * Hist  #0: ActivityRecord{17ac u0 other.app/.Gate t4997}\n'+homeHistory),
+    s=>s.replace(homeHistory,'  * Task{efbb #20 type=standard}\n'+homeHistory),
+    s=>s.replace(homeHistory,'    * Hist  #0: <unknown>\n'+homeHistory),
+    s=>s.replace(topHistory,topHistory.replace('128d54a','333aaaa')),
+    s=>s.replace(topHistory,topHistory+'\n'+topHistory),
+    s=>s.replace(homeHistory,''),
+    s=>s.replace(paused,'    mLastPausedActivity: ActivityRecord{71cbc93 u0 '+home+' t4997}')
+      .replace(homeHistory,homeHistory.replace(home,'com.kfb.model/.Unknown')),
+    s=>s.replace(paused,foreground('128d54a',update)),
+    (s,n)=>n===1?s:s.replaceAll('128d54a','333aaaa'),
+    (s,n)=>n===1?s:s.replaceAll('4997','4998'),
+    (s,n)=>n===1?s:s.replace('71cbc93','333aaaa')
+  ]) {
+    const blocked=scene(xml,home,change);blocked.show();
+    await assert.rejects(()=>blocked.device.screenshotBase64());
+    assert.deepEqual(blocked.commands.filter(s=>s.startsWith('input')),[]);
+  }
+  const wrongResume=scene(xml,home,s=>s,s=>s.replaceAll('4997','4998')); wrongResume.show();
+  await assert.rejects(()=>wrongResume.device.tapPoint({x:50,y:60}),/Home did not resume/);
+  assert.deepEqual(wrongResume.commands.filter(s=>s.startsWith('input')),['input tap 28 63']);
+  assert.deepEqual(wrongResume.taps,[]);
   process.env.MIDSCENE_ZXB_OPTIONAL_UPDATE='0';
   const disabled=scene(); disabled.show();
   assert.equal(await disabled.device.screenshotBase64(),'image:'+update);
