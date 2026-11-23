@@ -41,6 +41,7 @@ _REPORT_UPLOAD_QUEUE = queue.Queue()
 _REPORT_UPLOAD_WORKER_STARTED = False
 _REPORT_UPLOAD_WORKER_LOCK = threading.Lock()
 _RUNTIME_ENV_CACHE = None
+_HEARTBEAT_MODEL = {}
 _RUNTIME_ENV_ERROR = ""
 _RUNTIME_ENV_FETCHED_AT = 0
 RUNTIME_ENV_CACHE_SECONDS = int(os.getenv("MIDSCENE_RUNTIME_ENV_CACHE_SECONDS", "60"))
@@ -261,6 +262,7 @@ def infer_midscene_model_family(model_name, configured_family=""):
 
 
 def midscene_env(device_id=""):
+    global _HEARTBEAT_MODEL
     env = os.environ.copy()
     runtime = task_runtime_env()
     server_model_keys = {
@@ -313,6 +315,9 @@ def midscene_env(device_id=""):
             "MIDSCENE_USE_VLM_UI_TARS",
         ):
             env.pop(legacy_key, None)
+    # Publish only metadata from the last resolved profile, never credentials.
+    _HEARTBEAT_MODEL = {"midscene_model_name": env.get("MIDSCENE_MODEL_NAME", ""),
+                        "midscene_model_family": env.get("MIDSCENE_MODEL_FAMILY", "")}
     env.setdefault("MIDSCENE_SKIP_CONFIG_CHECK", "1")
     env.setdefault("MIDSCENE_REPLANNING_CYCLE_LIMIT", "8")
     # Use Node's default certificate verification; preserve an explicit operator override.
@@ -1954,7 +1959,7 @@ def tracking_receipts_available():
 
 
 def heartbeat(devices):
-    runtime = {} if RUNNER_PLATFORM == "ios" else midscene_env()
+    model = {} if RUNNER_PLATFORM == "ios" else _HEARTBEAT_MODEL
     ios_tracking = ios_tracking_states(devices) if RUNNER_PLATFORM == "ios" else {}
     ios_ready = any(s["ready"] for s in ios_tracking.values())
     payload = {
@@ -1972,12 +1977,49 @@ def heartbeat(devices):
             "tracking_selected_device": ios_ready or RUNNER_PLATFORM == "android",
             "tracking_auto": ios_ready or RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
             "tracking": ios_ready or RUNNER_PLATFORM == "android" and Path(__file__).with_name("mobile_tracking_runner.py").is_file(),
-            "midscene_model_name": runtime.get("MIDSCENE_MODEL_NAME", ""),
-            "midscene_model_family": runtime.get("MIDSCENE_MODEL_FAMILY", ""),
+            "midscene_model_name": model.get("midscene_model_name", ""),
+            "midscene_model_family": model.get("midscene_model_family", ""),
         },
         "devices": devices
     }
-    return http_json("POST", "/api/runner/heartbeat", payload)
+    return http_json("POST", "/api/runner/heartbeat", payload, timeout=8)
+
+
+def active_job_devices(devices):
+    if RUNNER_PLATFORM != "android":
+        return devices
+    adb = next((d["adb_path"] for d in devices if d.get("adb_path")), _ADB_BIN_CACHE or ADB_BIN)
+    result = run_cmd([adb, "devices"], timeout=3)
+    if result.returncode or "List of devices attached" not in result.stdout:
+        raise RuntimeError("ADB transport inventory unavailable")
+    online, unauthorized, _ = parse_adb_devices(result.stdout)
+    # Only report previously registered devices. Preserve their capability information.
+    return [device if device["device_id"] in online else {
+        **device, "status": "unauthorized" if device["device_id"] in unauthorized else "offline",
+        "preflight_status": "blocked",
+    } for device in devices]
+
+
+def keep_job_alive(stopped, job_id, devices):
+    retry = False
+    while not stopped.wait(2 if retry else 10):
+        try:
+            current = active_job_devices(devices)
+            if stopped.is_set():
+                return
+            acknowledgement = heartbeat(current)
+        except Exception as exc:
+            # Do not log network error text, which may include tokens or request URLs.
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} job heartbeat {job_id}: {type(exc).__name__}", flush=True)
+            retry = not retry
+            continue
+        retry = False
+        if not stopped.is_set():
+            try:
+                _RECORDING_EVIDENCE.submit(acknowledgement, current)
+            except Exception as exc:
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} recording evidence {job_id}: {type(exc).__name__}", flush=True)
+
 
 
 def ensure_android_device_id(yaml_text, device_id):
@@ -3400,15 +3442,9 @@ def _run_main():
 
             print(f"Running {job['job_id']} {job.get('module')}/{job.get('file')}")
             stopped = threading.Event()
-            def keep_alive():
-                while not stopped.wait(10):
-                    try:
-                        acknowledgement = heartbeat(devices)
-                        _RECORDING_EVIDENCE.submit(acknowledgement, devices)
-                    except Exception:
-                        pass
             if RUNNER_PLATFORM == "ios" or job.get("ui_batch_id"):
-                threading.Thread(target=keep_alive, daemon=True).start()
+                threading.Thread(target=keep_job_alive, args=(stopped, job["job_id"], devices),
+                                 daemon=True).start()
             try:
                 with _IOS_RECOVERY_GUARD:
                     _IOS_JOB_ACTIVE.set()

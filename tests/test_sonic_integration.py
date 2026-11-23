@@ -2920,13 +2920,21 @@ def test_desktop_runners_queue_report_after_result_is_archived():
         assert 'report_url = SERVER.rstrip("/") + "/reports/" + urllib.parse.quote(report_name)' in run_job_body
 
 
+def desktop_runner_poll_loop(source, filename):
+    main = source.index("def main(")
+    if filename == "mac-midscene-runner.py":
+        assert "_run_main()" in source[main:]
+        return source[source.index("def _run_main("):main]
+    return source[main:source.index('if __name__ == "__main__"')]
+
+
 def test_desktop_runners_replay_failed_result_callbacks_after_server_restart():
     for filename in ("mac-midscene-runner.py", "windows-midscene-runner.py"):
         runner = (ROOT / filename).read_text(encoding="utf-8")
         assert "CALLBACK_OUTBOX_DIR" in runner
         assert "def queue_failed_result_callback" in runner
         assert "def replay_pending_result_callbacks" in runner
-        main_body = runner[runner.index("def main("):runner.index('if __name__ == "__main__"')]
+        main_body = desktop_runner_poll_loop(runner, filename)
         assert "replay_pending_result_callbacks()" in main_body
         assert main_body.index("heartbeat(devices)") < main_body.index("replay_pending_result_callbacks()") < main_body.index('http_json("GET", f"/api/runner/jobs/next?{qs}")')
 
@@ -2938,7 +2946,7 @@ def test_desktop_runners_upload_report_before_result_callback_and_keep_outbox_me
         run_job_body = runner[runner.index("def run_job("):runner.index("def print_startup()")]
         assert "upload_report_before_result(job_id, report_path, report_name)" in run_job_body
         assert run_job_body.index("upload_report_before_result(job_id, report_path, report_name)") < run_job_body.index('return payload')
-        main_body = runner[runner.index("def main("):runner.index('if __name__ == "__main__"')]
+        main_body = desktop_runner_poll_loop(runner, filename)
         assert "queue_failed_result_callback(job[\"job_id\"], result, pending_report_path, pending_report_name)" in main_body
         assert "enqueue_report_upload(job[\"job_id\"], pending_report_path, pending_report_name)" in main_body
 
