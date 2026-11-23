@@ -139,6 +139,19 @@ def check_print_actions(name, flow):
         check_order(name, flow, [(TAP, "我的"), (WAIT, "打印记录"), (TAP, "房子"), (WAIT, DEVICE, "空闲")])
     submissions = []
     cancellations = []
+    stamp_editor = '本次印章「打印准备」底部的「开始打印」按钮一次'
+    is_stamp = name in {'普通印章打印', '十二生肖印章打印'}
+    if is_stamp:
+        check_order(name, flow, [
+            (WAIT, '打印准备', '2个打印任务'), (ASSERT, '把手', '印面'), (TAP, stamp_editor),
+            (WAIT, '第1盘', '居中', '下一步'), (TAP, '第1盘', '下一步'),
+        ])
+        assert sum(step.get(TAP) == stamp_editor for step in flow) == 1
+    weak_signal_step = "如果有标题为「网络信号差」且同时显示「继续打印」「去调整网络」的提示，只点击「继续打印」一次。如果已进入打印安全检查页，直接结束。其他状态不要操作，不要重新提交打印。"
+    if name == DRAGON:
+        check_order(name, flow, [(TAP, "确认打印"), ("ai", weak_signal_step),
+                                 (ASSERT, DEVICE, "安全检查"), (TAP, "检查无误确认打印")])
+        assert sum(step.get("ai") == weak_signal_step for step in flow) == 1
     for index, step in enumerate(flow):
         assert "javascript" not in step and "runWdaRequest" not in step, f"{name}: unreviewed device action"
         if "runAdbShell" in step:
@@ -164,7 +177,11 @@ def check_print_actions(name, flow):
                 cancellations.append(index)
             # The sign, text and WeChat tap locators identify Cancel relative to its neighbour.
             label = target.replace("与「确认打印」并列的「取消打印」", "「取消打印」") if action == TAP else target
-            if re.search(r"确认打印|直接打印|开始打印|提交打印|发送打印", label):
+            if is_stamp and action == TAP and label == stamp_editor:
+                continue  # This specific two-plate screen opens the first plate editor.
+            if name == DRAGON and action == "ai" and label == weak_signal_step:
+                continue
+            if re.search(r"确认打印|直接打印|开始打印|提交打印|发送打印|继续打印", label):
                 submissions.append(index)
     if name in PREVIEW_CASES or name == DRAGON:
         check_order(name, flow, [(WAIT, DEVICE, "空闲"), (ASSERT, "空闲")])
