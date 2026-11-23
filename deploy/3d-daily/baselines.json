@@ -31,14 +31,14 @@
     "case_id": "COM_KFB_MODEL_4f9e47eb53d2",
     "module": "3D打印基线",
     "filename": "文字建模.yaml",
-    "sha256": "40a2ddbe902f32d23d83aebdb336c9eee3e6e3f745c376bd28ea48663f447919",
+    "sha256": "79613987ee11d737ada3194b74f5caae7b96bb5b7f324cdaac1f10203f120ce2",
     "core": true
   },
   {
     "case_id": "COM_KFB_MODEL_0e27ae1d28a0",
     "module": "3D打印基线",
     "filename": "模型导入-微信导入.yaml",
-    "sha256": "a56a0c857c22ad2d4b2980689a96cebb81b3391b996efacda356d6cb54bfd8c0",
+    "sha256": "f9b6fe4c44610df246e85a3b89b949bb7045b327a33d427334e5e14ccf3fe8d4",
     "core": false
   },
   {

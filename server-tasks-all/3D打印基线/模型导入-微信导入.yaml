@@ -22,12 +22,37 @@ tasks:
       - aiWaitFor: 「模型导入」面板同时显示「本地导入」和「微信导入」
         timeout: 12000
       - aiTap: 模型导入面板内的「微信导入」
-      - aiWaitFor: 出现可操作的「立即跳转」，或已进入含「导入模型」的微信页面；仅显示应用内的微信导入按钮或提示需安装微信均未完成跳转
-        timeout: 12000
-      - ai: 若跳转提示显示「立即跳转」，点击一次；若当前微信页已显示「导入模型」则结束本步骤。
-      - aiWaitFor: 系统出现打开微信小程序的确认框，或微信小程序已打开并开始加载，或已显示底部「选择文件」
-        timeout: 15000
-      - ai: 只在安卓系统出现「智小白3D」想要打开「微信」小程序的提示时，点击右侧「打开」一次。保留「始终允许打开」当前状态。若已进入微信小程序则结束本步骤。
+      - runAdbShell: |-
+          # Open only the scoped app-to-WeChat confirmation dialogs.
+          file=$(mktemp /data/local/tmp/qa-kfb-wechat.XXXXXX) || exit 1
+          trap 'rm -f "$file"' EXIT
+          tap_button() {
+            bounds=$(tr '>' '\n' < "$file" | grep -F "package=\"$1\"" | grep -F "resource-id=\"$2\"" | grep -F "text=\"$3\"" | grep -F 'enabled="true"' | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p')
+            set -- $bounds
+            [ "$#" -eq 4 ] && [ "$3" -gt "$1" ] && [ "$4" -gt "$2" ] || return 1
+            input tap "$((($1+$3)/2))" "$((($2+$4)/2))"
+          }
+          jumped=0; opened=0
+          for attempt in 1 2 3 4 5 6 7 8; do
+            : > "$file"
+            uiautomator dump "$file" >/dev/null && [ -s "$file" ] || continue
+            if grep -Fq 'text="“智小白3D”想要打开“微信”小程序"' "$file" && grep -Fq 'resource-id="com.oplus.securitypermission:id/alertTitle"' "$file"; then
+              if [ "$opened" -eq 0 ]; then
+                tap_button com.oplus.securitypermission android:id/button1 打开 || exit 1
+                opened=1
+              fi
+            elif grep -Fq 'text="为保障您的使用体验，即将跳转至第三方小程序"' "$file" && grep -Fq 'resource-id="com.kfb.model:id/base_tipdialog_content"' "$file"; then
+              if [ "$jumped" -eq 0 ]; then
+                tap_button com.kfb.model com.kfb.model:id/view_icon_text_layout_text 立即跳转 || exit 1
+                jumped=1
+              fi
+            elif grep -Fq 'package="com.tencent.mm"' "$file"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'WeChat import page did not open' >&2
+          exit 1
       - aiWaitFor: 微信小程序的导入页底部可见「选择文件」，页面不含智小白 App 的「本地导入」选项或系统确认弹窗
         timeout: 30000
       - aiTap: 微信小程序导入页底部的「选择文件」按钮

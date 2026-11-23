@@ -126,7 +126,11 @@ ROUTES = {
         (TAP, "标牌"), (INPUT, "UI自动化"), (TAP, "字体"), (TAP, "生成3D预览图"), (TAP, "去打印"),
     ],
     "文字建模": [
-        (TAP, "创作"), (TAP, "开始创作"), (INPUT, "硬币"), (TAP, "发送"), (TAP, "不补充"),
+        (TAP, "创作"), (TAP, "开始创作"), (INPUT, "硬币"), (TAP, "发送"),
+        (WAIT, "UI自动化硬币图片", "没有喜欢的", "不补充 直接生成", "立即生成"),
+        ("ai", "没有喜欢的", "不补充 直接生成", "立即生成"),
+        (WAIT, "硬币", "主体", "细节", "用途", "不补充 直接生成", "立即生成"),
+        (TAP, "硬币", "主体", "细节", "用途", "不补充 直接生成", "立即生成"),
         (WAIT, "就这样，生成模型"), (TAP, "就这样，生成模型"), (WAIT, "硬币", "去打印"),
         (TAP, "硬币", "去打印"), (TAP, "返回"), (ASSERT, "居中", "旋转", "下一步"),
     ],
@@ -136,7 +140,8 @@ ROUTES = {
         (ASSERT, "立方体", "10"), (TAP, "返回"), (ASSERT, "退出"),
     ],
     "模型导入-微信导入": [
-        (TAP, "导入打印"), (TAP, "微信导入"), ("ai", "安卓系统", "「打开」"), (TAP, "选择文件"),
+        (TAP, "导入打印"), (TAP, "微信导入"), ("runAdbShell", "Open only the scoped app-to-WeChat confirmation dialogs"),
+        (WAIT, "微信小程序", "选择文件"), (TAP, "选择文件"),
         (TAP, "文件传输助手"), (WAIT, CUBE, "仅有一个"), (TAP, CUBE, "勾选框"),
         (ASSERT, CUBE, "勾选"), (TAP, "确定"), (TAP, "确认导入"), (ASSERT, "立方体", "10"),
     ],
@@ -369,9 +374,17 @@ def check_print_actions(name, flow):
         check_order(name, flow, [("runAdbShell", reset_activity), ("launch", "com.kfb.model")])
     if name == "文字建模":
         allowed_start_commands.discard("am force-stop com.kfb.model")
+        variant_actions = [step for step in flow if "立即生成" in str(step)]
+        assert [next(iter(step)) for step in variant_actions] == [WAIT, "ai", WAIT, TAP]
+        assert all("就这样，生成模型" not in str(step) for step in variant_actions)
         check_order(name, flow, [(TAP, "我的"), (WAIT, "打印记录"), (TAP, "房子"), (WAIT, DEVICE, "空闲")])
     if name in PREVIEW_CASES:
         allowed_start_commands.add(PREVIEW_COLOR_CONFIRM)
+    if name == "模型导入-微信导入":
+        wechat, = [s["runAdbShell"] for s in flow if s.get("runAdbShell", "").startswith("# Open only the scoped app-to-WeChat")]
+        # The device-side command can only accept the two observed dialogs once.
+        assert hashlib.sha256(wechat.encode()).hexdigest() == "afa583a88f51a342c9c221f8c8e91913e84421202a768e1cb13a7bdbc6628d25"
+        allowed_start_commands.add(wechat)
     if name == "姓名牌打印":
         allowed_start_commands.add(PREVIEW_WEAK_SIGNAL_BACK)
     submissions = []
