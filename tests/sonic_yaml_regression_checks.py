@@ -1,5 +1,7 @@
 """Regression checks for the sixteen published 智小白3D Android case flows."""
 
+import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -48,7 +50,8 @@ ROUTES = {
         (TAP, "收藏"), (TAP, "主题专区"), (ASSERT, "选中"), (TAP, "模型"), (ASSERT, "模型", "空状态"),
     ],
     "打印记录查看": [
-        (TAP, "我的"), (TAP, "打印记录"), (ASSERT, DEVICE, "记录", "空状态"),
+        (TAP, "我的"), (TAP, "打印记录"), (WAIT, "设备筛选栏", "记录", "空状态"),
+        (ASSERT, DEVICE, "记录", "空状态"),
     ],
     "模型生成记录": [
         (TAP, "创作"), (TAP, "创作记录"), (ASSERT, "搜索创作标题"), (ASSERT, "年月", "记录"),
@@ -93,7 +96,8 @@ ROUTES = {
     ],
     DRAGON: [
         (ASSERT, DEVICE, "空闲"), (INPUT, "关节龙"), (TAP, "关节龙"), (ASSERT, "关节龙"), (TAP, "去打印"),
-        (TAP, "下一步"), (WAIT, "切片", "关节龙"), (TAP, "确认打印"), (ASSERT, "安全检查"), (TAP, "检查无误确认打印"),
+        (TAP, "下一步"), (WAIT, "切片", "关节龙"), (TAP, "确认打印"), (ASSERT, "网络信号差"),
+        (ASSERT, DEVICE, "安全检查"), (TAP, "检查无误确认打印"),
         (TAP, "返回首页"), (ASSERT, DEVICE, "打印任务", "关节龙"),
     ],
 }
@@ -168,6 +172,9 @@ def check_print_actions(name, flow):
 
 def test_published_baselines():
     assert (ROOT / "deploy" / "3d-daily" / "fixtures" / CUBE).is_file(), f"Missing import fixture {CUBE}"
+    manifest = json.loads((ROOT / "deploy" / "3d-daily" / "baselines.json").read_text())
+    pins = {(row["module"], row["filename"]): row["sha256"] for row in manifest}
+    assert len(pins) == len(manifest) == len(CASE_IDS)
     seen = set()
     for module in ("3D打印基线", "AI测试"):
         directory = Path(module)
@@ -182,6 +189,7 @@ def test_published_baselines():
             seen.add(name)
             twin = ROOT / "server-tasks-all" / directory / path.name
             assert twin.read_bytes() == path.read_bytes(), f"{name}: task mirrors differ"
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == pins[module, path.name], f"{name}: stale scheduled revision"
             assert re.findall(r"(?m)^\s*# baseline\.case_id:\s*(\S+)$", source) == ["COM_KFB_MODEL_" + CASE_IDS[name]], name
             check = validate_yaml_static_executable(source, strict=True)
             assert check["executionLevel"] == "executable", (name, check["errors"], check["warnings"])

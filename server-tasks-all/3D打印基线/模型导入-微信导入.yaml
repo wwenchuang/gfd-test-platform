@@ -12,9 +12,9 @@ tasks:
     flow:
       - runAdbShell: am force-stop com.kfb.model
       - launch: com.kfb.model
-      - aiWaitFor: 智小白3D底部导航中有「首页」「创作」「我的」
+      - aiWaitFor: 底部导航可见「创作」和「我的」，最左侧可见房子图标
         timeout: 12000
-      - aiTap: 底部导航的「首页」
+      - aiTap: 底部导航最左侧的房子图标
       - aiWaitFor: 首页顶部设备栏显示 EP3-9888E0094F2A，快捷入口「标牌」和「导入打印」可见
         timeout: 12000
       - aiAssert: 该设备栏显示空闲，首页没有正在打印、模型处理中或模型处理完成待打印的任务横幅。
@@ -22,7 +22,7 @@ tasks:
       - aiWaitFor: 「模型导入」面板同时显示「本地导入」和「微信导入」
         timeout: 12000
       - aiTap: 模型导入面板内的「微信导入」
-      - aiWaitFor: 微信跳转提示中有「立即跳转」，或已进入含「导入模型」按钮的微信页面
+      - aiWaitFor: 出现可操作的「立即跳转」，或已进入含「导入模型」的微信页面；仅显示应用内的微信导入按钮或提示需安装微信均未完成跳转
         timeout: 12000
       - ai: 若跳转提示显示「立即跳转」，点击一次；若当前微信页已显示「导入模型」则结束本步骤。
       - aiWaitFor: 微信导入文件页显示「导入模型」

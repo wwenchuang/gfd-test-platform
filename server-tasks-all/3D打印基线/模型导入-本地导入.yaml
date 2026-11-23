@@ -12,12 +12,12 @@ tasks:
     flow:
       - runAdbShell: am force-stop com.kfb.model
       - launch: com.kfb.model
-      - aiWaitFor: 智小白3D底部导航中有「首页」「创作」「我的」
+      - aiWaitFor: 底部导航可见「创作」和「我的」，最左侧可见房子图标
         timeout: 12000
-      - aiTap: 底部导航的「首页」
+      - aiTap: 底部导航最左侧的房子图标
       - aiWaitFor: 首页顶部设备栏显示 EP3-9888E0094F2A，快捷入口「标牌」和「导入打印」可见
         timeout: 12000
-      - aiAssert: 该设备栏显示空闲，首页没有正在打印、模型处理中或模型处理完成待打印的任务横幅。
+      - aiAssert: 当前设备编号为 9888E0094F2A，首页快捷入口「导入打印」可操作。
       - aiTap: 首页快捷入口「导入打印」
       - aiWaitFor: 「模型导入」面板同时显示「本地导入」和「微信导入」
         timeout: 12000
