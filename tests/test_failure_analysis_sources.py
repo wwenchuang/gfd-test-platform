@@ -189,8 +189,25 @@ def test_incomplete_secret_context_never_emits_unredacted_free_text(api, monkeyp
         for result in (source.get_failed_steps(), source.get_request_trace(api.child_id), source.compare_last_pass(api.child_id)):
             assert 'secret_context_incomplete' in result['missing']
             for evidence in result['evidence']:
-                assert set(evidence['data']) == {'status', 'failed_assertion_count', 'assertion_types'}
+                if evidence['kind'] == 'failed_steps':
+                    assert set(evidence['data']) == {'status', 'failed_assertion_count', 'assertion_types'}
             assert 'Expected one item' not in json.dumps(result)
+
+
+def test_large_report_exposes_only_fixed_receipt_facts_for_current_slice(api, monkeypatch):
+    module = importlib.import_module('task_server.services.failure_analysis_sources')
+    monkeypatch.setattr(module, 'SECRET_CONTEXT_BYTES', 10)
+    rid, cid = api.add(child_changes={'failure_category': 'setup'}, payload={
+        'request': {'method': 'GET', 'url': 'https://qa.invalid/app/print3d/api/v1/printJob/currentSliceJob?token=private'},
+        'response': {'status_code': 200, 'body': json.dumps({'code': 0, 'data': {
+            'stepType': 'slice', 'status': 'slicing', 'sn': 'private', 'modelName': 'private'}})}})
+    with actor_context(api.actor):
+        result = adapter()(api.actor, 'api', rid, session_factory=api.factory).get_request_trace(cid)
+    assert result['evidence'][0]['data'] == {
+        'failure_stage': 'setup', 'http_status': 200, 'business_code_zero': True,
+        'operation': 'currentSliceJob', 'pending_slice': True}
+    assert 'private' not in json.dumps(result)
+    assert 'secret_context_incomplete' in result['missing']
 
 
 def test_failed_cases_and_total_tool_output_are_bounded_and_queries_are_readonly(api):

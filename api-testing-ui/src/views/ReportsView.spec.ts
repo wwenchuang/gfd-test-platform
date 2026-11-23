@@ -50,6 +50,24 @@ describe('ReportsView', () => {
     wrapper.unmount()
   })
 
+  it('shows the scheduled Agent investigation in the selected report before opening diagnostics', () => {
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    useExecutionsStore().executions = [{ ...report, summary: {
+      ...report.summary, agent_patrol: { message: '回归巡检 · 重复 2', 调查状态: 'limited',
+        结论: '前置检查存在待切片任务', 下一步: '核对本次请求和断言' },
+      agent_patrol_notification: { status: 'sent' },
+    } as unknown as ExecutionView['summary'] }]
+    const wrapper = mount(ReportsView)
+    const panel = wrapper.get('[aria-label="Agent 自动巡检"]')
+    expect(panel.text()).toContain('调查受限')
+    expect(panel.text()).toContain('前置检查存在待切片任务')
+    expect(panel.get('a').attributes('href')).toBe('#/runs?executionId=report-1')
+    expect(wrapper.get('[data-testid="report-feishu-status"]').text()).toContain('已接收')
+    wrapper.unmount()
+  })
+
   it('summarizes report health before opening the full diagnostic report', async () => {
     const executions = useExecutionsStore()
     const context = useContextStore()

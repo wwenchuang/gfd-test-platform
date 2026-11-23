@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AlertTriangle, ArrowLeft, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, RefreshCw, Search, Send, Trash2 } from 'lucide-vue-next'
 
+import PatrolReportSummary from '../components/PatrolReportSummary.vue'
 import DiagnosticReport from '../components/DiagnosticReport.vue'
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
 import {
@@ -260,6 +261,10 @@ function feishuReportState(report: ExecutionView): FeishuReportState {
   const status = report.notifications?.feishu
   if (status?.sent) return { label: status.message || '飞书通知已发', tone: 'sent' }
   if (status?.failed) return { label: status.message || '飞书通知发送失败', tone: 'failed' }
+  const delivery = report.summary?.agent_patrol_notification as unknown as { status?: string } | undefined
+  if (delivery?.status === 'sent') return { label: '飞书已接收巡检报告', tone: 'sent' }
+  if (delivery?.status === 'failed') return { label: '巡检通知发送失败', tone: 'failed' }
+  if (delivery?.status === 'unknown') return { label: '巡检通知送达待确认', tone: 'idle' }
   return { label: '发飞书', tone: 'idle' }
 }
 
@@ -527,6 +532,7 @@ async function restoreArchivedReports(): Promise<void> {
                 </div>
                 <strong>{{ currentMetrics.passRate }}%</strong>
               </header>
+              <PatrolReportSummary :execution="currentReport" />
               <div class="report-detail-actions">
                 <button
                   data-testid="report-open-diagnostic"

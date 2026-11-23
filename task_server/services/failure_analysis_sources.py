@@ -10,6 +10,7 @@ import subprocess
 import uuid
 from collections.abc import Mapping
 from datetime import date, datetime
+from urllib.parse import urlsplit
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -30,6 +31,52 @@ _INLINE_SECRET = re.compile(
     r'''(?ix)(["']?(?:authorization|cookie|password|passwd|secret|token|api[-_]?key|access[-_]?token)["']?\s*[:=]\s*)
     (?:"[^"\n]*"|'[^'\n]*'|[^\s&;,}\]]+)''')
 _HEADER_LINE = re.compile(r'(?im)\b((?:proxy-)?authorization|(?:set-)?cookie)\s*[:=][^\r\n]+')
+
+
+def _safe_receipt(row):
+    """Project only bounded codes and fixed labels when free text cannot be redacted."""
+    raw = row.get('sanitized_result') or {}
+    if not isinstance(raw, dict):
+        return {}
+    facts = {}
+    stage = row.get('failure_category')
+    if stage in ('setup', 'cleanup', 'business_response', 'product_assertion'):
+        facts['failure_stage'] = stage
+    response = raw.get('response')
+    if not isinstance(response, dict):
+        return facts
+    status = response.get('status_code')
+    if type(status) is int and 100 <= status <= 599:
+        facts['http_status'] = status
+    body = response.get('body')
+    if isinstance(body, str) and len(body) <= 16384:
+        try:
+            body = json.loads(body)
+        except (ValueError, RecursionError):
+            return facts
+    if not isinstance(body, dict):
+        return facts
+    if type(body.get('code')) is int:
+        facts['business_code_zero'] = body['code'] == 0
+    request = raw.get('request')
+    if not isinstance(request, dict) or request.get('method') != 'GET':
+        return facts
+    url = request.get('url') or request.get('path')
+    if not isinstance(url, str) or len(url) > 8192:
+        return facts
+    try:
+        path = urlsplit(url).path
+    except ValueError:
+        return facts
+    if path in ('/app/print3d/api/v1/printJob/currentSliceJob', '/print3d/api/v1/printJob/currentSliceJob'):
+        facts['operation'] = 'currentSliceJob'
+        data = body.get('data')
+        if facts.get('business_code_zero') and 'data' in body:
+            if data is None:
+                facts['pending_slice'] = False
+            elif isinstance(data, dict) and data.get('stepType') == 'slice' and data.get('status') == 'slicing':
+                facts['pending_slice'] = True
+    return facts
 
 
 def _identifier(value, source):
@@ -373,6 +420,9 @@ class EvidenceSource:
             secrets = self._api_secrets(self.run_id)
             if secrets is None:
                 result['missing'].append('secret_context_incomplete')
+                receipt = _safe_receipt(row)
+                if receipt:
+                    result['evidence'].append(self._evidence('request_trace', case_id, '同次接口回执摘要', receipt))
                 return self._finish(result)
             trace = self._trace(row)
             for key in ('request', 'response', 'trace'):
