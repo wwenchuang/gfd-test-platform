@@ -192,21 +192,21 @@
     "case_id": "COM_KFB_MODEL_f303c4ecac57",
     "module": "3D打印基线",
     "filename": "成长乐园建模大冒险.yaml",
-    "sha256": "475de5cd6b7720bcf92fb0f91d46b2de8833b76b1372963359697d078e3e9cb9",
+    "sha256": "d7d43c97870fb72628401b8d9e3196fcf199375fc95c0721b34caa8177759529",
     "core": false
   },
   {
     "case_id": "COM_KFB_MODEL_030aa062e2a3",
     "module": "3D打印基线",
     "filename": "成长乐园教材分科.yaml",
-    "sha256": "aa1a7fc0b17e413b3b6e4fd31cdceba9e03f01b723bc9c3433bfeb45cf0f6c14",
+    "sha256": "27e462fce6a1d0b0208a946c9d0d555a244ddf58cc4ba71a6d13da43df5b2fe2",
     "core": false
   },
   {
     "case_id": "COM_KFB_MODEL_74ae8e3d4573",
     "module": "3D打印基线",
     "filename": "成长乐园科创项目.yaml",
-    "sha256": "cdf1a65652cd6714bc1c3d62743585bd3b26f6c2f9cc267849a7a926f824f289",
+    "sha256": "da8ca94e3f65a69b77b8d41fc4d7c07a0f8644c71bd6ed815b504563ef76a1e3",
     "core": false
   },
   {

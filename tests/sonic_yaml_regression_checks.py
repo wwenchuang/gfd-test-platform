@@ -267,6 +267,9 @@ def test_published_baselines():
             check = validate_yaml_static_executable(source, strict=True)
             assert check["executionLevel"] == "executable", (name, check["errors"], check["warnings"])
             flow = task["flow"]
+            if name.startswith("成长乐园"):
+                assert not any("课程内容或带" in step.get(WAIT, "") for step in flow), name
+                check_order(name, flow, [(TAP, "进入课程"), ("ai", "体验提示"), (ASSERT,)])
             if name in EXTENDED_RESULTS:
                 check_order(name, flow, [(TAP,), (ASSERT, *EXTENDED_RESULTS[name])])
             else:
