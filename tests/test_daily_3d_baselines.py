@@ -126,8 +126,8 @@ def test_daily_phases_submit_once(daily, monkeypatch, tmp_path, passed, idle, su
     assert list(map(len, submitted)) == submissions
 
 
-@pytest.mark.parametrize(('date', 'delay'), [('2026-11-20',1500), ('2026-11-21',0)])
-def test_timer_records_before_weekday_delay_and_skips_reentry(daily, tmp_path, monkeypatch, date, delay):
+@pytest.mark.parametrize('date', ['2026-11-20', '2026-11-21'])
+def test_timer_starts_at_six_and_skips_reentry(daily, tmp_path, monkeypatch, date):
     from task_server.services import ui_execution_contract, ui_execution_service
     monkeypatch.setattr(daily, 'STATE', tmp_path)
     manifest = tmp_path / 'baselines.json'
@@ -137,7 +137,7 @@ def test_timer_records_before_weekday_delay_and_skips_reentry(daily, tmp_path, m
     monkeypatch.setattr(ui_execution_contract, 'require_ui_actor', lambda **kw: None)
     monkeypatch.setattr(ui_execution_service, '_require_ui_admission', lambda: None)
     monkeypatch.setattr(daily, 'validate_published', lambda rows: None)
-    clock = daily.datetime.fromisoformat(date + 'T08:30:00+08:00')
+    clock = daily.datetime.fromisoformat(date + 'T06:00:00+08:00')
     monkeypatch.setattr(daily, 'now', lambda: clock)
     path = tmp_path / (date + '.json')
     slept, executed = [], []
@@ -153,7 +153,9 @@ def test_timer_records_before_weekday_delay_and_skips_reentry(daily, tmp_path, m
     monkeypatch.setattr('sys.argv', ['run.py','--run'])
     daily.main()
     daily.main()
-    assert slept == ([delay] if delay else [])
+    assert slept == []
+    assert json.loads(path.read_text())['operate_at'] == clock.isoformat()
+    assert 'OnCalendar=*-*-* 06:00:00 Asia/Shanghai' in ENTRY.with_name('midscene-3d-daily.timer').read_text()
     assert executed == [1]
     assert json.loads(path.read_text())['final']
 

@@ -295,7 +295,7 @@ def main():
             print('validated 16 published revisions, UI admission and schedule owner')
             return
         clock = now()
-        start = clock.replace(hour=8, minute=30, second=0, microsecond=0)
+        start = clock.replace(hour=6, minute=0, second=0, microsecond=0)
         path = STATE / (clock.date().isoformat() + '.json')
         with (STATE / 'schedule.lock').open('a') as lock:
             try:
@@ -309,9 +309,8 @@ def main():
             else:
                 if not start <= clock < start + timedelta(minutes=2):
                     raise ValueError('outside_daily_start_window')
-                operate = start + timedelta(minutes=25 if clock.weekday() < 5 else 0)
                 record = {'date': str(clock.date()), 'owner_id': actor['user_id'], 'created_at': clock.isoformat(),
-                          'operate_at': operate.isoformat(), 'status': 'scheduled', 'batches': {}}
+                          'operate_at': start.isoformat(), 'status': 'scheduled', 'batches': {}}
                 write_record(path, record)
             delay = (datetime.fromisoformat(record['operate_at']) - now()).total_seconds()
             if delay > 0:
