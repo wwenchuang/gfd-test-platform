@@ -1,0 +1,14 @@
+android: {}
+tasks:
+- name: 我的设备状态与控制入口
+  # baseline.case_id: COM_KFB_MODEL_fe3ef167a6cb
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiTap: 个人页「我的设备」
+  - aiWaitFor: 当前设备卡片显示 EP3-9888E0094F2A、在线或离线状态，卡片下有「耗材颜色」「自检校准」和「更多设置」
+    timeout: 12000
+  - aiAssert: 当前设备卡片显示 EP3-9888E0094F2A、在线或离线状态，卡片下有「耗材颜色」「自检校准」和「更多设置」

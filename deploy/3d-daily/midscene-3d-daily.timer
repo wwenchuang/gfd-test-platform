@@ -1,7 +1,7 @@
 [Unit]
-Description=Register the 3D baseline run at 06:00 Shanghai time
+Description=Register the 3D baseline run at 05:00 Shanghai time
 [Timer]
-OnCalendar=*-*-* 06:00:00 Asia/Shanghai
+OnCalendar=*-*-* 05:00:00 Asia/Shanghai
 AccuracySec=1s
 Persistent=false
 Unit=midscene-3d-daily.service

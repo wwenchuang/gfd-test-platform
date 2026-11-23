@@ -1,0 +1,37 @@
+android: {}
+
+tasks:
+  - name: 印章设计退出确认保留编辑
+    # baseline.case_id: COM_KFB_MODEL_94dc87a0326e
+    # baseline.goal: 印章设计退出确认保留编辑
+    # baseline.start_page: App 首页
+    # baseline.path: 首页 → 印章 → 单章DIY → 牛图案 → 盖印效果 → 返回询问 → 继续编辑
+    # baseline.expected: 第二步返回时提示本次设计不会保存，放弃返回后仍保留已选的56mm牛印章。
+    flow:
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+      - launch: com.kfb.model
+      - aiWaitFor: 底部导航同时可见房子图标、「创作」和「我的」
+        timeout: 12000
+      - aiTap: 底部导航最左侧的房子图标
+      - aiWaitFor: 首页快捷入口一行已显示「印章」
+        timeout: 12000
+      - aiTap: 首页快捷入口一行中图标下方标为「印章」的入口
+      - aiWaitFor: 印章页可见「单章DIY」卡片及其「立即定制」按钮
+        timeout: 12000
+      - aiTap: 「单章DIY」卡片内的「立即定制」
+      - aiWaitFor: 设计印面页可见「图案」「文字」「手绘上传」三个标签
+        timeout: 12000
+      - aiTap: 图案分类中的「十二生肖」
+      - aiWaitFor: 十二生肖图库中可见标为「牛」的图案
+        timeout: 12000
+      - aiTap: 标为「牛」的图案卡片
+      - aiTap: 底部「下一步：盖印效果」
+      - aiWaitFor: 盖印效果页显示盖印设置和「56mm」大尺寸选项
+        timeout: 12000
+      - aiTap: 图案尺寸中的「56mm」大尺寸选项
+      - aiAssert: 盖印效果中可见牛图案，尺寸「56mm」处于选中状态。
+      - aiTap: 单章DIY页面顶部左侧返回箭头
+      - aiWaitFor: 弹窗询问是否离开当前设计，并提示未保存或返回后不保存本次操作
+        timeout: 12000
+      - aiTap: 返回确认弹窗内表示取消离开并留在当前设计的按钮
+      - aiAssert: 询问弹窗已关闭，当前仍为盖印效果编辑页，牛图样可见且「56mm」仍为选中尺寸。

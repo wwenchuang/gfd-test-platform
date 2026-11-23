@@ -1,0 +1,25 @@
+android: {}
+
+tasks:
+  - name: 魔法涂鸦创作模式
+    # baseline.case_id: COM_KFB_MODEL_3ebb35556a8d
+    # baseline.goal: 魔法涂鸦创作模式
+    # baseline.start_page: App 首页
+    # baseline.path: 创作 → 更多创作方式 → 魔法涂鸦 → 自由涂鸦 → 画图案
+    # baseline.expected: 临摹、AI、自由三种模式各有独立入口及说明，自由涂鸦进入含工具和笔画粗细选项的第一步画布。
+    flow:
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+      - launch: com.kfb.model
+      - aiWaitFor: 底部导航同时可见房子图标、「创作」和「我的」
+        timeout: 12000
+      - aiTap: 底部导航中间的「创作」
+      - aiWaitFor: 创作页「更多创作方式」下可见「魔法涂鸦」
+        timeout: 12000
+      - aiTap: 「更多创作方式」中的「魔法涂鸦」
+      - aiWaitFor: 魔法涂鸦模式选择页显示「临摹涂鸦」「AI涂鸦」「自由涂鸦」
+        timeout: 12000
+      - aiAssert: 三张模式卡片独立展示：临摹涂鸦说明描图生成3D模型，AI涂鸦说明由AI帮助生成模型，自由涂鸦说明可以随手画。右上有「我的作品」入口。
+      - aiTap: 三张模式卡片中的「自由涂鸦」
+      - aiWaitFor: 页面显示「第1步：画图案」，画布两侧出现涂鸦工具和笔画粗细选项
+        timeout: 12000
+      - aiAssert: 自由画布左侧有「画笔」「橡皮」「形状」「填充」「文字」工具，右侧笔画粗细分为细、中、粗，底部有「下一步：变3D」。

@@ -1,0 +1,39 @@
+android: {}
+
+tasks:
+  - name: 印章阴刻红色试盖
+    # baseline.case_id: COM_KFB_MODEL_2e5ccb88b2ac
+    # baseline.goal: 印章阴刻红色试盖
+    # baseline.start_page: App 首页
+    # baseline.path: 首页 → 印章 → 单章DIY → 牛图案 → 背景有色 → 30mm → 红色印泥试盖
+    # baseline.expected: 选择阴刻、小尺寸和红色印泥后，纸张出现红底留白的牛图样。
+    flow:
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+      - launch: com.kfb.model
+      - aiWaitFor: 底部导航同时可见房子图标、「创作」和「我的」
+        timeout: 12000
+      - aiTap: 底部导航最左侧的房子图标
+      - aiWaitFor: 首页快捷入口一行已显示「印章」
+        timeout: 12000
+      - aiTap: 首页快捷入口一行中图标下方标为「印章」的入口
+      - aiWaitFor: 印章页可见「单章DIY」卡片及其「立即定制」按钮
+        timeout: 12000
+      - aiTap: 「单章DIY」卡片内的「立即定制」
+      - aiWaitFor: 设计印面页可见「图案」「文字」「手绘上传」三个标签
+        timeout: 12000
+      - aiTap: 图案分类中的「十二生肖」
+      - aiWaitFor: 十二生肖图库中可见标为「牛」的图案
+        timeout: 12000
+      - aiTap: 标为「牛」的图案卡片
+      - aiTap: 底部「下一步：盖印效果」
+      - aiWaitFor: 盖印效果页显示「背景有色」「阴刻（白文）」和三档尺寸
+        timeout: 12000
+      - aiTap: 盖印设置里的「背景有色」阴刻选项
+      - aiTap: 选择图案尺寸中的「30mm」小尺寸选项
+      - aiAssert: 盖印设置选中「背景有色」阴刻，图案尺寸选中「30mm」。
+      - aiTap: 盖印效果页底部「下一步：试盖效果」
+      - aiWaitFor: 试盖页显示可点击的纸张及「选择印泥颜色」下的「红色」
+        timeout: 12000
+      - aiTap: 「选择印泥颜色」下的「红色」色块
+      - aiTap: 试盖页中用于盖印的纸张空白区域
+      - aiAssert: 纸张上出现一枚红色背景、牛图案留白的印迹，纸张上的印迹与下方印泥色块位置分开。

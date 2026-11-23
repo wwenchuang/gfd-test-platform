@@ -1,0 +1,25 @@
+android: {}
+
+tasks:
+  - name: 掐丝珐琅挂件选图指引
+    # baseline.case_id: COM_KFB_MODEL_2cb5868e7c2b
+    # baseline.goal: 掐丝珐琅挂件选图指引
+    # baseline.start_page: App 首页
+    # baseline.path: 首页 → 掐丝珐琅 → 挂件 → 上传图片
+    # baseline.expected: 挂件进入图片上传页，上传入口及选图建议均可见。
+    flow:
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+      - launch: com.kfb.model
+      - aiWaitFor: 底部导航同时可见房子图标、「创作」和「我的」
+        timeout: 12000
+      - aiTap: 底部导航最左侧的房子图标
+      - aiWaitFor: 首页快捷入口一行已显示「掐丝珐琅」
+        timeout: 12000
+      - aiTap: 首页快捷入口一行中图标下方标为「掐丝珐琅」的入口
+      - aiWaitFor: 掐丝珐琅专区中可见「生成记录」及挂件、书签、吧唧制作入口
+        timeout: 12000
+      - aiAssert: 挂件、书签和吧唧是三个独立的制作入口，位于掐丝珐琅专区。
+      - aiTap: 标为「挂件」、副标题为「随身创意装饰」的制作入口
+      - aiWaitFor: 标题「上传照片」下出现「点击上传照片」「从相册选择或直接拍照」和「选图建议」
+        timeout: 12000
+      - aiAssert: 选图建议中分别展示「主体纯粹，背景单一」及「杂乱遮挡，边缘模糊」两种图片示例。

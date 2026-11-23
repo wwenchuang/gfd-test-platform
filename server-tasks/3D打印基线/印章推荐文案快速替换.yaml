@@ -1,0 +1,30 @@
+android: {}
+
+tasks:
+  - name: 印章推荐文案快速替换
+    # baseline.case_id: COM_KFB_MODEL_f5c5af5149b4
+    # baseline.goal: 印章推荐文案快速替换
+    # baseline.start_page: App 首页
+    # baseline.path: 首页 → 印章 → 单章DIY → 文字 → 两次选择推荐文案
+    # baseline.expected: 连续选择两条推荐文案，输入框每次被所选文案完整替换。
+    flow:
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+      - launch: com.kfb.model
+      - aiWaitFor: 底部导航同时可见房子图标、「创作」和「我的」
+        timeout: 12000
+      - aiTap: 底部导航最左侧的房子图标
+      - aiWaitFor: 首页快捷入口一行已显示「印章」
+        timeout: 12000
+      - aiTap: 首页快捷入口一行中图标下方标为「印章」的入口
+      - aiWaitFor: 印章页可见「单章DIY」卡片及其「立即定制」按钮
+        timeout: 12000
+      - aiTap: 「单章DIY」卡片内的「立即定制」
+      - aiWaitFor: 设计印面页可见「图案」「文字」「手绘上传」三个标签
+        timeout: 12000
+      - aiTap: 设计印面页的「文字」标签
+      - aiWaitFor: 输入文字区域及「点击下方文案快速替换」的推荐文案区可见
+        timeout: 12000
+      - aiTap: 推荐文案区的「平安喜乐」
+      - aiAssert: 「输入文字」下的编辑框内容为「平安喜乐」。
+      - aiTap: 推荐文案区的「好好学习」
+      - aiAssert: 「输入文字」下的编辑框内容只有「好好学习」，先前选的「平安喜乐」已被替换。

@@ -1,4 +1,4 @@
-"""Regression checks for the sixteen published 智小白3D Android case flows."""
+"""Regression checks for the scheduled 智小白3D Android case flows."""
 
 import hashlib
 import json
@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from task_server.services.yaml_service import stable_case_id
 from task_server.services.yaml_static_validator import validate_yaml_static_executable
 
 
@@ -36,6 +37,38 @@ CASE_IDS = {
     "我的收藏查看": "a22bf0c3aab6",
     "模型生成记录": "a341e0b47085",
     "十二生肖印章打印": "eae567b5f2ba",
+}
+# Observable end state for each extended route. The original routes below also
+# enforce the ordering and ownership of high-impact actions.
+EXTENDED_RESULTS = {
+    "首页热门与最新模型": ("最新", "模型卡片"),
+    "首页搜索模型详情": ("迷你保龄球套装", "查看全部"),
+    "浏览主题专区模型": ("光隅小灯具", "模型卡片"),
+    "主题配套套件介绍": ("适配模型", "套件包含内容"),
+    "新手必学课程目录": ("机器操作", "已完成"),
+    "广场推荐和最新作品": ("最新", "互动数据"),
+    "广场作品详情": ("作品详情", "互动数据"),
+    "个人作品按类型筛选": ("作品", "印章", "选中"),
+    "个人导入文件保存期限": ("30天", "过期自动删除"),
+    "邀请打印规则与记录": ("邀请记录", "明细"),
+    "勋章挑战与已获勋章": ("成长成就", "勋章"),
+    "服务中心设备与自助问题": (DEVICE, "猜你想问"),
+    "服务中心故障解答": ("已解决", "未解决"),
+    "成长乐园教材分科": ("英语", "课程"),
+    "成长乐园建模大冒险": ("当前任务", "魔法涂鸦", "魔法积木"),
+    "成长乐园科创项目": ("科创课", "立即学习"),
+    "我的设备状态与控制入口": (DEVICE, "更多设置"),
+    "设备详情与部件保养": (DEVICE, "打印平台"),
+    "设备耗材颜色面板": ("选择耗材颜色", "基础", "釉光"),
+    "个人成长能力报告": ("经验值", "最近成长"),
+    "掐丝珐琅手工教程播放": ("倍速", "播放"),
+    "掐丝珐琅挂件选图指引": ("主体纯粹", "杂乱遮挡"),
+    "魔法涂鸦创作模式": ("自由画布", "粗细", "下一步"),
+    "标牌文字八字边界": ("春夏秋冬东南西北", "未写入"),
+    "印章图库分类切换": ("十二生肖", "牛", "虎"),
+    "印章推荐文案快速替换": ("好好学习", "平安喜乐"),
+    "印章阴刻红色试盖": ("红色", "牛图案"),
+    "印章设计退出确认保留编辑": ("56mm", "牛图样"),
 }
 TAP, WAIT, ASSERT, INPUT = "aiTap", "aiWaitFor", "aiAssert", "aiInput"
 # Match ordered actions and the associated business result, excluding YAML comments.
@@ -134,6 +167,9 @@ def check_print_actions(name, flow):
     if name in {"十二生肖印章打印", DRAGON, "文字建模"}:
         allowed_start_commands.add(reset_activity)
         check_order(name, flow, [("runAdbShell", reset_activity), ("launch", "com.kfb.model")])
+    if name in EXTENDED_RESULTS and any(step.get("runAdbShell") == reset_activity for step in flow):
+        allowed_start_commands.add(reset_activity)
+        check_order(name, flow, [("runAdbShell", reset_activity), ("launch", "com.kfb.model")])
     if name == "文字建模":
         allowed_start_commands.discard("am force-stop com.kfb.model")
         check_order(name, flow, [(TAP, "我的"), (WAIT, "打印记录"), (TAP, "房子"), (WAIT, DEVICE, "空闲")])
@@ -209,7 +245,7 @@ def test_published_baselines():
     assert (ROOT / "deploy" / "3d-daily" / "fixtures" / CUBE).is_file(), f"Missing import fixture {CUBE}"
     manifest = json.loads((ROOT / "deploy" / "3d-daily" / "baselines.json").read_text())
     pins = {(row["module"], row["filename"]): row["sha256"] for row in manifest}
-    assert len(pins) == len(manifest) == len(CASE_IDS)
+    assert len(pins) == len(manifest) == len(CASE_IDS) + len(EXTENDED_RESULTS)
     seen = set()
     for module in ("3D打印基线", "AI测试"):
         directory = Path(module)
@@ -220,20 +256,26 @@ def test_published_baselines():
             name = task["name"]
             if module == "AI测试" and name not in CASE_IDS:
                 continue
-            assert name in CASE_IDS and name not in seen, f"{module}: unexpected or duplicate {name}"
+            assert (name in CASE_IDS or name in EXTENDED_RESULTS) and name not in seen, f"{module}: unexpected or duplicate {name}"
             seen.add(name)
             twin = ROOT / "server-tasks-all" / directory / path.name
             assert twin.read_bytes() == path.read_bytes(), f"{name}: task mirrors differ"
             assert hashlib.sha256(path.read_bytes()).hexdigest() == pins[module, path.name], f"{name}: stale scheduled revision"
-            assert re.findall(r"(?m)^\s*# baseline\.case_id:\s*(\S+)$", source) == ["COM_KFB_MODEL_" + CASE_IDS[name]], name
+            case_id = ("COM_KFB_MODEL_" + CASE_IDS[name] if name in CASE_IDS
+                       else stable_case_id("com.kfb.model", module, path.name, name))
+            assert re.findall(r"(?m)^\s*# baseline\.case_id:\s*(\S+)$", source) == [case_id], name
             check = validate_yaml_static_executable(source, strict=True)
             assert check["executionLevel"] == "executable", (name, check["errors"], check["warnings"])
             flow = task["flow"]
-            check_order(name, flow, ROUTES[name])
+            if name in EXTENDED_RESULTS:
+                check_order(name, flow, [(TAP,), (ASSERT, *EXTENDED_RESULTS[name])])
+            else:
+                check_order(name, flow, ROUTES[name])
             check_print_actions(name, flow)
-    assert seen == CASE_IDS.keys() == ROUTES.keys(), f"Missing cases {CASE_IDS.keys() - seen}"
+    assert CASE_IDS.keys() == ROUTES.keys()
+    assert seen == CASE_IDS.keys() | EXTENDED_RESULTS.keys()
 
 
 if __name__ == "__main__":
     test_published_baselines()
-    print("16 published 智小白3D case flows passed regression checks")
+    print(f"{len(CASE_IDS) + len(EXTENDED_RESULTS)} 智小白3D case flows passed regression checks")

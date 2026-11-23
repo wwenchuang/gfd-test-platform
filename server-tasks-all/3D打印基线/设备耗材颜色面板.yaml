@@ -1,0 +1,17 @@
+android: {}
+tasks:
+- name: 设备耗材颜色面板
+  # baseline.case_id: COM_KFB_MODEL_a285ccf1ac24
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiTap: 个人页「我的设备」
+  - aiWaitFor: 当前设备为 EP3-9888E0094F2A
+    timeout: 12000
+  - aiTap: 设备卡下方「耗材颜色」
+  - aiWaitFor: 设备「选择耗材颜色」面板包含「基础」「釉光」、带名称的颜色选项和「确认」按钮
+    timeout: 12000
+  - aiAssert: 设备「选择耗材颜色」面板包含「基础」「釉光」、带名称的颜色选项和「确认」按钮

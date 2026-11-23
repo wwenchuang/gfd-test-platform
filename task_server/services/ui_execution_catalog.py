@@ -5,6 +5,7 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 from urllib.parse import urlencode
 
 import yaml
@@ -17,6 +18,21 @@ _cache_lock = threading.Lock()
 _cache = None
 _cache_at = 0.0
 _EXECUTABLE = {'active', 'baseline'}
+_CORE_APP = 'com.kfb.model'
+_CORE_MANIFEST = Path(__file__).resolve().parents[2] / 'deploy/3d-daily/baselines.json'
+
+
+def _release_core_ids():
+    try:
+        entries = json.loads(_CORE_MANIFEST.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+        return []
+    ids = [entry.get('case_id') for entry in entries if entry.get('core') is True]
+    if not all(isinstance(case_id, str) and case_id for case_id in ids) or len(set(ids)) != len(ids):
+        return []
+    return ids
 
 
 def clear_catalog_cache():
@@ -38,12 +54,15 @@ def _catalog_rows():
         if _cache is not None and time.monotonic() - _cache_at < _CACHE_SECONDS:
             return _cache
         rows = []
+        core_ids = _release_core_ids()
         for asset in case_service.list_task_case_assets():
             if asset.get('error') or not asset.get('case_id') or not asset.get('app_package'):
                 continue
             row = {key: str(asset.get(key) or '') for key in
                    ('case_id', 'task_name', 'module', 'status', 'platform', 'business')}
             row['app_id'] = str(asset['app_package'])
+            row['release_core'] = (row['app_id'] == _CORE_APP and row['platform'] == 'android'
+                                   and row['case_id'] in core_ids)
             row['execution_eligible'] = row['status'] in _EXECUTABLE
             row['block_code'] = '' if row['execution_eligible'] else 'generated_case_gate_required'
             row['revision'] = ''
@@ -64,8 +83,8 @@ def _catalog_rows():
                                         str(asset.get('expected') or ''), source]).casefold()
             rows.append(row)
         rows.sort(key=lambda row: (-row['updated_ns'], row['case_id']))
-        _cache, _cache_at = rows, time.monotonic()
-        return rows
+        _cache, _cache_at = (rows, core_ids), time.monotonic()
+        return _cache
 
 
 def _public(row):
@@ -105,7 +124,8 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
     if app_id and app_id not in {app['package'] for app in apps}:
         raise ValueError('app_unavailable')
     allowed = {app['package'] for app in apps}
-    scoped_rows = [r for r in _catalog_rows() if r['app_id'] in allowed
+    catalog_rows, core_ids = _catalog_rows()
+    scoped_rows = [r for r in catalog_rows if r['app_id'] in allowed
                    and (not app_id or r['app_id'] == app_id)
                    and (scope == 'all' or r['status'] in _EXECUTABLE)]
     rows = [r for r in scoped_rows if (not module or r['module'] == module)
@@ -139,8 +159,15 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
             'total':len(rows), 'items':[], 'next_cursor':None}
     fingerprint = hashlib.sha256(json.dumps([app_id,module,query,scope],ensure_ascii=False).encode()).hexdigest()[:16]
     items, next_cursor = _page(rows,cursor,fingerprint,limit)
+    release_core = None
+    if app_id == _CORE_APP:
+        eligible = {r['case_id']: r for r in scoped_rows if r['release_core'] and r['execution_eligible']}
+        # Keep manifest order across searches and pages. A partial preset could omit a release check.
+        cases = [{key: eligible[case_id][key] for key in ('case_id', 'revision', 'task_name')}
+                 for case_id in core_ids] if len(eligible) == len(core_ids) else []
+        release_core = {'total': len(core_ids), 'cases': cases}
     return {'apps':summaries, 'modules':modules, 'publication_modules':publication_modules, 'groups':[], 'total':len(rows),
-            'items':items, 'next_cursor':next_cursor}
+            'items':items, 'next_cursor':next_cursor, 'release_core':release_core}
 
 
 def get_ui_devices(actor, app_id):

@@ -1,0 +1,15 @@
+android: {}
+tasks:
+- name: 服务中心设备与自助问题
+  # baseline.case_id: COM_KFB_MODEL_c5678d848f77
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiTap: 个人页顶部的「服务中心」
+  - ai: 如果出现介绍小白的引导且有「跳过」，点击「跳过」一次；已在服务中心则结束。
+  - aiWaitFor: 服务中心显示当前设备的 Mac 码 9888E0094F2A，并在「猜你想问」下列出至少一项具体故障问题
+    timeout: 12000
+  - aiAssert: 服务中心显示当前设备的 Mac 码 9888E0094F2A，并在「猜你想问」下列出至少一项具体故障问题

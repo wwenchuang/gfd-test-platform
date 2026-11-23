@@ -1,0 +1,33 @@
+android: {}
+
+tasks:
+  - name: 印章图库分类切换
+    # baseline.case_id: COM_KFB_MODEL_a70e71ac468d
+    # baseline.goal: 印章图库分类切换
+    # baseline.start_page: App 首页
+    # baseline.path: 首页 → 印章 → 单章DIY → 天气图库 → 十二生肖图库
+    # baseline.expected: 两次分类切换改变图案网格，天气图案与生肖图案对应各自分类。
+    flow:
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+      - launch: com.kfb.model
+      - aiWaitFor: 底部导航同时可见房子图标、「创作」和「我的」
+        timeout: 12000
+      - aiTap: 底部导航最左侧的房子图标
+      - aiWaitFor: 首页快捷入口一行已显示「印章」
+        timeout: 12000
+      - aiTap: 首页快捷入口一行中图标下方标为「印章」的入口
+      - aiWaitFor: 印章页可见「单章DIY」卡片及其「立即定制」按钮
+        timeout: 12000
+      - aiTap: 「单章DIY」卡片内的「立即定制」
+      - aiWaitFor: 设计印面页可见「图案」「文字」「手绘上传」三个标签
+        timeout: 12000
+      - aiWaitFor: 图案页分类行显示「天气」和「十二生肖」
+        timeout: 12000
+      - aiTap: 图案分类行中的「天气」
+      - aiWaitFor: 「天气」分类处于选中状态，下方图案网格已更新
+        timeout: 12000
+      - aiAssert: 当前选中「天气」，网格中有能识别为天气的图案。
+      - aiTap: 同一分类行中的「十二生肖」
+      - aiWaitFor: 「十二生肖」分类处于选中状态，下方网格出现生肖动物
+        timeout: 12000
+      - aiAssert: 当前选中「十二生肖」，网格有分别标为「牛」和「虎」的图案。

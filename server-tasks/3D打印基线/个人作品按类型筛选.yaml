@@ -1,0 +1,17 @@
+android: {}
+tasks:
+- name: 个人作品按类型筛选
+  # baseline.case_id: COM_KFB_MODEL_bc0809a1b4bd
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiTap: 个人内容区的「作品」标签
+  - aiWaitFor: 「作品」标签选中，次级分类有「全部」「AI建模」「印章」
+    timeout: 12000
+  - aiTap: 作品次级分类栏中的「印章」，不要点击作品卡片
+  - aiWaitFor: 「作品」与「印章」均选中，下方显示印章作品缩略图或明确的空作品提示，页面没有加载错误
+    timeout: 12000
+  - aiAssert: 「作品」与「印章」均选中，下方显示印章作品缩略图或明确的空作品提示，页面没有加载错误

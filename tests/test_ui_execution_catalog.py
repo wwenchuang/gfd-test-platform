@@ -399,3 +399,42 @@ def test_catalog_routes_default_off_and_availability_is_readable(data,monkeypatc
     assert h.status==200 and len(h.body['items'])==7
     router._get_ui_execution_devices(h,{'app_id':APP})
     assert h.status==200 and len(h.body['devices'])==1
+
+
+def test_release_core_uses_exact_android_ids_in_manifest_order_across_filters(data, tmp_path, monkeypatch):
+    app = 'com.kfb.model'
+    profile, rows, _, _ = data
+    profile['scope']['ui_apps'].append(app)
+    monkeypatch.setattr(catalog.business_line_service, 'configured_test_applications', lambda: [
+        {'package': app, 'enabled': True}, {'package': APP, 'enabled': True}])
+    manifest = tmp_path / 'baselines.json'
+    manifest.write_text(json.dumps([
+        {'case_id': 'second', 'core': True}, {'case_id': 'first', 'core': True},
+        {'case_id': 'ordinary', 'core': 'true'}]))
+    monkeypatch.setattr(catalog, '_CORE_MANIFEST', manifest, raising=False)
+    for case_id, package, platform in [
+        ('first', app, 'android'), ('second', app, 'android'), ('ordinary', app, 'android'),
+        ('first-copy', app, 'android'), ('first', app, 'ios'), ('second', APP, 'android')]:
+        rows.append({**rows[0], 'case_id': case_id, 'app_package': package, 'platform': platform,
+                     'task_name': '相同标题', 'module': '3D打印基线', 'file': '相同文件.yaml'})
+    result = catalog.get_ui_catalog(None, app_id=app, scope='published', query='无匹配', limit=1)
+    assert result['items'] == []
+    assert [r['case_id'] for r in result['release_core']['cases']] == ['second', 'first']
+    assert result['release_core']['total'] == 2
+    assert all(r['revision'] == hashlib.sha256(SOURCE.encode()).hexdigest()
+               for r in result['release_core']['cases'])
+    result = catalog.get_ui_catalog(None, app_id=app, scope='published')
+    assert {(r['case_id'], r['platform']) for r in result['items'] if r['release_core']} == {
+        ('first', 'android'), ('second', 'android')}
+    other = catalog.get_ui_catalog(None, app_id=APP)
+    assert other.get('release_core') is None
+    assert not any(r['release_core'] for r in other['items'])
+    assert catalog.get_ui_catalog(None).get('release_core') is None
+
+    next(r for r in rows if r['case_id'] == 'second' and r['app_package'] == app)['status'] = 'draft'
+    catalog.clear_catalog_cache()
+    assert catalog.get_ui_catalog(None, app_id=app)['release_core'] == {'total': 2, 'cases': []}
+
+    manifest.unlink()
+    catalog.clear_catalog_cache()
+    assert catalog.get_ui_catalog(None, app_id=app)['release_core'] == {'total': 0, 'cases': []}

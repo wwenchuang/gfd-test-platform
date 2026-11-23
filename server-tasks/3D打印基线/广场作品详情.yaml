@@ -1,0 +1,16 @@
+android: {}
+tasks:
+- name: 广场作品详情
+  # baseline.case_id: COM_KFB_MODEL_04b577b1392f
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航的「广场」
+  - aiWaitFor: 推荐流已展示带封面和标题的作品卡片
+    timeout: 12000
+  - aiTap: 推荐流内首张完整显示的作品封面，不点击互动按钮
+  - aiWaitFor: 已进入单个广场作品详情，在主作品图或视频旁可见互动数据及可识别的作品说明或关联模型信息
+    timeout: 12000
+  - aiAssert: 已进入单个广场作品详情，在主作品图或视频旁可见互动数据及可识别的作品说明或关联模型信息

@@ -1,0 +1,18 @@
+android: {}
+tasks:
+- name: 服务中心故障解答
+  # baseline.case_id: COM_KFB_MODEL_9dd0ee0e8716
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiTap: 个人页顶部的「服务中心」
+  - ai: 如果出现介绍小白的引导且有「跳过」，点击「跳过」一次；已在服务中心则结束。
+  - aiWaitFor: 「猜你想问」下方出现设备故障问题
+    timeout: 12000
+  - aiTap: 「猜你想问」下第一条有完整问题标题的故障问题
+  - aiWaitFor: 解答详情页显示所选故障问题标题和帮助内容，底部提供「已解决」「未解决」两个反馈选项
+    timeout: 12000
+  - aiAssert: 解答详情页显示所选故障问题标题和帮助内容，底部提供「已解决」「未解决」两个反馈选项

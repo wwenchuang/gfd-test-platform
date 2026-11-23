@@ -1,0 +1,22 @@
+android: {}
+tasks:
+- name: 首页搜索模型详情
+  # baseline.case_id: COM_KFB_MODEL_d33ca0ef5c26
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最左侧的首页房子图标
+  - aiTap: 首页顶端的放大镜搜索图标
+  - aiWaitFor: 顶部有搜索输入框
+    timeout: 12000
+  - aiInput: 顶部搜索输入框
+    value: 保龄球
+  - aiTap: 输入框右侧的「搜索」
+  - aiWaitFor: 结果中出现名称为「迷你保龄球套装」的模型卡片
+    timeout: 12000
+  - aiTap: 搜索结果中标题完整为「迷你保龄球套装」的模型卡片
+  - aiWaitFor: 详情标题为「迷你保龄球套装」，可见模型预览图和模型文件区域「查看全部」
+    timeout: 12000
+  - aiAssert: 详情标题为「迷你保龄球套装」，可见模型预览图和模型文件区域「查看全部」

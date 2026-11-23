@@ -1,0 +1,17 @@
+android: {}
+tasks:
+- name: 勋章挑战与已获勋章
+  # baseline.case_id: COM_KFB_MODEL_624698170056
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiTap: 个人页勋章挑战区域的「去看看」
+  - aiWaitFor: 「我的勋章」中可见「勋章挑战」和「已获得勋章」
+    timeout: 12000
+  - aiTap: 已获得勋章区域内的「成长成就」
+  - aiWaitFor: 「成长成就」分类选中，可见该分类的勋章、获得条件或明确的未获得提示
+    timeout: 12000
+  - aiAssert: 「成长成就」分类选中，可见该分类的勋章、获得条件或明确的未获得提示

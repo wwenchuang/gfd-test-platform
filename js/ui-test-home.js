@@ -96,6 +96,20 @@
     if(s.reportId&&s.reportId!==id)clearReport(s,true);
     s.batchId=id;
   }
+  function coreSelectionButton(s,preset){
+    const button=document.createElement('button');
+    button.type='button';button.className='btn-sm';
+    button.textContent=preset.cases.length?`仅选择核心流程（${preset.cases.length} 条）`:preset.total?`核心流程未就绪（共 ${preset.total} 条）`:'核心流程清单暂不可用';
+    button.title=preset.cases.length?'仅勾选智小白3D Android 的全部核心流程，选好后可手动增减。':'请检查核心清单和用例的发布状态。';
+    button.disabled=!preset.cases.length||!s.options.canExecute();
+    button.onclick=()=>{
+      if(!valid(s)||s.busy||s.uncertain||!s.options.canExecute())return;
+      s.selected=new Map(preset.cases.map(({case_id,revision,task_name})=>[case_id,{case_id,revision,task_name}]));
+      for(const input of s.node.querySelectorAll('[data-case-id]'))input.checked=s.selected.has(input.dataset.caseId);
+      invalidateStart(s);
+    };
+    return button;
+  }
   function renderCases(s,data){
     const host=s.node.querySelector('[data-ui-cases]');host.replaceChildren();
     const groups=s.app?[{name:'',items:data.items||[]}]:data.groups||[];
@@ -107,6 +121,10 @@
         const label=document.createElement('label');label.className='ui-case-row';
         label.innerHTML=`<input type="checkbox" data-case-id="${e(item.case_id)}"><span class="ui-case-icon">${caseIcon}</span><span class="ui-case-copy"><strong>${e(item.task_name||item.case_id)}</strong><small>${e(item.module||'未分组')} · ${item.execution_eligible?(s.options.mode==='library'?'已发布 · 可选入测试':'待选机检查兼容性'):item.block_code==='case_unavailable'?'基线文件暂不可用，请检查用例文件':'尚未发布为可执行基线'}</small></span>`;
         const input=label.querySelector('input');input.disabled=!item.execution_eligible||!s.options.canExecute();input.checked=s.selected.has(item.case_id);
+        if(item.release_core){
+          const marker=document.createElement('span');marker.textContent='核心流程';
+          label.querySelector('small').prepend(marker,' · ');
+        }
         input.onchange=()=>{
           if(s.busy||s.uncertain)return;
           if(item.app_id!==s.app)changeApp(s,item.app_id);
@@ -118,7 +136,12 @@
       if(group.has_more){const more=document.createElement('button');more.type='button';more.className='btn-sm';more.textContent=`查看全部 ${group.total} 条`;more.onclick=()=>changeApp(s,group.app_id);section.append(more);}
       host.append(section);
     }
-    if(!host.childElementCount)host.textContent=s.includeDrafts?'没有匹配用例，试试其他应用或关键词。':'没有匹配的已发布基线，试试其他应用或关键词。';
+    if(!host.childElementCount){
+      const empty=document.createElement('p');
+      empty.textContent=s.includeDrafts?'没有匹配用例，试试其他应用或关键词。':'没有匹配的已发布基线，试试其他应用或关键词。';
+      host.append(empty);
+    }
+    if(s.app&&data.release_core)host.prepend(coreSelectionButton(s,data.release_core));
     s.node.querySelector('[data-ui-case-count]').textContent=`${data.total||0} 条匹配${s.includeDrafts?'用例':'基线'}${s.app?'':' · 每个应用先显示 3 条'}`;
     s.next=data.next_cursor||'';
     s.node.querySelector('[data-ui-prev]').disabled=!s.previous.length;

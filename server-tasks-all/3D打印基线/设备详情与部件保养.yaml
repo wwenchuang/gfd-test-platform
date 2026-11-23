@@ -1,0 +1,17 @@
+android: {}
+tasks:
+- name: 设备详情与部件保养
+  # baseline.case_id: COM_KFB_MODEL_d4891e6003ce
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiTap: 个人页「我的设备」
+  - aiWaitFor: 当前设备为 EP3-9888E0094F2A
+    timeout: 12000
+  - aiTap: 当前设备下的「更多设置」
+  - aiWaitFor: 「设备详情」显示 Mac码 9888E0094F2A 和最大打印尺寸；耗材与部件保养区域可见喷头组件、打印平台以及剩余百分比
+    timeout: 12000
+  - aiAssert: 「设备详情」显示 Mac码 9888E0094F2A 和最大打印尺寸；耗材与部件保养区域可见喷头组件、打印平台以及剩余百分比

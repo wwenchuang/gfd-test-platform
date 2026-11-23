@@ -18,10 +18,10 @@ def daily():
     return module
 
 
-def cases(d):
-    names = [d.DRAGON, *['case-%s.yaml' % i for i in range(12)], *reversed(d.SMOKE)]
+def cases(d, remaining=12):
+    names = [d.DRAGON, *['case-%s.yaml' % i for i in range(remaining)], *reversed(d.SMOKE)]
     return [{'case_id': str(i), 'module': '3D打印基线', 'filename': name,
-             'sha256': 'a' * 64} for i, name in enumerate(names)]
+             'sha256': 'a' * 64, 'core': name in d.SMOKE} for i, name in enumerate(names)]
 
 
 def test_plan_keeps_exact_cases_and_dragon_last(daily):
@@ -33,6 +33,25 @@ def test_plan_keeps_exact_cases_and_dragon_last(daily):
     assert phases[-1][1] == rows[:1]
     with pytest.raises(ValueError):
         daily.plan(rows[:15] + [rows[0]])
+
+
+@pytest.mark.parametrize(('remaining', 'sizes'), [
+    (0, []), (1, [1]), (200, [200]), (201, [200, 1]), (401, [200, 200, 1]),
+])
+def test_all_manifest_rows_are_scheduled_once_within_platform_limits(daily, remaining, sizes):
+    from task_server.services.ui_execution_service import _normalize_request
+    rows = cases(daily, remaining)
+    phases = daily.plan(rows)
+    assert [name for name, _ in phases] == [
+        'smoke', *['remaining' if i == 1 else f'remaining_{i}' for i in range(1, len(sizes) + 1)], 'dragon',
+    ]
+    assert [len(group) for _, group in phases] == [3, *sizes, 1]
+    assert [row for _, group in phases[1:-1] for row in group] == rows[1:1 + remaining]
+    for _, group in phases:
+        _normalize_request({
+            'app_id': daily.APP, 'targets': [{'platform': 'android', 'device_id': daily.PHONE, 'runner_id': 'r'}],
+            'cases': [{'case_id': row['case_id'], 'revision': row['sha256']} for row in group],
+        })
 
 
 @pytest.mark.parametrize('flags,allowed', [
@@ -86,15 +105,16 @@ def test_cancel_unclaimed_never_interrupts_running_or_other_batches(daily, tmp_p
     assert store.get_batch(other['ui_batch_id'])['case_attempts'][0]['status'] == 'cancelled'
 
 
-@pytest.mark.parametrize(('passed', 'idle', 'submissions', 'final'), [
-    (1, True, [3], 'stopped_smoke'),
-    (2, False, [3, 12], 'skipped_printer_busy_or_unknown'),
-    (3, True, [3, 12, 1], 'passed'),
+@pytest.mark.parametrize(('passed', 'idle', 'remaining', 'failed_remaining', 'submissions', 'final'), [
+    (1, True, 12, False, [3], 'stopped_smoke'),
+    (2, False, 12, False, [3, 12], 'skipped_printer_busy_or_unknown'),
+    (3, True, 12, False, [3, 12, 1], 'passed'),
+    (3, True, 201, True, [3, 200, 1, 1], 'finished_with_failures'),
 ])
-def test_daily_phases_submit_once(daily, monkeypatch, tmp_path, passed, idle, submissions, final):
+def test_daily_phases_submit_once(daily, monkeypatch, tmp_path, passed, idle, remaining, failed_remaining, submissions, final):
     from task_server.services import ui_execution_service, ui_execution_store
     batches, submitted = {}, []
-    groups = daily.plan(cases(daily))
+    groups = daily.plan(cases(daily, remaining))
     target = {'platform':'android', 'device_id':'ecbfd645', 'runner_id':'runner-1'}
     class FakeStore:
         def find_idempotent(self, owner_id, key):
@@ -111,7 +131,8 @@ def test_daily_phases_submit_once(daily, monkeypatch, tmp_path, passed, idle, su
     def watch(batch_id, deadline, dragon=False):
         rows = submitted[int(batch_id.rsplit('-', 1)[-1])]
         return [{'case_id': r['case_id'], 'case_revision':r['revision'], 'attempt_no':1,
-                 'status':'failed' if len(rows) == 3 and i >= passed else 'passed'} for i, r in enumerate(rows)]
+                 'status':'failed' if (len(rows) == 3 and i >= passed) or (
+                     failed_remaining and len(rows) == 200 and i == 0) else 'passed'} for i, r in enumerate(rows)]
     monkeypatch.setattr(daily, 'phone_target', lambda: target)
     monkeypatch.setattr(daily, 'watch', watch)
     monkeypatch.setattr(daily, 'printer_idle', lambda: idle)
@@ -124,10 +145,15 @@ def test_daily_phases_submit_once(daily, monkeypatch, tmp_path, passed, idle, su
         result = daily.run_stages(record, tmp_path / 'day.json', groups, daily.now() + daily.timedelta(hours=1))
         assert result == final
     assert list(map(len, submitted)) == submissions
+    if failed_remaining:
+        outcomes = [status for group in record['outcomes'].values() for status in group.values()]
+        assert outcomes.count('failed') == 1
+        assert outcomes.count('passed') == sum(submissions) - 1
+        assert record['dragon_receipt']['print_sn'] == '321654'
 
 
 @pytest.mark.parametrize('date', ['2026-11-20', '2026-11-21'])
-def test_timer_starts_at_six_and_skips_reentry(daily, tmp_path, monkeypatch, date):
+def test_timer_starts_at_five_and_skips_reentry(daily, tmp_path, monkeypatch, date):
     from task_server.services import ui_execution_contract, ui_execution_service
     monkeypatch.setattr(daily, 'STATE', tmp_path)
     manifest = tmp_path / 'baselines.json'
@@ -137,7 +163,7 @@ def test_timer_starts_at_six_and_skips_reentry(daily, tmp_path, monkeypatch, dat
     monkeypatch.setattr(ui_execution_contract, 'require_ui_actor', lambda **kw: None)
     monkeypatch.setattr(ui_execution_service, '_require_ui_admission', lambda: None)
     monkeypatch.setattr(daily, 'validate_published', lambda rows: None)
-    clock = daily.datetime.fromisoformat(date + 'T06:00:00+08:00')
+    clock = daily.datetime.fromisoformat(date + 'T05:00:00+08:00')
     monkeypatch.setattr(daily, 'now', lambda: clock)
     path = tmp_path / (date + '.json')
     slept, executed = [], []
@@ -155,7 +181,7 @@ def test_timer_starts_at_six_and_skips_reentry(daily, tmp_path, monkeypatch, dat
     daily.main()
     assert slept == []
     assert json.loads(path.read_text())['operate_at'] == clock.isoformat()
-    assert 'OnCalendar=*-*-* 06:00:00 Asia/Shanghai' in ENTRY.with_name('midscene-3d-daily.timer').read_text()
+    assert 'OnCalendar=*-*-* 05:00:00 Asia/Shanghai' in ENTRY.with_name('midscene-3d-daily.timer').read_text()
     assert executed == [1]
     assert json.loads(path.read_text())['final']
 

@@ -1,0 +1,18 @@
+android: {}
+tasks:
+- name: 主题配套套件介绍
+  # baseline.case_id: COM_KFB_MODEL_abbd4bafc201
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最左侧的首页房子图标
+  - aiTap: 首页主题专区右侧的「查看全部」
+  - aiTap: 主题列表中的「光隅小灯具」
+  - aiWaitFor: 光隅小灯具详情有「配套套件」
+    timeout: 12000
+  - aiTap: 「配套套件」区域的「去看看」
+  - aiWaitFor: 套件详情页展示「套件介绍」「适配模型」和套件名称，并可看到「套件包含内容」与具体品类
+    timeout: 12000
+  - aiAssert: 套件详情页展示「套件介绍」「适配模型」和套件名称，并可看到「套件包含内容」与具体品类

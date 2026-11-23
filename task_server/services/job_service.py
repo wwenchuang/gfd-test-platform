@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -44,6 +45,7 @@ from ..schemas import (
 )
 from ..storage import (
     clean_filename,
+    file_mutation_lock,
     invalidate_json_cache,
     read_json_cached,
     read_json_file,
@@ -731,36 +733,8 @@ def attach_repair_draft(job_id: str, draft: Dict[str, Any]) -> Optional[Dict[str
 # Task Meta 辅助（源自 midscene-upload.py）
 # ---------------------------------------------------------------------------
 
-def _task_key(module: str, file: str) -> str:
-    """生成 task 唯一键。"""
-    from ..storage import clean_filename
-    return f"{module}::{clean_filename(file)}"
-
-
-def _load_task_meta() -> Dict[str, Any]:
-    """加载 task-meta 元数据。"""
-    data = read_json_cached(TASK_META_FILE, default={})
-    return data if isinstance(data, dict) else {}
-
-
-def _save_task_meta(data: Dict[str, Any]) -> None:
-    """保存 task-meta 元数据。"""
-    write_json_file(TASK_META_FILE, data)
-
-
 def _update_task_meta(module: str, file: str, patch: Dict[str, Any]) -> Dict[str, Any]:
-    """更新 task 元数据。"""
-    from ..storage import clean_filename
-    data = _load_task_meta()
-    key = _task_key(module, file)
-    row = data.get(key, {"module": module, "file": clean_filename(file), "status": "draft"})
-    row.update({k: v for k, v in patch.items() if v is not None})
-    row["module"] = module
-    row["file"] = clean_filename(file)
-    row["updated_at"] = _now_str()
-    data[key] = row
-    _save_task_meta(data)
-    return row
+    return update_task_meta(module, file, patch)
 
 
 # ---------------------------------------------------------------------------
@@ -1434,18 +1408,32 @@ def load_task_meta():
 
 
 
-def update_task_meta(module, file, patch):
-    data = load_task_meta()
-    key = task_key(module, file)
-    row = data.get(key, {"module": module, "file": clean_filename(file), "status": "draft"})
-    row.update({k: v for k, v in patch.items() if v is not None})
-    row["module"] = module
-    row["file"] = clean_filename(file)
-    row["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    data[key] = row
-    save_task_meta(data)
-    return row
+@contextmanager
+def locked_task_meta():
+    """Serialize cross-process read-modify-write and reject unreadable existing metadata."""
+    import json
+    with file_mutation_lock(TASK_META_FILE):
+        try:
+            with open(TASK_META_FILE, encoding="utf-8") as source:
+                data = json.load(source)
+        except FileNotFoundError:
+            data = {}
+        if not isinstance(data, dict):
+            raise ValueError("invalid_task_metadata")
+        yield data
 
+
+def update_task_meta(module, file, patch):
+    with locked_task_meta() as data:
+        key = task_key(module, file)
+        row = data.get(key, {"module": module, "file": clean_filename(file), "status": "draft"})
+        row.update({k: v for k, v in patch.items() if v is not None})
+        row["module"] = module
+        row["file"] = clean_filename(file)
+        row["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        data[key] = row
+        save_task_meta(data)
+        return row
 
 
 def load_task_apps():

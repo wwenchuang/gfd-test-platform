@@ -14,14 +14,15 @@ PHONE = 'ecbfd645'
 MACHINE = '9888E0094F2A'
 SMOKE = ('我的收藏查看.yaml', '打印记录查看.yaml', '模型生成记录.yaml')
 DRAGON = '关节龙打印.yaml'
+MAX_BATCH_CASES = 200  # ui_execution_service._normalize_request
 LOCAL = timezone(timedelta(hours=8))
 MANIFEST = Path(__file__).with_name('baselines.json')
 STATE = Path('/var/lib/midscene-3d-daily')
 
 
 def plan(rows):
-    if not isinstance(rows, list) or len(rows) != 16:
-        raise ValueError('expected_16_baselines')
+    if not isinstance(rows, list):
+        raise ValueError('invalid_baseline_manifest')
     by_file = {}
     ids = set()
     for row in rows:
@@ -35,8 +36,12 @@ def plan(rows):
     if not {DRAGON, *SMOKE} <= by_file.keys():
         raise ValueError('missing_required_baselines')
     remaining = [row for row in rows if row['filename'] not in (*SMOKE, DRAGON)]
-    return [('smoke', [by_file[name] for name in SMOKE]), ('remaining', remaining),
-            ('dragon', [by_file[DRAGON]])]
+    phases = [('smoke', [by_file[name] for name in SMOKE])]
+    for start in range(0, len(remaining), MAX_BATCH_CASES):
+        name = 'remaining' if start == 0 else f'remaining_{start // MAX_BATCH_CASES + 1}'
+        phases.append((name, remaining[start:start + MAX_BATCH_CASES]))
+    phases.append(('dragon', [by_file[DRAGON]]))
+    return phases
 
 
 def validate_published(rows):
@@ -292,10 +297,10 @@ def main():
             return
         if args.check:
             validate_published(rows)
-            print('validated 16 published revisions, UI admission and schedule owner')
+            print(f'validated {len(rows)} published revisions, UI admission and schedule owner')
             return
         clock = now()
-        start = clock.replace(hour=6, minute=0, second=0, microsecond=0)
+        start = clock.replace(hour=5, minute=0, second=0, microsecond=0)
         path = STATE / (clock.date().isoformat() + '.json')
         with (STATE / 'schedule.lock').open('a') as lock:
             try:

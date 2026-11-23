@@ -1,0 +1,14 @@
+android: {}
+tasks:
+- name: 个人成长能力报告
+  # baseline.case_id: COM_KFB_MODEL_091353ce3ee9
+  flow:
+  - runAdbShell: am force-stop com.kfb.model
+  - launch: com.kfb.model
+  - aiWaitFor: 智小白3D底部导航的「创作」和最左侧的首页房子图标可见
+    timeout: 12000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiTap: 头像右侧的「我的成长」
+  - aiWaitFor: 「成长报告」中显示当前等级、经验值以及「我的能力」各项分数，并有「最近成长」记录或明确的空状态
+    timeout: 12000
+  - aiAssert: 「成长报告」中显示当前等级、经验值以及「我的能力」各项分数，并有「最近成长」记录或明确的空状态

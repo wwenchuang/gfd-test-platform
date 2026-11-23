@@ -1,0 +1,28 @@
+android: {}
+
+tasks:
+  - name: 标牌文字八字边界
+    # baseline.case_id: COM_KFB_MODEL_18f682a00659
+    # baseline.goal: 标牌文字八字边界
+    # baseline.start_page: App 首页
+    # baseline.path: 首页 → 标牌 → 输入八字 → 追加第九字
+    # baseline.expected: 输入八个汉字后尝试追加第九字，编辑框保留原八字。
+    flow:
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+      - launch: com.kfb.model
+      - aiWaitFor: 底部导航同时可见房子图标、「创作」和「我的」
+        timeout: 12000
+      - aiTap: 底部导航最左侧的房子图标
+      - aiWaitFor: 首页快捷入口一行已显示「标牌」
+        timeout: 12000
+      - aiTap: 首页快捷入口一行中图标下方标为「标牌」的入口
+      - aiWaitFor: 标题「标牌」下可见标牌文字输入框，提示「最多输入8个字」
+        timeout: 12000
+      - aiInput: 「标牌文字」下的输入框
+        value: 春夏秋冬东南西北
+        mode: replace
+      - aiAssert: 标牌文字输入框内完整显示「春夏秋冬东南西北」。
+      - aiInput: 当前标牌文字输入框
+        value: 春夏秋冬东南西北中
+        mode: replace
+      - aiAssert: 标牌文字输入框的完整内容为「春夏秋冬东南西北」，第九个字「中」未写入。

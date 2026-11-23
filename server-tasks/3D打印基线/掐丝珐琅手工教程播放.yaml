@@ -1,0 +1,27 @@
+android: {}
+
+tasks:
+  - name: 掐丝珐琅手工教程播放
+    # baseline.case_id: COM_KFB_MODEL_1062711c27bf
+    # baseline.goal: 掐丝珐琅手工教程播放
+    # baseline.start_page: App 首页
+    # baseline.path: 首页 → 掐丝珐琅 → 手工教程 → 播放进度
+    # baseline.expected: 专区展示上色及覆膜工序，打开教程后视频有正的已播放时间、总时长及倍速控件。
+    flow:
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+      - launch: com.kfb.model
+      - aiWaitFor: 底部导航同时可见房子图标、「创作」和「我的」
+        timeout: 12000
+      - aiTap: 底部导航最左侧的房子图标
+      - aiWaitFor: 首页快捷入口一行已显示「掐丝珐琅」
+        timeout: 12000
+      - aiTap: 首页快捷入口一行中图标下方标为「掐丝珐琅」的入口
+      - aiWaitFor: 掐丝珐琅专区显示「手工教程」，下方依次展示「3D打印」「上色」「覆膜」「完成」
+        timeout: 12000
+      - aiTap: 专区顶部标有「手工教程」的教程封面
+      - aiWaitFor: 教程已切换到独立视频播放页，视频画面已显示
+        timeout: 12000
+      - ai: 如果视频画面的播放进度条已经隐藏，轻点视频画面中间一次显示控件；若进度条已显示则结束本步。
+      - aiWaitFor: 视频进度条左侧已播放时间超过00:00，右侧显示非零总时长
+        timeout: 12000
+      - aiAssert: 教程播放器显示已播放时间及总时长，已播放时间大于零且小于总时长，下方有「倍速」控件。
