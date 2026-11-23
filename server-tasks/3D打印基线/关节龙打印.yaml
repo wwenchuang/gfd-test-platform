@@ -51,12 +51,23 @@ tasks:
       # Verify the rendered GCode canvas in two consecutive Android accessibility snapshots.
       set -eu
       file=$(mktemp /data/local/tmp/qa-kfb-render.XXXXXX)
-      trap 'rm -f "$file"' EXIT
+      trap 'rm -f "$file" "$file.err"' EXIT
       deadline=$(($(date +%s)+210))
       stable=0
       while [ "$(date +%s)" -lt "$deadline" ]; do
         : > "$file"
-        uiautomator dump "$file" >/dev/null || exit 1
+        dump_status=0
+        uiautomator dump "$file" >/dev/null 2>"$file.err" || dump_status=$?
+        if [ -s "$file.err" ]; then
+          if grep -Fqx 'ERROR: could not get idle state.' "$file.err" && ! grep -Fvxq 'ERROR: could not get idle state.' "$file.err"; then
+            stable=0
+            sleep 1
+            continue
+          fi
+          cat "$file.err" >&2
+          exit 1
+        fi
+        [ "$dump_status" -eq 0 ] || { echo "UI hierarchy dump failed with status $dump_status" >&2; exit 1; }
         if awk '
           BEGIN { RS=">" }
           function attr(key, v) {

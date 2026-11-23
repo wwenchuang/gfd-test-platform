@@ -221,6 +221,8 @@ def test_dragon_preview_canvas():
     partial = ready.replace(leaf, node(box="[121,240][180,260]"))
     cases = [
         ([partial, ready, ready], True), ([ready, partial, ready], False),
+        (["idle", ready, ready], True), ([ready, "idle", ready], False),
+        (["idle", "idle"], False), (["fatal", ready, ready], False),
         ([ready.replace("确认打印", "处理完成后直接打印")], False),
         ([ready.replace("取消打印", "取消处理")], False),
         ([ready.replace("27.3g", "0g")], False), ([ready.replace("3小时55分钟", "0分钟")], False),
@@ -238,7 +240,14 @@ def test_dragon_preview_canvas():
                 (root / str(i)).write_text(xml)
             harness = """
                 i=0
-                uiautomator() { cp "$PROBE/$i" "$2" || return 1; i=$((i+1)); }
+                uiautomator() {
+                    frame="$PROBE/$i"; i=$((i+1))
+                    case "$(cat "$frame")" in
+                        idle) echo 'ERROR: could not get idle state.' >&2; return 0;;
+                        fatal) echo 'permission denied' >&2; return 1;;
+                    esac
+                    cp "$frame" "$2"
+                }
                 sleep() { :; }
                 date() { if [ "$i" -lt "$FRAME_COUNT" ]; then echo 100; else echo 500; fi; }
                 input() { echo 'unexpected input' >&2; exit 99; }
@@ -246,6 +255,8 @@ def test_dragon_preview_canvas():
             res = subprocess.run(["sh", "-c", harness + command.replace("/data/local/tmp", tmp)],
                                  env={"PROBE": tmp, "FRAME_COUNT": str(len(frames))}, capture_output=True, text=True, timeout=8)
             assert (res.returncode == 0) == ok and "unexpected input" not in res.stderr, (frames, res.stdout, res.stderr)
+            if ok: assert not res.stderr, res.stderr
+            if "fatal" in frames: assert "permission denied" in res.stderr
             assert (res.stdout.strip() == "preview canvas ready in two successive observations") == ok
 
 
@@ -458,7 +469,7 @@ def check_print_actions(name, flow):
         second = next(i for i, s in enumerate(flow) if s.get("runAdbShell") == select)
         geometry = "浅灰色预览画布中央完整显示红色盘曲成环的立体关节龙，能看清龙头轮廓和沿弯曲龙身连续的分节。"
         render = flow[first + 1]["runAdbShell"]
-        assert hashlib.sha256(render.encode()).hexdigest() == "eb29e4ab566b028dd143e8222c96977b5030f19aa2c87ce786ca6b2fa6e65de6"
+        assert hashlib.sha256(render.encode()).hexdigest() == "dc25db9661513ca51b468b6b417fdcfbf2c0784c8005e3397fa3ffcd7a139d83"
         for index in (first, second):
             assert flow[index + 1] == {"runAdbShell": render, "timeout": 240000}
             assert flow[index + 2].get(WAIT) == geometry
