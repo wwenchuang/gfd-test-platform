@@ -5,10 +5,10 @@ tasks:
     # baseline.case_id: COM_KFB_MODEL_6f389b0277e7
     # baseline.goal: 验证模型导入-本地导入
     # baseline.start_page: App 首页
-    # baseline.path: 首页 → 导入打印 → 本地导入 → 搜索预置 STL → 打开模型编辑 → 返回
+    # baseline.path: 首页 → 导入打印 → 本地导入 → 按路径打开预置 STL → 打开模型编辑 → 返回
     # baseline.expected: 精确文件名匹配的预置 10mm 立方体在智小白3D编辑器中显示，退出本次编辑。
     # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
-    # 运行前置：在系统文件选择器可访问的 Download 目录中预置唯一的 qa-import-cube-10mm.stl（deploy/3d-daily/fixtures/）。
+    # 运行前置：指定手机的 Download/微信导入测试/ 目录中预置 qa-import-cube-10mm.stl（deploy/3d-daily/fixtures/）。
     flow:
       - runAdbShell: am force-stop com.kfb.model
       - launch: com.kfb.model
@@ -22,20 +22,19 @@ tasks:
       - aiWaitFor: 「模型导入」面板同时显示「本地导入」和「微信导入」
         timeout: 12000
       - aiTap: 模型导入面板内的「本地导入」
-      - aiWaitFor: Android 系统文件选择器显示文件列表和文件搜索入口
+      - aiWaitFor: Android 文件选择器左上角的导航抽屉按钮可见
         timeout: 12000
-      - aiTap: 文件选择器中的放大镜搜索按钮
-      - aiWaitFor: 文件选择器顶部搜索输入框可输入
+      - aiTap: Android 文件选择器左上角三条横线的导航菜单
+      - aiWaitFor: 侧边栏显示本机内部存储空间，设备名称为 OPPO Reno9 或 PHM110
         timeout: 12000
-      - aiInput: 文件选择器顶部搜索输入框
-        value: qa-import-cube-10mm.stl
-        mode: replace
-        autoDismissKeyboard: false
-      - aiKeyboardPress: 文件选择器顶部搜索输入框
-        keyName: Enter
-      - aiWaitFor: 搜索结果中完整文件名为「qa-import-cube-10mm.stl」的文件仅有一个
-        timeout: 30000
-      - aiTap: 搜索结果中完整文件名为「qa-import-cube-10mm.stl」的文件名文字
+      - aiTap: 侧边栏以本机名称 OPPO Reno9 或 PHM110 标识的内部存储入口
+      - ai: 在当前内部存储根目录的列表中向下浏览，直到完整名称「Download」的文件夹可见；可见即结束，不选择文件。
+      - aiTap: 内部存储根目录中文件夹名称为「Download」的行
+      - ai: 在 Download 当前目录内向下浏览到名称完整为「微信导入测试」的文件夹；可见即结束，不打开其他目录。
+      - aiTap: 名称完整为「微信导入测试」的文件夹
+      - aiWaitFor: 当前目录标题是「微信导入测试」，其中完整文件名为「qa-import-cube-10mm.stl」的 STL 仅有一个
+        timeout: 12000
+      - aiTap: 当前目录「微信导入测试」中的文件「qa-import-cube-10mm.stl」
       - aiWaitFor: 已回到智小白3D，当前导入模型的「下一步」可见，或三维模型摆放编辑器已加载
         timeout: 120000
       - ai: 若已显示模型尺寸、缩放和三维摆放编辑画布，结束本步骤；仅在导入文件已选中但尚未进入摆放编辑画布时，点击导入页底部「下一步」一次。

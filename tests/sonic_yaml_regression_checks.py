@@ -60,11 +60,13 @@ ROUTES = {
         (TAP, "服务中心"), (TAP, "联系客服"), (INPUT, "消息输入框"), (ASSERT, "发送"), (ASSERT, "清空"),
     ],
     "小白客商城-耗材": [
-        (TAP, "耗材商城"), ("ai", "安卓系统", "「打开」"), ("ai", "耗材", "售价"),
+        (TAP, "耗材商城"), (WAIT, "温馨提示", "立即跳转"), (TAP, "立即跳转"),
+        (WAIT, "微信", "打开"), ("ai", "安卓系统", "「打开」"), ("ai", "耗材", "售价"),
         (ASSERT, "耗材", "商品", "价格"),
     ],
     "OBJ保龄球打印": [
-        (INPUT, "保龄球"), (TAP, "迷你保龄球套装"), (TAP, "查看全部"), (TAP, "「保龄球」"), (ASSERT, "球体"),
+        (INPUT, "保龄球"), (TAP, "迷你保龄球套装"), (TAP, "查看全部"), (TAP, "「保龄球套装2」", "22 mm"), (ASSERT, "球体"),
+        (TAP, "取消打印"), (TAP, "返回"), (ASSERT, "迷你保龄球套装", "旋转", "下一步"),
     ],
     "姓名牌打印": [
         (INPUT, "姓名牌"), (TAP, "姓名牌", "卡片"), (TAP, "去编辑"), (WAIT, "文本输入框"), (INPUT, "UI自动化"),
@@ -73,22 +75,24 @@ ROUTES = {
     "普通印章打印": [
         (TAP, "单章DIY"), (TAP, "文字"), (INPUT, "UI自动化"), (TAP, "字体"),
         (TAP, "盖印效果"), (ASSERT, "40mm"), (TAP, "试盖效果"), (ASSERT, "文字", "图样"),
-        (TAP, "选择把手"), (TAP, "完成"), (ASSERT, "文字印章", "预览"), (TAP, "去打印"),
+        (TAP, "选择把手"), (TAP, "完成"), (ASSERT, "文字印章", "预览"), (TAP, "去打印"), ("ai", "打磨", "知道了"),
     ],
     "十二生肖印章打印": [
         (TAP, "单章DIY"), (TAP, "十二生肖"), (TAP, "牛"), (ASSERT, "牛", "选中"),
         (TAP, "盖印效果"), (ASSERT, "40mm"), (TAP, "试盖效果"), (ASSERT, "牛", "图样"),
-        (TAP, "选择把手"), (TAP, "完成"), (ASSERT, "牛印章", "预览"), (TAP, "去打印"),
+        (TAP, "选择把手"), (TAP, "完成"), (ASSERT, "牛印章", "预览"), (TAP, "去打印"), ("ai", "打磨", "知道了"),
     ],
     "标牌打印": [
         (TAP, "标牌"), (INPUT, "UI自动化"), (TAP, "字体"), (TAP, "生成3D预览图"), (TAP, "去打印"),
     ],
     "文字建模": [
-        (TAP, "创作"), (TAP, "开始创作"), (INPUT, "硬币"), (TAP, "发送"), (WAIT, "硬币", "去打印"),
-        (TAP, "硬币", "去打印"),
+        (TAP, "创作"), (TAP, "开始创作"), (INPUT, "硬币"), (TAP, "发送"), (TAP, "不补充"),
+        (WAIT, "就这样，生成模型"), (TAP, "就这样，生成模型"), (WAIT, "硬币", "去打印"),
+        (TAP, "硬币", "去打印"), (TAP, "返回"), (ASSERT, "居中", "旋转", "下一步"),
     ],
     "模型导入-本地导入": [
-        (TAP, "导入打印"), (TAP, "本地导入"), (INPUT, CUBE), (WAIT, CUBE, "仅有一个"), (TAP, CUBE),
+        (TAP, "导入打印"), (TAP, "本地导入"), (TAP, "内部存储"), (TAP, "Download"),
+        (TAP, "微信导入测试"), (WAIT, CUBE, "仅有一个"), (TAP, CUBE),
         (ASSERT, "立方体", "10"), (TAP, "返回"), (ASSERT, "退出"),
     ],
     "模型导入-微信导入": [
@@ -98,7 +102,8 @@ ROUTES = {
     ],
     DRAGON: [
         (ASSERT, DEVICE, "空闲"), (INPUT, "关节龙"), (TAP, "关节龙"), (ASSERT, "关节龙"), (TAP, "去打印"),
-        (TAP, "下一步"), (WAIT, "切片", "关节龙"), (TAP, "确认打印"), (ASSERT, "网络信号差"),
+        (WAIT, "关节龙", "分节龙形"), (TAP, "下一步"), (WAIT, "分节龙形", "耗材"),
+        (ASSERT, "分节龙形", "设备就绪", "网络信号差"), (TAP, "确认打印"), (ASSERT, "网络信号差"),
         (ASSERT, DEVICE, "安全检查"), (TAP, "检查无误确认打印"),
         (TAP, "返回首页"), (ASSERT, DEVICE, "打印任务", "关节龙"),
     ],
@@ -124,6 +129,14 @@ def check_order(name, flow, sequence):
 
 
 def check_print_actions(name, flow):
+    reset_activity = "am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity"
+    allowed_start_commands = {"am force-stop com.kfb.model"}
+    if name in {"十二生肖印章打印", DRAGON, "文字建模"}:
+        allowed_start_commands.add(reset_activity)
+        check_order(name, flow, [("runAdbShell", reset_activity), ("launch", "com.kfb.model")])
+    if name == "文字建模":
+        allowed_start_commands.discard("am force-stop com.kfb.model")
+        check_order(name, flow, [(TAP, "我的"), (WAIT, "打印记录"), (TAP, "房子"), (WAIT, DEVICE, "空闲")])
     submissions = []
     cancellations = []
     for index, step in enumerate(flow):
@@ -133,7 +146,7 @@ def check_print_actions(name, flow):
             if name == "客服对话" and command == "input keyevent 123 67 67":
                 check_order(name, flow[:index], [(INPUT, "QA"), (ASSERT, "尚未发送"), (TAP, "恢复输入焦点")])
             else:
-                assert command == "am force-stop com.kfb.model", f"{name}: unexpected ADB command {command}"
+                assert command in allowed_start_commands, f"{name}: unexpected ADB command {command}"
         for action in (TAP, "ai", "aiAct", "aiAction"):
             if action not in step:
                 continue
@@ -153,6 +166,8 @@ def check_print_actions(name, flow):
             label = target.replace("与「确认打印」并列的「取消打印」", "「取消打印」") if action == TAP else target
             if re.search(r"确认打印|直接打印|开始打印|提交打印|发送打印", label):
                 submissions.append(index)
+    if name in PREVIEW_CASES or name == DRAGON:
+        check_order(name, flow, [(WAIT, DEVICE, "空闲"), (ASSERT, "空闲")])
     if name == DRAGON:
         assert len(submissions) == 2 and not cancellations, f"{name}: expected exactly two separate confirmation taps"
         assert all(TAP in flow[i] for i in submissions), f"{name}: submission must be an explicit tap"
@@ -163,8 +178,9 @@ def check_print_actions(name, flow):
         cancel = cancellations[0]
         guard = " ".join(str(step.get(key, "")) for step in flow[:cancel] for key in (ASSERT, WAIT))
         assert DEVICE in guard, f"{name}: preview must use the designated device"
+        next_step = ("ai", "无弹窗", "下一步", "一次", "耗材颜色") if name == "姓名牌打印" else (TAP, "下一步")
         check_order(name, flow[:cancel], [
-            (ASSERT, "空闲"), (TAP, "下一步"), (WAIT, "模型打印预览", "确认打印"),
+            (ASSERT, "空闲"), next_step, (WAIT, "模型打印预览", "确认打印"),
             (ASSERT, "本次", "预览", "确认打印"),
         ])
         check_order(name, flow[cancel + 1:], [(WAIT, "已取消模型处理", "返回"), (TAP, "返回"), (ASSERT, "离开")])

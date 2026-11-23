@@ -9,13 +9,17 @@ tasks:
     # baseline.expected: 本次硬币描述生成模型，编辑器可继续到切片结果，退出本次待确认预览。
     # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
     flow:
-      - runAdbShell: am force-stop com.kfb.model
+      # 清理本应用的页面栈；保留进程中的设备连接。
+      - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
       - launch: com.kfb.model
       - aiWaitFor: 底部导航可见「创作」和「我的」，最左侧可见房子图标
         timeout: 12000
-      - aiTap: 底部导航最左侧的房子图标
-      - aiWaitFor: 首页顶部设备栏显示 EP3-9888E0094F2A，快捷入口「标牌」和「导入打印」可见
+      - aiTap: 底部导航最右侧的「我的」
+      - aiWaitFor: 个人页中可见「我的设备」和「打印记录」
         timeout: 12000
+      - aiTap: 底部导航最左侧的房子图标
+      - aiWaitFor: 首页的 EP3-9888E0094F2A 设备卡片已刷新，明确显示「空闲」，或已显示打印中、任务待处理等占用状态
+        timeout: 35000
       - aiAssert: 该设备栏显示空闲，首页没有正在打印、模型处理中或模型处理完成待打印的任务横幅。
       - aiTap: 底部导航中间的「创作」
       - aiWaitFor: 创作页显示「AI创作」、「说出想法，开始创造」及「开始创作」
@@ -33,9 +37,12 @@ tasks:
       - aiWaitFor: 当前创作会话中已发送「UI自动化硬币图片」，并已返回本次参考图和「没有喜欢的」入口，或本次描述下已有直接生成模型的选项
         timeout: 240000
       - ai: 如果本次参考图下显示「没有喜欢的」，仅点该入口一次；若当前已有「不补充 直接生成」或「生成模型」按钮则结束本步骤。
-      - aiWaitFor: 当前硬币创作会话出现「不补充 直接生成」或「生成模型」按钮
-        timeout: 12000
-      - ai: 点击当前硬币创作会话的「不补充 直接生成」；若只有「生成模型」，点击「生成模型」。只触发一次生成。
+      - aiWaitFor: 本次硬币需求的澄清回复下出现「不补充 直接生成」快捷选项
+        timeout: 30000
+      - aiTap: 本次硬币需求澄清回复下的「不补充 直接生成」按钮
+      - aiWaitFor: 本次硬币设计图已经渲染，设计图下方的「就这样，生成模型」按钮已出现
+        timeout: 240000
+      - aiTap: 当前硬币设计图下方的「就这样，生成模型」按钮
       - aiWaitFor: 本次对话的硬币三维模型已生成，模型卡片上「去打印」可点击
         timeout: 240000
       - aiTap: 本次硬币模型卡片上的「去打印」
@@ -56,4 +63,6 @@ tasks:
       - aiWaitFor: 「模型打印预览」显示「已取消模型处理」和底部「返回」按钮
         timeout: 30000
       - aiTap: 已取消模型处理页面底部的「返回」
-      - aiAssert: 已离开已取消模型处理的预览页，返回本次创作、编辑、导入或首页。
+      - aiWaitFor: 模型摆放编辑器的左侧「居中」和「旋转」工具、底部「下一步」按钮已出现
+        timeout: 12000
+      - aiAssert: 当前画布有本次生成的三维模型，左侧有「居中」和「旋转」，底部有「下一步」。这些控件同时出现表示已离开任务结果页并返回模型编辑器。
