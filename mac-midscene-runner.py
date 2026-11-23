@@ -346,19 +346,27 @@ def http_json(method, path, payload=None, timeout=60):
 
 def task_runtime_env(force=False):
     global _RUNTIME_ENV_CACHE, _RUNTIME_ENV_ERROR, _RUNTIME_ENV_FETCHED_AT
-    now = time.time()
-    if _RUNTIME_ENV_CACHE is not None and not force and now - _RUNTIME_ENV_FETCHED_AT < RUNTIME_ENV_CACHE_SECONDS:
+    if _RUNTIME_ENV_CACHE and not force and time.monotonic() - _RUNTIME_ENV_FETCHED_AT < RUNTIME_ENV_CACHE_SECONDS:
         return _RUNTIME_ENV_CACHE
-    try:
-        data = http_json("GET", "/api/sonic/runtime-env", timeout=15)
-        values = data.get("env") if isinstance(data, dict) else {}
-        _RUNTIME_ENV_CACHE = values if isinstance(values, dict) else {}
-        _RUNTIME_ENV_ERROR = "" if _RUNTIME_ENV_CACHE else "接口未返回模型配置"
-    except Exception as exc:
-        _RUNTIME_ENV_CACHE = {}
-        _RUNTIME_ENV_ERROR = str(exc)
-    _RUNTIME_ENV_FETCHED_AT = now
-    return _RUNTIME_ENV_CACHE
+    for attempt in range(2):
+        try:
+            data = http_json("GET", "/api/sonic/runtime-env", timeout=15)
+            values = data.get("env") if isinstance(data, dict) else None
+            values = values if isinstance(values, dict) else {}
+            credential_keys = ("MIDSCENE_MODEL_API_KEY", "OPENAI_API_KEY", "DASHSCOPE_API_KEY")
+            has_key = any(isinstance(values.get(key), str) and values[key].strip() for key in credential_keys)
+            _RUNTIME_ENV_CACHE = values if has_key else {}
+            _RUNTIME_ENV_ERROR = "" if has_key else "接口未返回模型凭据"
+            _RUNTIME_ENV_FETCHED_AT = time.monotonic()
+            return values
+        except Exception as exc:
+            _RUNTIME_ENV_CACHE = {}
+            _RUNTIME_ENV_ERROR = str(exc)
+            transient = (exc.code in {408, 429, 500, 502, 503, 504} if isinstance(exc, urllib.error.HTTPError)
+                         else isinstance(exc, (urllib.error.URLError, OSError)))
+            if attempt or not transient:
+                return {}
+            time.sleep(1)
 
 
 def http_error_text(error, limit=1200):
