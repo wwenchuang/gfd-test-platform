@@ -2480,6 +2480,22 @@ def configure_zxb_model_transport(env, eligible):
 RUNNER_ZXB_MODEL_TRANSPORT = r'''
 function zxbModelConnectFetch(fetch, wait = require('node:timers/promises').setTimeout) {
   const endpoint = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+  async function isUnavailable(response, request) {
+    if (response.status !== 503 || !request.signal ||
+        response.headers.get('x-dashscope-call-gateway') !== 'true' || response.headers.get('x-dashscope-finished') !== 'false' ||
+        response.headers.get('content-type')?.split(';')[0].trim() !== 'application/json' || response.headers.has('retry-after')) return false;
+    try {
+      const model = JSON.parse(request.body);
+      if (model.model !== 'qwen3.7-plus' || model.stream !== false || !Array.isArray(model.messages) || model.tools || model.functions) return false;
+      const body = await response.clone().json();
+      const id = response.headers.get('x-request-id');
+      return Boolean(id && body.request_id === id && body.error?.code === 'ServiceUnavailable' &&
+        body.error.type === 'ServiceUnavailable' && (body.choices === undefined || (Array.isArray(body.choices) && body.choices.length === 0)));
+    } catch {
+      request.signal.throwIfAborted();
+      return false;
+    }
+  }
   return async function(input, init) {
     if ((typeof input !== 'string' && !(input instanceof URL)) || String(input) !== endpoint ||
         init?.method !== 'POST' || typeof init.body !== 'string' ||
@@ -2488,10 +2504,12 @@ function zxbModelConnectFetch(fetch, wait = require('node:timers/promises').setT
     }
     // A redirect is already an HTTP response. Surface it before another connection can start.
     const request = {...init, redirect: 'manual'};
+    let retriedUnavailable = false;
     for (let attempt = 1; ; attempt++) {
       init.signal?.throwIfAborted();
+      let response;
       try {
-        return await fetch(input, request);
+        response = await fetch(input, request);
       } catch (error) {
         init.signal?.throwIfAborted();
         const cause = error?.cause;
@@ -2501,7 +2519,13 @@ function zxbModelConnectFetch(fetch, wait = require('node:timers/promises').setT
         if (!preconnect || attempt >= 4) throw error;
         console.warn('Model connection retry: ' + cause.code + ', attempt ' + (attempt + 1) + '/4');
         await wait(3000, undefined, {signal: init.signal});
+        continue;
       }
+      if (attempt >= 4 || retriedUnavailable || !await isUnavailable(response, request)) return response;
+      init.signal.throwIfAborted();
+      retriedUnavailable = true;
+      console.warn('Model service unavailable; retrying once, attempt ' + (attempt + 1) + '/4');
+      await wait(3000, undefined, {signal: init.signal});
     }
   };
 }

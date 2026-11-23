@@ -26,7 +26,7 @@ def test_transport_scope_and_explicit_model_settings():
     assert env["MIDSCENE_ZXB_MODEL_CONNECT_RETRY"] == "1"
 
 
-def test_inference_fetch_only_retries_confirmed_preconnect_failures():
+def test_inference_fetch_retries_only_confirmed_connect_failures_or_provider_rejection():
     runner = load_runner()
     script = runner.RUNNER_ZXB_MODEL_TRANSPORT + r'''
 const assert = require('node:assert/strict');
@@ -64,6 +64,30 @@ async function exercise(replies, options = opts(), url = endpoint, duringWait) {
     r=await exercise([timeout],options,url); assert.equal(r.value,timeout); assert.equal(r.attempts.length,1);
     assert.equal(r.attempts[0][1],options);
   }
+  const modelOpts={...opts(), signal:new AbortController().signal, body:JSON.stringify({model:'qwen3.7-plus',stream:false,messages:[{role:'user',content:'fixture'}]})};
+  const rid='9b37afff-b311-9a61-8279-233457591753';
+  const headers={'x-dashscope-call-gateway':'true','x-dashscope-finished':'false','x-request-id':rid};
+  const rejection={error:{type:'ServiceUnavailable',code:'ServiceUnavailable',message:'Service unavailable!'},request_id:rid};
+  const refused=(overrides={}, hdrs={}, status=503)=>Response.json({...rejection,...overrides},{status,headers:{...headers,...hdrs}});
+  r=await exercise([refused(),response],modelOpts); assert.equal(r.value,response); assert.deepEqual(r.delays,[3000]);
+  const second=refused();r=await exercise([refused(),second],modelOpts);assert.equal(r.value,second);assert.equal(r.attempts.length,2);
+  r=await exercise([timeout,refused(),timeout,response],modelOpts);assert.equal(r.value,response);assert.equal(r.attempts.length,4);
+  const last=refused();r=await exercise([timeout,timeout,timeout,last],modelOpts);assert.equal(r.value,last);assert.equal(r.attempts.length,4);
+  for(const invalid of [refused({choices:[{message:{content:'yes'}}]}),refused({error:{code:'InternalError',type:'InternalError'}}),
+      refused({request_id:'different'}),refused({}, {'x-dashscope-finished':'true'}),refused({}, {'content-type':'text/event-stream'}),
+      refused({}, {'retry-after':'30'}),refused({}, {'x-dashscope-call-gateway':'false'}),
+      refused({}, {},429),refused({}, {},502),new Response('not JSON',{status:503,headers:{...headers,'content-type':'application/json'}})]) {
+    r=await exercise([invalid],modelOpts);assert.equal(r.value,invalid);assert.equal(r.attempts.length,1);
+  }
+  for (const extra of [{stream:true},{model:'other'},{tools:[{}]},{functions:[{}]}]) {
+    const invalid=refused();const cfg={...modelOpts,body:JSON.stringify({...JSON.parse(modelOpts.body),...extra})};
+    r=await exercise([invalid],cfg);assert.equal(r.value,invalid);assert.equal(r.attempts.length,1);
+  }
+  const cancelled=new AbortController();
+  r=await exercise([refused()],{...modelOpts,signal:cancelled.signal},endpoint,()=>cancelled.abort());
+  assert.equal(r.attempts.length,1);assert.equal(r.value.name,'AbortError');
+  const noDeadline=refused();r=await exercise([noDeadline],{...modelOpts,signal:undefined});
+  assert.equal(r.value,noDeadline);assert.equal(r.attempts.length,1);
   const controller=new AbortController(); const signal=controller.signal;
   r=await exercise([timeout],{...opts(),signal},endpoint,s=>{assert.equal(s,signal);controller.abort();});
   assert.equal(r.attempts.length,1); assert.equal(r.value.name,'AbortError');
