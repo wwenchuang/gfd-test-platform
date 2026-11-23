@@ -152,7 +152,7 @@ ROUTES = {
         (WAIT, DEVICE, "模型处理完成", "打印编号"), ("runAdbShell", "open the fresh record"),
         (ASSERT, "分节龙形", "设备状态完美"), (TAP, "确认打印"),
         (ASSERT, "确认已安装底板", "确认挤出喷头", "安全检查"), ("runAdbShell", "consume the bound record"),
-        (TAP, "返回首页"), (ASSERT, DEVICE, "打印任务", "关节龙"),
+        (WAIT, "当前设备", DEVICE, "关节龙"), (ASSERT, DEVICE, "当前任务", "关节龙", "最近打印"),
     ],
 }
 PREVIEW_CASES = {"文字建模", "标牌打印", "模型导入-微信导入", "OBJ保龄球打印", "姓名牌打印", "普通印章打印", "十二生肖印章打印"}
@@ -485,6 +485,8 @@ def check_print_actions(name, flow):
             assert sum(step.get("runAdbShell") == command for step in flow) == 1, name
         selected = next(i for i, step in enumerate(flow) if step.get("runAdbShell") == select)
         submitted = next(i for i, step in enumerate(flow) if step.get("runAdbShell") == submit)
+        receipt = flow[submitted + 1:]
+        assert len(receipt) == 2 and set(receipt[0]) == {WAIT, "timeout"} and set(receipt[1]) == {ASSERT}
         action_steps = [s for s in flow[selected + 1:submitted] if set(s) - {WAIT, ASSERT, "timeout"}]
         assert action_steps == [{"runAdbShell": render, "timeout": 240000}, {TAP: "本次模型打印预览底部右侧的「确认打印」"}, {"runAdbShell": DRAGON_WEAK_SIGNAL_CONTINUE}]
         assert not any({"ai", "aiAct", "aiAction"} & step.keys() for step in flow), name
