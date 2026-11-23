@@ -2527,7 +2527,8 @@ function installOptionalAppUpdateGuard(agent) {
     const lines = String(state).split(/\r?\n/).map(line => line.trim())
       .filter(line => /^(topResumedActivity=|\* (?:Task\{|Hist\s))/.test(line));
     const resumed = lines.filter(line => line.startsWith('topResumedActivity='));
-    if (resumed.length !== 1) throw Error('Ambiguous Android foreground');
+    if (resumed.length !== 1) return {focusCount: resumed.length};
+    if (resumed[0] === 'topResumedActivity=null') return {focusCount: 0};
     const parseRecord = line => /ActivityRecord\{([\w]+) u(\d+) ([\w.$/]+) t(\d+)\}$/.exec(line || '');
     const current = parseRecord(resumed[0]);
     if (!current) throw Error('Unknown Android foreground');
@@ -2549,8 +2550,15 @@ function installOptionalAppUpdateGuard(agent) {
   };
   async function handle() {
     const adb = await device.getAdb();
-    const before = await foreground(adb);
-    if (before.name !== update) return false;
+    let before = await foreground(adb);
+    const transition = before.focusCount !== undefined;
+    // During startup the activity manager can briefly expose zero or multiple resumed activities.
+    for (let reads=1; before.focusCount !== undefined && reads<9; reads++) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      before = await foreground(adb);
+    }
+    if (before.focusCount !== undefined) throw Error('Ambiguous Android foreground after 9 observations; resumed count: '+before.focusCount);
+    if (before.name !== update) return transition ? 'transition' : false;
     if (!before.homeRecord) throw Error('Update dialog outside the expected home task');
     const xml = await adb.shell('file=$(mktemp /data/local/tmp/qa-kfb-update.XXXXXX) || exit 1; trap \'rm -f "$file"\' EXIT; uiautomator dump "$file" >/dev/null && cat "$file"');
     const nodes = [...String(xml).matchAll(/<node\s+([^>]+)>/g)].map(match =>
@@ -2574,7 +2582,7 @@ function installOptionalAppUpdateGuard(agent) {
       const resumed = await foreground(adb);
       if (isHome(resumed.name) && resumed.record === before.homeRecord && resumed.task === before.task && resumed.user === before.user) {
         console.log('Optional 智小白3D update dismissed via 下次再说; verified MainActivity');
-        return true;
+        return transition ? 'transition' : true;
       }
       await new Promise(r=>setTimeout(r,150));
     }
@@ -2589,7 +2597,7 @@ function installOptionalAppUpdateGuard(agent) {
   };
   const tap = device.tapPoint.bind(device);
   device.tapPoint = async (...args) => {
-    await check();
+    if (await check() === 'transition') throw Error('Android foreground changed before tap; a fresh target is required');
     return tap(...args);
   };
 }

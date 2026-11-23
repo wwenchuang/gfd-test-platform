@@ -30,6 +30,7 @@ def test_guard_only_opts_in_published_android_regressions():
 def test_android_update_dialog_guard_uses_only_the_optional_later_control(tmp_path):
     harness = r"""
 const assert = require('node:assert/strict');
+globalThis.setTimeout = fn => queueMicrotask(fn);
 const home = 'com.kfb.model/.MainActivity';
 const update = 'com.kfb.model/com.mango.bridge.ui.update.AppUpdateTransAct';
 function node(id, text, bounds, clickable) {
@@ -48,24 +49,24 @@ const topHistory='    * Hist  #1: ActivityRecord{128d54a u0 '+update+' t4997}';
 const homeHistory='    * Hist  #0: ActivityRecord{71cbc93 u0 '+home+' t4997}';
 const stack=[taskHeader,paused,foreground('128d54a',update),topHistory,homeHistory].join('\n');
 function scene(body=xml, behind=home, mutate=s=>s, after=s=>s) {
-  let reads=0;
+  let reads=0, homeReads=0, shots=0;
   let activity=home;
   const commands=[], taps=[];
   const device={
-    screenshotBase64: async () => 'image:'+activity,
+    screenshotBase64: async () => {shots++;return 'image:'+activity;},
     tapPoint: async point => taps.push(point),
     getAdb: async () => ({shell: async command=>{
       commands.push(command);
       if (command.startsWith('dumpsys activity')) return activity===update ?
         mutate(stack.replace(homeHistory,homeHistory.replace(home,behind)), ++reads) :
-        after([taskHeader, foreground('71cbc93',home),homeHistory].join('\n'));
+        after([taskHeader, foreground('71cbc93',home),homeHistory].join('\n'), ++homeReads);
       if (command.startsWith('file=')) return body;
       if (command==='input tap 28 63') {activity=home;return '';}
       throw Error('Unexpected adb action: '+command);
     }})
   };
   installOptionalAppUpdateGuard({page:device});
-  return {device, commands, taps, show:()=>{activity=update;}};
+  return {device, commands, taps, shots:()=>shots, show:()=>{activity=update;}};
 }
 (async()=>{
   const s=scene();
@@ -109,6 +110,31 @@ function scene(body=xml, behind=home, mutate=s=>s, after=s=>s) {
     await assert.rejects(()=>blocked.device.screenshotBase64());
     assert.deepEqual(blocked.commands.filter(s=>s.startsWith('input')),[]);
   }
+  const noFocus=s=>s.replace(/topResumedActivity=[^\n]+/,'');
+  const multiFocus=s=>s+'\n'+foreground('666aaaa','com.android.launcher/.Launcher');
+  const nullFocus=s=>s.replace(/topResumedActivity=[^\n]+/,'topResumedActivity=null');
+  for (const transient of [noFocus,multiFocus,nullFocus]) {
+    const launch=scene(xml,home,s=>s,(s,n)=>n<=2?transient(s):s);
+    assert.equal(await launch.device.screenshotBase64(),'image:'+home);
+    assert.equal(launch.shots(),2);
+    assert.deepEqual(launch.commands.filter(s=>s.startsWith('input')),[]);
+    const staleTap=scene(xml,home,s=>s,(s,n)=>n===1?transient(s):s);
+    await assert.rejects(()=>staleTap.device.tapPoint({x:50,y:60}),/fresh|changed/i);
+    assert.deepEqual(staleTap.taps,[]);
+    const stuck=scene(xml,home,s=>s,transient);
+    await assert.rejects(()=>stuck.device.tapPoint({x:50,y:60}),/foreground/i);
+    assert.ok(stuck.commands.length>=2 && stuck.commands.length<=12);
+    assert.deepEqual(stuck.taps,[]);
+  }
+  const resumedDialog=scene(xml,home,(s,n)=>n<3?noFocus(s):s);resumedDialog.show();
+  assert.equal(await resumedDialog.device.screenshotBase64(),'image:'+home);
+  assert.deepEqual(resumedDialog.commands.filter(s=>s.startsWith('input')),['input tap 28 63']);
+  const lostBeforeTap=scene(xml,home,(s,n)=>n===1?s:multiFocus(s));lostBeforeTap.show();
+  await assert.rejects(()=>lostBeforeTap.device.screenshotBase64());
+  assert.deepEqual(lostBeforeTap.commands.filter(s=>s.startsWith('input')),[]);
+  const adbError=scene(xml,home,s=>s,()=>{throw Error('ADB unavailable');});
+  await assert.rejects(()=>adbError.device.screenshotBase64(), /ADB unavailable/);
+  assert.equal(adbError.commands.length,1);
   const wrongResume=scene(xml,home,s=>s,s=>s.replaceAll('4997','4998')); wrongResume.show();
   await assert.rejects(()=>wrongResume.device.tapPoint({x:50,y:60}),/Home did not resume/);
   assert.deepEqual(wrongResume.commands.filter(s=>s.startsWith('input')),['input tap 28 63']);
