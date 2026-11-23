@@ -25,20 +25,156 @@ tasks:
   - aiTap: 模型详情底部「去打印」按钮
   - aiWaitFor: 编辑器顶部标题为「关节龙」，构建板上已渲染盘曲的分节龙形模型，底部「下一步」可点击
     timeout: 150000
+  - runAdbShell: |-
+      # dragon: start slice window
+      set -eu
+      state=/data/local/tmp/qa-kfb-dragon
+      umask 077
+      rm -f "$state.window" "$state.bound"
+      date '+%s %Y-%m-%d %H:%M:%S' > "$state.window"
   - aiTap: 编辑器底部「下一步」
-  - ai: 仅当「请确认耗材颜色」提示已显示时点击其中的「确认」，其他情况结束本步骤。
+  - aiWaitFor: 本次摆放编辑器上有「请确认耗材颜色」弹窗及并排的「修改设置」「确认」，或页面顶部标题已经变成「模型打印预览」
+    timeout: 30000
+  - runAdbShell: >-
+      file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1;
+      trap 'rm -f "$file"' EXIT;
+      for attempt in 1 2 3; do
+      : > "$file"; uiautomator dump "$file" >/dev/null && [ -s "$file" ] || exit 1;
+      if grep -Fq 'text="请确认当前使用的耗材颜色为：' "$file" && grep -Fq 'text="修改设置"' "$file"; then
+      bounds=$(tr '>' '\n' < "$file" | grep -F 'text="确认"' | grep -F 'class="android.widget.Button"' | grep -F 'package="com.kfb.model"' | grep -F ' clickable="true"' | grep -F ' enabled="true"' | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p');
+      set -- $bounds; [ "$#" -eq 4 ] || exit 1;
+      input tap "$((($1+$3)/2))" "$((($2+$4)/2))"; exit $?; fi;
+      if tr '>' '\n' < "$file" | grep -F 'text="模型打印预览"' | grep -F 'resource-id="com.kfb.model:id/web_title_tv_middle"' > /dev/null; then exit 0; fi;
+      done; exit 1
   - aiWaitFor: 「模型打印预览」已渲染盘曲的分节龙形模型，显示预计时间、耗材重量和「确认打印」，或者出现弱网、设备不可用、已有任务或切片失败提示
     timeout: 240000
   - aiAssert: 预览中清楚显示盘曲的分节龙形模型、预计时间、耗材重量及设备就绪提示，底部同时有「取消打印」和「确认打印」。出现「网络信号差」、设备忙、离线、排队、已有任务「去处理」或切片失败时均失败
+  # 打开此前实机验证能返回预览的记录标题。仅在同一设备、本次切片时间窗内出现唯一新记录时继续。
+  - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
+  - aiWaitFor: 首页顶部显示 EP3-9888E0094F2A、空闲及本次切片的「模型处理完成」横幅，底部导航有「我的」
+    timeout: 25000
+  - aiTap: 底部导航最右侧的「我的」
+  - aiWaitFor: 个人页中「我的设备」和「打印记录」均已显示
+    timeout: 12000
+  - aiTap: 个人页的「打印记录」入口
+  - aiWaitFor: 打印记录页设备筛选栏显示 EP3-9888E0094F2A，最新的关节龙记录已显示模型处理完成、打印编号及打印按钮
+    timeout: 20000
+  - runAdbShell: |-
+      # dragon: open the fresh record for the selected printer
+      set -eu
+      state=/data/local/tmp/qa-kfb-dragon
+      read -r start since < "$state.window"
+      rm -f "$state.window" "$state.bound"
+      now=$(date +%s)
+      case "$start" in ''|*[!0-9]*) exit 1 ;; esac
+      [ "$now" -gt "$start" ] && [ "$((now-start))" -le 600 ] || exit 1
+      until=$(date '+%Y-%m-%d %H:%M:%S')
+      file=$(mktemp /data/local/tmp/qa-kfb-dragon.XXXXXX)
+      trap 'rm -f "$file"' EXIT
+      uiautomator dump "$file" >/dev/null
+      selection=$(awk -v since="$since" -v until="$until" '
+        BEGIN { RS=">" }
+        function attr(key, v) {
+          v=$0
+          if (!sub(".* " key "=\"", "", v)) return ""
+          sub("\".*", "", v)
+          return v
+        }
+        function finish() {
+          if (dates!=1 || stamp==since || stamp>until || (previous!="" && stamp>previous)) bad=1
+          if (stamp>since) {
+            fresh++
+            if (row!=1 || model!=1 || numbers!=1 || done!=1 || buttons!=1) bad=1
+            sn=number
+            target=box
+          } else earlier++
+          previous=stamp
+          dates=model=numbers=done=buttons=0
+          number=box=stamp=""
+        }
+        /<node / {
+          d++
+          if (attr("package")!="com.kfb.model") bad=1
+          t=attr("text"); sub(/[[:space:]]+$/, "", t)
+          cls=attr("class")
+          if (t=="打印记录") title++
+          if (t ~ /^EP3-/) { devices++; if (t!="EP3-9888E0094F2A") bad=1 }
+          if (cls=="android.widget.ListView") { lists++; list=d }
+          else if (list && d==list+1) { row++; item=d }
+          else if (item) {
+            if (t ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/) { dates++; stamp=t }
+            if (t=="关节龙") { model++; box=attr("bounds") }
+            if (index(t,"打印编号：")==1) {
+              numbers++; number=substr(t,length("打印编号：")+1)
+              if (number !~ /^[0-9]+$/ || length(number)!=19 || seen["sn" number]++) bad=1
+            }
+            if (t=="模型处理完成") done++
+            if (t=="打印") buttons++
+          }
+          if ($0 ~ /\/$/) { if (d==item) { finish(); item=0 }; d-- }
+          next
+        }
+        /<\/node/ { if (d==item) { finish(); item=0 }; if (d==list) list=0; d-- }
+        END {
+          if (bad || d || title!=1 || devices!=1 || lists!=1 || fresh!=1 || earlier<1) exit 1
+          if (target !~ /^\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]$/) exit 1
+          gsub(/[^0-9]+/," ",target); split(substr(target,2),b," ")
+          if (b[3]+0<=b[1]+0 || b[4]+0<=b[2]+0) exit 1
+          printf "%s %d %d\n",sn,(b[1]+b[3])/2,(b[2]+b[4])/2
+        }' "$file")
+      set -- $selection
+      [ "$#" -eq 3 ] || exit 1
+      pid=$(pidof com.kfb.model)
+      case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
+      umask 077
+      printf '%s %s %s\n' "$1" "$pid" "$now" > "$state.bound"
+      printf 'verified slice=%s printer=9888E0094F2A model=关节龙\n' "$1"
+      input tap "$2" "$3"
+  - aiWaitFor: 从这条打印记录打开的「模型打印预览」已渲染盘曲的分节龙，已显示预计时间、耗材和底部两个按钮
+    timeout: 90000
+  - aiAssert: 当前记录的预览中有盘曲的分节龙形模型、正数的预计时间和模型耗材，设备状态完美，底部并列「取消打印」和「确认打印」；设备忙、需选择打印机或待处理任务均失败
   - aiTap: 本次模型打印预览底部右侧的「确认打印」
   - aiWaitFor: 出现「检查无误确认打印」安全检查页，或者出现「网络信号差」或已有任务待处理的弹窗
     timeout: 12000
-  - ai: 如果有标题为「网络信号差」且同时显示「继续打印」「去调整网络」的提示，只点击「继续打印」一次。如果已进入打印安全检查页，直接结束。其他状态不要操作，不要重新提交打印。
-  - aiAssert: 屏幕显示打印安全检查页，页面无「网络信号差」和待处理任务弹窗
-  - aiWaitFor: 打印安全检查页出现「检查无误确认打印」
-    timeout: 12000
-  - aiAssert: 本次安全检查页的打印确认信息明确对应 9888E0094F2A，当前设备显示空闲或就绪并允许立即开始。缺少设备标识、不可用、离线、占用、重复任务、只能排队或要求重新选择机器时均失败。
-  - aiTap: 安全检查页的「检查无误确认打印」按钮一次
+  - runAdbShell: >-
+      file=$(mktemp /data/local/tmp/qa-kfb-dragon.XXXXXX) || exit 1;
+      trap 'rm -f "$file" "$file.nodes"' EXIT;
+      uiautomator dump "$file" >/dev/null && [ -s "$file" ] || exit 1;
+      tr '>' '\n' < "$file" | grep '<node ' | grep ' package="com.kfb.model"' > "$file.nodes" || exit 1;
+      if grep -Fq 'resource-id="com.kfb.model:id/tv_print_confirm"' "$file.nodes"; then
+      if grep -Fq 'text="网络信号差"' "$file.nodes"; then exit 1; fi; exit 0; fi;
+      for label in 网络信号差 继续打印 去调整网络; do
+      [ "$(grep -Fc " text=\"$label\"" "$file.nodes")" -eq 1 ] || exit 1; done;
+      bounds=$(grep -F ' text="继续打印"' "$file.nodes" | grep ' clickable="true"' | grep ' enabled="true"'
+      | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p');
+      set -- $bounds; [ "$#" -eq 4 ] && [ "$3" -gt "$1" ] && [ "$4" -gt "$2" ] || exit 1;
+      input tap "$((($1+$3)/2))" "$((($2+$4)/2))"
+  - aiAssert: 本次原生打印安全检查弹窗同时显示「确认已安装底板并清理杂物」「确认挤出喷头干净无异物」及「检查无误，确认打印」，当前没有「网络信号差」或待处理任务弹窗。
+  - runAdbShell: |-
+      # dragon: consume the bound record at the native safety dialog
+      set -eu
+      state=/data/local/tmp/qa-kfb-dragon
+      read -r sn pid checked < "$state.bound"
+      rm -f "$state.bound"
+      case "$sn" in ''|*[!0-9]*) exit 1 ;; esac
+      [ "$(printf '%s' "$sn" | wc -c)" -eq 19 ] && [ "$pid" = "$(pidof com.kfb.model)" ] || exit 1
+      case "$checked" in ''|*[!0-9]*) exit 1 ;; esac
+      age=$(( $(date +%s)-checked ))
+      [ "$age" -ge 0 ] && [ "$age" -le 300 ] || exit 1
+      file=$(mktemp /data/local/tmp/qa-kfb-dragon.XXXXXX)
+      trap 'rm -f "$file" "$file.nodes"' EXIT
+      uiautomator dump "$file" >/dev/null
+      tr '>' '\n' < "$file" | grep '<node ' > "$file.nodes"
+      [ -s "$file.nodes" ] || exit 1
+      if grep -qv ' package="com.kfb.model"' "$file.nodes"; then exit 1; fi
+      match() { grep -F " resource-id=\"com.kfb.model:id/$1\"" "$file.nodes" | grep -F " text=\"$2\""; }
+      [ "$(match tv_step_1 '1.确认已安装底板并清理杂物' | wc -l)" -eq 1 ] || exit 1
+      [ "$(match tv_step_2 '2.确认挤出喷头干净无异物' | wc -l)" -eq 1 ] || exit 1
+      bounds=$(match tv_print_confirm '检查无误，确认打印' | grep ' clickable="true"' | grep ' enabled="true"' | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p')
+      set -- $bounds
+      [ "$#" -eq 4 ] && [ "$3" -gt "$1" ] && [ "$4" -gt "$2" ] || exit 1
+      printf 'submitting slice=%s printer=9888E0094F2A\n' "$sn"
+      input tap "$((($1+$3)/2))" "$((($2+$4)/2))"
   - aiWaitFor: 已显示本次提交成功或开始打印的结果页，并有「返回首页」入口
     timeout: 90000
   - aiTap: 本次结果页的「返回首页」

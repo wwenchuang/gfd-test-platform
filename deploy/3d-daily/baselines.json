@@ -17,35 +17,35 @@
     "case_id": "COM_KFB_MODEL_391142ea35f9",
     "module": "3D打印基线",
     "filename": "OBJ保龄球打印.yaml",
-    "sha256": "79c132a202d0fb4c77a029f1f90a03ae9cd5a5da011ce4d760c4830279568639",
+    "sha256": "1bdafdaac45ccc4faef584cc87a29be1ea36dd8ebe41e16b754156848530ea49",
     "core": false
   },
   {
     "case_id": "COM_KFB_MODEL_b245f8b77517",
     "module": "3D打印基线",
     "filename": "姓名牌打印.yaml",
-    "sha256": "5952e39c3c25ee091e713c8a4353d0914d28d1515baf4fd10e8ba9e6f5345a2f",
+    "sha256": "62d2b53a9d586053874039318a419aab87ecfe5d826d4fbf2f47e3ada39718d5",
     "core": false
   },
   {
     "case_id": "COM_KFB_MODEL_4f9e47eb53d2",
     "module": "3D打印基线",
     "filename": "文字建模.yaml",
-    "sha256": "3fdcdc514279b61c965ea21cc5fee827787bb39dacd4ffa845df20b564f916b9",
+    "sha256": "40a2ddbe902f32d23d83aebdb336c9eee3e6e3f745c376bd28ea48663f447919",
     "core": true
   },
   {
     "case_id": "COM_KFB_MODEL_0e27ae1d28a0",
     "module": "3D打印基线",
     "filename": "模型导入-微信导入.yaml",
-    "sha256": "04ba17fa703ad0bef5da50e690505862ccf424e69559b7edca6879d71f716e21",
+    "sha256": "a56a0c857c22ad2d4b2980689a96cebb81b3391b996efacda356d6cb54bfd8c0",
     "core": false
   },
   {
     "case_id": "COM_KFB_MODEL_38708c2d47ee",
     "module": "3D打印基线",
     "filename": "标牌打印.yaml",
-    "sha256": "46edbf50da48a80c00a568baabd679151ee269881f75d8914dfc62765492d7fd",
+    "sha256": "484a47202bb1b25dab4fd82886c4537ff9442db4a96fd26a66e7be84f12b5001",
     "core": false
   },
   {
@@ -66,7 +66,7 @@
     "case_id": "COM_KFB_MODEL_9d60338c7365",
     "module": "3D打印基线",
     "filename": "普通印章打印.yaml",
-    "sha256": "92e92da7face7aa44a92cd5cbe3855b42ac31b038f54cc8e308f837c94331108",
+    "sha256": "257bbeddb98600cf58b79c90d71e983def35f3faa6998334fccca5cf4a58323c",
     "core": false
   },
   {
@@ -80,7 +80,7 @@
     "case_id": "COM_KFB_MODEL_f14f42c5f10b",
     "module": "3D打印基线",
     "filename": "关节龙打印.yaml",
-    "sha256": "77c46add1a4b8662e748eb0ca760cf02305761e35bdc86cb2d10eb3cb25f7728",
+    "sha256": "9a36ed8885b24b40098f4f72c4a3a3b5ec2ffa329210fa4b758eb775d5a44804",
     "core": false
   },
   {
@@ -108,7 +108,7 @@
     "case_id": "COM_KFB_MODEL_eae567b5f2ba",
     "module": "3D打印基线",
     "filename": "十二生肖印章打印.yaml",
-    "sha256": "c883129a78bd213db7b838f5fdf68165c6ec4e779871f34f95bafcf6b79e1047",
+    "sha256": "664991ef245a853e856e73471f50fefead18c445e1dc7ac55f9d039c95fc564f",
     "core": false
   },
   {
@@ -220,7 +220,7 @@
     "case_id": "COM_KFB_MODEL_1062711c27bf",
     "module": "3D打印基线",
     "filename": "掐丝珐琅手工教程播放.yaml",
-    "sha256": "9d673b29c63e97f2b79b362d27ea5f1e2282bb9fef4ed0319fc4c922b4023faf",
+    "sha256": "83d7e3195678adfd35c47d7903cb1959434395d08fb659542397e54510942ca7",
     "core": false
   },
   {
@@ -276,7 +276,7 @@
     "case_id": "COM_KFB_MODEL_d4891e6003ce",
     "module": "3D打印基线",
     "filename": "设备详情与部件保养.yaml",
-    "sha256": "2f6802621379fbb899bae68c344108d3d1db1c6163afc6091639aac07b8ba904",
+    "sha256": "944fe705cdd8fae31df3039e4c47dd60a944dfe20084e331158cc63af726b255",
     "core": false
   },
   {
@@ -304,7 +304,7 @@
     "case_id": "COM_KFB_MODEL_3ebb35556a8d",
     "module": "3D打印基线",
     "filename": "魔法涂鸦创作模式.yaml",
-    "sha256": "a28e99a6dab1667c9c82857e9b2cb8ad1f062691dc17e00011047cdbf0f7b668",
+    "sha256": "a5a685895a3a400c21fbbc60868afa3137562253e8df26896a7f5cc6f2b04dbb",
     "core": false
   }
 ]

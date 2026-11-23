@@ -3,7 +3,9 @@
 import hashlib
 import json
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -19,6 +21,11 @@ from task_server.services.yaml_static_validator import validate_yaml_static_exec
 DEVICE = "9888E0094F2A"
 CUBE = "qa-import-cube-10mm.stl"
 DRAGON = "关节龙打印"
+DRAGON_NATIVE_SHA256 = (
+    "d8310d8c1180ea3e05813dff88579ab2e7670412866f53f3e923f328cd88fc2f",  # start slice window
+    "caa09189513a8d8ffdab125c9962389391928832d3e2a6c4c7131efb0bea6356",  # open the fresh record for the selected printer
+    "dea1e66ff7e5c2c66a3438532a9fb20b40617d13333333dae4dbd81a65656a3e",  # consume the bound record at the native safety dialog
+)
 # Published case IDs stay stable even for the two AI cases with different filenames.
 CASE_IDS = {
     "我的页面入口跨端验收20261015": "b399ad26499b",
@@ -58,7 +65,7 @@ EXTENDED_RESULTS = {
     "成长乐园建模大冒险": ("当前任务", "魔法涂鸦", "魔法积木"),
     "成长乐园科创项目": ("科创课", "立即学习"),
     "我的设备状态与控制入口": (DEVICE, "更多设置"),
-    "设备详情与部件保养": (DEVICE, "打印平台"),
+    "设备详情与部件保养": (DEVICE, "最大打印尺寸", "100 mm"),
     "设备耗材颜色面板": ("选择耗材颜色", "基础", "釉光"),
     "个人成长能力报告": ("经验值", "最近成长"),
     "掐丝珐琅手工教程播放": ("倍速", "播放"),
@@ -136,12 +143,193 @@ ROUTES = {
     DRAGON: [
         (ASSERT, DEVICE, "空闲"), (INPUT, "关节龙"), (TAP, "关节龙"), (ASSERT, "关节龙"), (TAP, "去打印"),
         (WAIT, "关节龙", "分节龙形"), (TAP, "下一步"), (WAIT, "分节龙形", "耗材"),
-        (ASSERT, "分节龙形", "设备就绪", "网络信号差"), (TAP, "确认打印"), (ASSERT, "网络信号差"),
-        (ASSERT, DEVICE, "安全检查"), (TAP, "检查无误确认打印"),
+        (ASSERT, "分节龙形", "设备就绪", "网络信号差"), (TAP, "打印记录"),
+        (WAIT, DEVICE, "模型处理完成", "打印编号"), ("runAdbShell", "open the fresh record"),
+        (ASSERT, "分节龙形", "设备状态完美"), (TAP, "确认打印"),
+        (ASSERT, "确认已安装底板", "确认挤出喷头", "安全检查"), ("runAdbShell", "consume the bound record"),
         (TAP, "返回首页"), (ASSERT, DEVICE, "打印任务", "关节龙"),
     ],
 }
 PREVIEW_CASES = {"文字建模", "标牌打印", "模型导入-微信导入", "OBJ保龄球打印", "姓名牌打印", "普通印章打印", "十二生肖印章打印"}
+
+
+PREVIEW_READ_WINDOW = r"""file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1; trap 'rm -f "$file"' EXIT; uiautomator dump "$file" >/dev/null && ui=$(cat "$file") && [ -n "$ui" ] || exit 1;"""
+PREVIEW_COLOR_CONFIRM = " ".join(r"""
+file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1;
+trap 'rm -f "$file"' EXIT;
+for attempt in 1 2 3; do
+: > "$file"; uiautomator dump "$file" >/dev/null && [ -s "$file" ] || exit 1;
+if grep -Fq 'text="请确认当前使用的耗材颜色为：' "$file" && grep -Fq 'text="修改设置"' "$file"; then
+bounds=$(tr '>' '\n' < "$file" | grep -F 'text="确认"' | grep -F 'class="android.widget.Button"' | grep -F 'package="com.kfb.model"' | grep -F ' clickable="true"' | grep -F ' enabled="true"' | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p');
+set -- $bounds; [ "$#" -eq 4 ] || exit 1;
+input tap "$((($1+$3)/2))" "$((($2+$4)/2))"; exit $?; fi;
+if tr '>' '\n' < "$file" | grep -F 'text="模型打印预览"' | grep -F 'resource-id="com.kfb.model:id/web_title_tv_middle"' > /dev/null; then exit 0; fi;
+done; exit 1
+""".strip().splitlines())
+PREVIEW_WEAK_SIGNAL_BACK = PREVIEW_READ_WINDOW + " " + " ".join(r"""
+case "$ui" in *'package="com.kfb.model"'*'text="网络信号差"'*)
+case "$ui" in *'text="继续打印"'*'text="去调整网络"'*) input keyevent 4 ;; *) exit 1 ;;
+esac ;;
+esac
+""".strip().splitlines())
+PREVIEW_CANCEL_DIALOG_TAP = '弹窗「确认要取消任务吗？」内右侧的「确定」按钮；若中央已显示「已取消模型处理」，仅轻触中央静态提示「已取消模型处理」文字。'
+
+
+# On a direct transition to the native safety dialog this action only observes it.
+DRAGON_WEAK_SIGNAL_CONTINUE = " ".join(r"""
+file=$(mktemp /data/local/tmp/qa-kfb-dragon.XXXXXX) || exit 1;
+trap 'rm -f "$file" "$file.nodes"' EXIT;
+uiautomator dump "$file" >/dev/null && [ -s "$file" ] || exit 1;
+tr '>' '\n' < "$file" | grep '<node ' | grep ' package="com.kfb.model"' > "$file.nodes" || exit 1;
+if grep -Fq 'resource-id="com.kfb.model:id/tv_print_confirm"' "$file.nodes"; then
+if grep -Fq 'text="网络信号差"' "$file.nodes"; then exit 1; fi; exit 0; fi;
+for label in 网络信号差 继续打印 去调整网络; do
+[ "$(grep -Fc " text=\"$label\"" "$file.nodes")" -eq 1 ] || exit 1; done;
+bounds=$(grep -F ' text="继续打印"' "$file.nodes" | grep ' clickable="true"' | grep ' enabled="true"'
+| sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p');
+set -- $bounds; [ "$#" -eq 4 ] && [ "$3" -gt "$1" ] && [ "$4" -gt "$2" ] || exit 1;
+input tap "$((($1+$3)/2))" "$((($2+$4)/2))"
+""".strip().splitlines())
+
+
+
+def test_dragon_bound_submission():
+    flow = yaml.safe_load((ROOT / "server-tasks" / "3D打印基线" / (DRAGON + ".yaml")).read_bytes())["tasks"][0]["flow"]
+    arm, select, submit = [s["runAdbShell"] for s in flow if s.get("runAdbShell", "").startswith("# dragon:")]
+    harness = """
+        uiautomator() { cat "$XML_FILE" > "$2"; }
+        date() {
+            if [ "$1" = "+%s" ]; then echo "$NOW"
+            elif [ "$1" = "+%s %Y-%m-%d %H:%M:%S" ]; then echo "$NOW 2026-11-23 12:50:00"
+            elif [ "$1" = "+%Y-%m-%d %H:%M:%S" ]; then echo '2026-11-23 12:52:20'
+            else return 1; fi
+        }
+        pidof() { echo "$PID"; }
+        input() { echo "INPUT $*"; }
+    """
+    def node(text, attrs=""):
+        return f'<node text="{text}" class="android.widget.TextView" package="com.kfb.model" {attrs}/>'
+
+    def row(stamp, model, sn, status="模型处理完成", action="打印"):
+        return (f'<node class="android.view.View" package="com.kfb.model">{node(stamp)}{node(status)}'
+                f'<node class="android.view.View" package="com.kfb.model">'
+                f'{node(model, bounds)}{node("打印编号：" + sn)}</node>{node(action)}</node>')
+
+    bounds = 'bounds="[345,642][1002,702]"'
+    first = row("2026-11-23 12:51:20", "关节龙", "1574407263092404224")
+    old = row("2026-11-23 11:00:00", "关节龙", "1574381498682556416", "取消模型处理", "重新编辑")
+    listing = (node("打印记录") + node("EP3-" + DEVICE + " ") +
+               '<node class="android.widget.ListView" package="com.kfb.model">' + first + old + '</node>')
+    safety = (node("1.确认已安装底板并清理杂物", 'resource-id="com.kfb.model:id/tv_step_1"') +
+              node("2.确认挤出喷头干净无异物", 'resource-id="com.kfb.model:id/tv_step_2"') +
+              node("检查无误，确认打印", 'resource-id="com.kfb.model:id/tv_print_confirm" clickable="true" enabled="true" ' + bounds))
+    with tempfile.TemporaryDirectory() as work:
+        def run(command, xml="", now="240", pid="2410", ok=True):
+            fixture = Path(work) / "window.xml"
+            fixture.write_text(xml)
+            result = subprocess.run(["sh", "-c", harness + command.replace("/data/local/tmp", work)],
+                                    env={"XML_FILE": str(fixture), "NOW": now, "PID": pid}, capture_output=True, text=True, timeout=5)
+            assert (result.returncode == 0) == ok, (result.stderr, result.stdout)
+            taps = [line for line in result.stdout.splitlines() if "INPUT" in line]
+            assert ok or not taps
+            return taps
+
+        for bad in [
+            listing.replace(DEVICE, "123456789012"),
+            listing.replace("关节龙", "姓名牌", 1),
+            listing.replace("模型处理完成", "取消模型处理", 1),
+            listing.replace('text="打印"', 'text="重新编辑"'),
+            listing.replace("12:51:20", "11:59:00"),
+            listing.replace("12:51:20", "12:50:00"),
+            listing.replace("12:51:20", "12:53:00"),
+            listing.replace("11:00:00", "12:50:30"),
+            listing.replace("1574407263092404224", "1574381498682556416"),
+            listing.replace("1574407263092404224", "1234"),
+            listing.replace(first, first.replace("打印编号：", "其他信息：")),
+            listing.replace(bounds, 'bounds="[0,0][0,0]"'),
+        ]:
+            run(arm, now="100")
+            run(select, bad, ok=False)
+            run(submit, safety, ok=False)
+
+        for xml, pid, now, ok in [
+            (safety.replace("喷头干净无异物", "喷头"), "2410", "255", False),
+            (safety.replace('enabled="true"', 'enabled="false"'), "2410", "255", False),
+            (safety.replace("com.kfb.model", "other.app"), "2410", "255", False),
+            (safety, "111", "255", False), (safety, "2410", "750", False),
+            (safety, "2410", "255", True),
+            (node("x" * 370_000) + safety, "2410", "255", True),
+        ]:
+            run(arm, now="100")
+            assert run(select, node("x" * 370_000) + listing) == ["INPUT tap 673 672"]
+            actions = run(submit, xml, pid=pid, now=now, ok=ok)
+            if ok:
+                assert actions == ["INPUT tap 673 672"]
+            run(submit, safety, ok=False)  # consume the proof even after an invalid safety dialog
+
+
+def test_dragon_weak_signal_action():
+    harness = """
+        mktemp() { command mktemp; }
+        uiautomator() { printf '%s' "$UI_XML" > "$2"; }
+        input() { echo "$*"; }
+    """
+    def node(text, attributes=""):
+        return f'<node text="{text}" package="com.kfb.model" {attributes}/>'
+
+    weak = node("网络信号差")
+    button = node("继续打印", 'clickable="true" enabled="true" bounds="[124,1650][526,1764]"')
+    alternate = node("去调整网络")
+    safety = node("检查无误，确认打印", 'resource-id="com.kfb.model:id/tv_print_confirm"')
+    for xml, code, tap in [
+        (weak + button + alternate, 0, "tap 325 1707"),
+        (safety, 0, ""),
+        (weak + button, 1, ""),
+        (weak + button * 2 + alternate, 1, ""),
+        (weak + button.replace('enabled="true"', 'enabled="false"') + alternate, 1, ""),
+        ((weak + button + alternate).replace("com.kfb.model", "other.app"), 1, ""),
+        (weak + button + alternate + safety, 1, ""),
+    ]:
+        result = subprocess.run(["sh", "-c", harness + DRAGON_WEAK_SIGNAL_CONTINUE],
+                                env={"UI_XML": xml}, capture_output=True, text=True, timeout=5)
+        assert (result.returncode, result.stdout.strip()) == (code, tap), (xml, result.stderr)
+
+
+def test_preview_native_actions():
+    # The shell runs unmodified with fake Android input and a synthetic UI hierarchy.
+    tools = r"""
+        mktemp() { command mktemp; }
+        uiautomator() { cat "$UI_FIXTURE" > "$2"; }
+        printf() { /usr/bin/printf "$@"; }
+        input() { echo "$*"; }
+    """
+    material = '<node text="请确认当前使用的耗材颜色为：官方耗材-橘子橙 "/><node text="修改设置"/>'
+    confirm = '<node text="确认" class="android.widget.Button" package="com.kfb.model" clickable="true" enabled="true" bounds="[555,1637][924,1760]"/>'
+    preview = '<node text="模型打印预览" package="com.kfb.model" resource-id="com.kfb.model:id/web_title_tv_middle"/><node text="确认打印"/>'
+    safety = '<node text="检查无误，确认打印" resource-id="com.kfb.model:id/tv_print_confirm"/>'
+    weak = '<node package="com.kfb.model"/><node text="网络信号差"/><node text="继续打印"/><node text="去调整网络"/>'
+    for command, xml, code, action in (
+        (PREVIEW_COLOR_CONFIRM, material + confirm, 0, "tap 739 1698"),
+        (PREVIEW_COLOR_CONFIRM, preview, 0, ""),
+        (PREVIEW_COLOR_CONFIRM, safety, 1, ""),
+        (PREVIEW_COLOR_CONFIRM, '<node text="还在加载"/>', 1, ""),
+        (PREVIEW_COLOR_CONFIRM, ('<node text="padding"/>' * 18000) + material + confirm, 0, "tap 739 1698"),
+        (PREVIEW_COLOR_CONFIRM, material + confirm * 2, 1, ""),
+        (PREVIEW_COLOR_CONFIRM, material + confirm.replace('text="确认"', 'text="确认打印"'), 1, ""),
+        (PREVIEW_COLOR_CONFIRM, material + confirm.replace("com.kfb.model", "another.app"), 1, ""),
+        (PREVIEW_COLOR_CONFIRM, material + confirm.replace('clickable="true"', 'clickable="false"'), 1, ""),
+        (PREVIEW_WEAK_SIGNAL_BACK, weak, 0, "keyevent 4"),
+        (PREVIEW_WEAK_SIGNAL_BACK, preview, 0, ""),
+        (PREVIEW_WEAK_SIGNAL_BACK, safety, 0, ""),
+        (PREVIEW_WEAK_SIGNAL_BACK, weak.replace("去调整网络", "取消"), 1, ""),
+        (PREVIEW_WEAK_SIGNAL_BACK, weak.replace("com.kfb.model", "another.app"), 0, ""),
+    ):
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as fixture:
+            fixture.write(xml)
+            fixture.flush()
+            result = subprocess.run(["sh", "-c", tools + command], env={"UI_FIXTURE": fixture.name},
+                                    capture_output=True, text=True, timeout=5)
+        assert (result.returncode, result.stdout.strip()) == (code, action), (xml, result.stderr)
 
 
 def check_order(name, flow, sequence):
@@ -173,6 +361,10 @@ def check_print_actions(name, flow):
     if name == "文字建模":
         allowed_start_commands.discard("am force-stop com.kfb.model")
         check_order(name, flow, [(TAP, "我的"), (WAIT, "打印记录"), (TAP, "房子"), (WAIT, DEVICE, "空闲")])
+    if name in PREVIEW_CASES:
+        allowed_start_commands.add(PREVIEW_COLOR_CONFIRM)
+    if name == "姓名牌打印":
+        allowed_start_commands.add(PREVIEW_WEAK_SIGNAL_BACK)
     submissions = []
     cancellations = []
     stamp_editor = '本次印章「打印准备」底部的「开始打印」按钮一次'
@@ -183,11 +375,24 @@ def check_print_actions(name, flow):
             (WAIT, '第1盘', '居中', '下一步'), (TAP, '第1盘', '下一步'),
         ])
         assert sum(step.get(TAP) == stamp_editor for step in flow) == 1
-    weak_signal_step = "如果有标题为「网络信号差」且同时显示「继续打印」「去调整网络」的提示，只点击「继续打印」一次。如果已进入打印安全检查页，直接结束。其他状态不要操作，不要重新提交打印。"
     if name == DRAGON:
-        check_order(name, flow, [(TAP, "确认打印"), ("ai", weak_signal_step),
-                                 (ASSERT, DEVICE, "安全检查"), (TAP, "检查无误确认打印")])
-        assert sum(step.get("ai") == weak_signal_step for step in flow) == 1
+        native = [step["runAdbShell"] for step in flow if step.get("runAdbShell", "").startswith("# dragon:")]
+        assert tuple(hashlib.sha256(command.encode()).hexdigest() for command in native) == DRAGON_NATIVE_SHA256
+        arm, select, submit = native
+        assert all("${" not in command for command in native), "Midscene may interpolate shell expressions"
+        allowed_start_commands.update({PREVIEW_COLOR_CONFIRM, DRAGON_WEAK_SIGNAL_CONTINUE, *native})
+        check_order(name, flow, [(ASSERT, DEVICE, "空闲"), ("runAdbShell", arm), (TAP, "下一步"),
+                    (WAIT, "修改设置", "模型打印预览"), ("runAdbShell", PREVIEW_COLOR_CONFIRM),
+                    (ASSERT, "分节龙形"), ("runAdbShell", reset_activity), (WAIT, DEVICE, "空闲"),
+                    (TAP, "打印记录"), ("runAdbShell", select), (ASSERT, "设备状态完美"), (TAP, "确认打印"),
+                    ("runAdbShell", DRAGON_WEAK_SIGNAL_CONTINUE), (ASSERT, "安全检查"), ("runAdbShell", submit)])
+        for command in (PREVIEW_COLOR_CONFIRM, DRAGON_WEAK_SIGNAL_CONTINUE, arm, select, submit):
+            assert sum(step.get("runAdbShell") == command for step in flow) == 1, name
+        selected = next(i for i, step in enumerate(flow) if step.get("runAdbShell") == select)
+        submitted = next(i for i, step in enumerate(flow) if step.get("runAdbShell") == submit)
+        action_steps = [s for s in flow[selected + 1:submitted] if set(s) - {WAIT, ASSERT, "timeout"}]
+        assert action_steps == [{TAP: "本次模型打印预览底部右侧的「确认打印」"}, {"runAdbShell": DRAGON_WEAK_SIGNAL_CONTINUE}]
+        assert not any({"ai", "aiAct", "aiAction"} & step.keys() for step in flow), name
     for index, step in enumerate(flow):
         assert "javascript" not in step and "runWdaRequest" not in step, f"{name}: unreviewed device action"
         if "runAdbShell" in step:
@@ -215,15 +420,12 @@ def check_print_actions(name, flow):
             label = target.replace("与「确认打印」并列的「取消打印」", "「取消打印」") if action == TAP else target
             if is_stamp and action == TAP and label == stamp_editor:
                 continue  # This specific two-plate screen opens the first plate editor.
-            if name == DRAGON and action == "ai" and label == weak_signal_step:
-                continue
             if re.search(r"确认打印|直接打印|开始打印|提交打印|发送打印|继续打印", label):
                 submissions.append(index)
     if name in PREVIEW_CASES or name == DRAGON:
         check_order(name, flow, [(WAIT, DEVICE, "空闲"), (ASSERT, "空闲")])
     if name == DRAGON:
-        assert len(submissions) == 2 and not cancellations, f"{name}: expected exactly two separate confirmation taps"
-        assert all(TAP in flow[i] for i in submissions), f"{name}: submission must be an explicit tap"
+        assert len(submissions) == 1 and not cancellations, f"{name}: only the preview uses an AI confirmation tap"
     else:
         assert not submissions, f"{name}: physical printing action at {submissions}"
     if name in PREVIEW_CASES:
@@ -231,12 +433,28 @@ def check_print_actions(name, flow):
         cancel = cancellations[0]
         guard = " ".join(str(step.get(key, "")) for step in flow[:cancel] for key in (ASSERT, WAIT))
         assert DEVICE in guard, f"{name}: preview must use the designated device"
-        next_step = ("ai", "无弹窗", "下一步", "一次", "耗材颜色") if name == "姓名牌打印" else (TAP, "下一步")
         check_order(name, flow[:cancel], [
-            (ASSERT, "空闲"), next_step, (WAIT, "模型打印预览", "确认打印"),
-            (ASSERT, "本次", "预览", "确认打印"),
+            (ASSERT, "空闲"), (TAP, "下一步"), (WAIT, "修改设置", "模型打印预览"), ("runAdbShell", PREVIEW_COLOR_CONFIRM),
+            (WAIT, "模型打印预览", "确认打印"), (ASSERT, "本次", "预览", "确认打印"),
         ])
-        check_order(name, flow[cancel + 1:], [(WAIT, "已取消模型处理", "返回"), (TAP, "返回"), (ASSERT, "离开")])
+        material = next(i for i, step in enumerate(flow) if step.get("runAdbShell") == PREVIEW_COLOR_CONFIRM)
+        editor = max(i for i, step in enumerate(flow[:material]) if TAP in step and "下一步" in step[TAP])
+        for step in flow[editor + 1:]:
+            assert not ({"ai", "aiAct", "aiAction"} & step.keys()), f"{name}: planning may tap again in the preview"
+        taps = [step[TAP] for step in flow[editor + 1:] if TAP in step]
+        assert len(taps) == 3 and taps[1] == PREVIEW_CANCEL_DIALOG_TAP, name
+        assert taps[0] == flow[cancel][TAP] and "返回" in taps[2], name
+        assert sum(step.get("runAdbShell") == PREVIEW_COLOR_CONFIRM for step in flow) == 1
+        if name == "姓名牌打印":
+            check_order(name, flow[editor:cancel], [(WAIT, "网络信号差"), ("runAdbShell", PREVIEW_WEAK_SIGNAL_BACK),
+                                                   (WAIT, "UI自动化", "模型打印预览"), (ASSERT, "本次", "UI自动化")])
+            assert sum(step.get("runAdbShell") == PREVIEW_WEAK_SIGNAL_BACK for step in flow) == 1
+        if name == "文字建模":
+            wait, = [step[WAIT] for step in flow[editor:cancel] if WAIT in step and "确认打印" in step[WAIT]]
+            assert all(text in wait for text in ("预计时间", "模型耗材", "取消打印"))
+            assert all(text not in wait for text in ("继续等待", "如果", "或百分比"))
+        check_order(name, flow[cancel + 1:], [(WAIT, "确认要取消任务", "已取消模型处理"), (TAP, PREVIEW_CANCEL_DIALOG_TAP),
+                                              (WAIT, "已取消模型处理", "返回"), (TAP, "返回"), (ASSERT, "离开")])
     else:
         assert not cancellations, f"{name}: unexpected task cancellation"
 
@@ -267,6 +485,14 @@ def test_published_baselines():
             check = validate_yaml_static_executable(source, strict=True)
             assert check["executionLevel"] == "executable", (name, check["errors"], check["warnings"])
             flow = task["flow"]
+            if name == "设备详情与部件保养":
+                check_order(name, flow, [(ASSERT, "喷头组件", "打印平台", "百分比"),
+                                         ("ai", "规格"), (ASSERT, DEVICE, "最大打印尺寸")])
+            if name == "掐丝珐琅手工教程播放":
+                check_order(name, flow, [(WAIT, "隐藏"), (TAP, "画面"), (ASSERT, "总时长", "倍速")])
+                assert TAP in flow[-2], "读取视频进度时需使用刚刚唤出的控件"
+            if name == "魔法涂鸦创作模式":
+                check_order(name, flow, [(TAP, "自由涂鸦"), ("ai", "我知道了"), (ASSERT, "笔画粗细")])
             if name.startswith("成长乐园"):
                 assert not any("课程内容或带" in step.get(WAIT, "") for step in flow), name
                 check_order(name, flow, [(TAP, "进入课程"), ("ai", "体验提示"), (ASSERT,)])
@@ -280,5 +506,8 @@ def test_published_baselines():
 
 
 if __name__ == "__main__":
+    test_dragon_weak_signal_action()
+    test_dragon_bound_submission()
+    test_preview_native_actions()
     test_published_baselines()
     print(f"{len(CASE_IDS) + len(EXTENDED_RESULTS)} 智小白3D case flows passed regression checks")
