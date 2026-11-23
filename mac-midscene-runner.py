@@ -2511,6 +2511,60 @@ if (process.env.MIDSCENE_ZXB_MODEL_CONNECT_RETRY === '1') {
 '''
 
 
+RUNNER_ZXB_OBSERVATION_RETRY = r'''
+const zxbObservationServices = new WeakSet();
+function installZxbObservationRetry(agent) {
+  if (process.env.MIDSCENE_ZXB_MODEL_CONNECT_RETRY !== '1') return;
+  const {service, taskExecutor} = agent;
+  if (zxbObservationServices.has(service) || typeof service?.extract !== 'function' || typeof taskExecutor?.waitFor !== 'function' ||
+      typeof agent.aiAssert !== 'function') return;
+  zxbObservationServices.add(service);
+  const observations = new (require('node:async_hooks').AsyncLocalStorage)();
+  const waitFor = taskExecutor.waitFor;
+  taskExecutor.waitFor = function(assertion, options, ...rest) {
+    if (!Number.isFinite(options?.timeoutMs) || options.timeoutMs <= 0) return waitFor.apply(this, arguments);
+    const deadline = performance.now() + options.timeoutMs;
+    return observations.run({deadline, signal: options.abortSignal}, () => waitFor.call(this, assertion, options, ...rest));
+  };
+  const assert = agent.aiAssert;
+  agent.aiAssert = function(assertion, message, options) {
+    return observations.run({deadline: Infinity, signal: options?.abortSignal}, () => assert.call(this, assertion, message, options));
+  };
+  // Service.extract receives an already captured UI context and only calls the model.
+  const extract = service.extract;
+  service.extract = async function(...args) {
+    const started = performance.now();
+    try {
+      return await extract.apply(this, args);
+    } catch (error) {
+      const observation = observations.getStore();
+      const [demand, runtime, options, , , context, execution] = args;
+      const config = runtime?.config;
+      if (!observation || observation.retried || config?.retryCount !== 0 || config.modelFamily !== 'qwen3' ||
+          config.modelName !== 'qwen3.7-plus' || config.openaiBaseURL?.replace(/\/$/, '') !== 'https://dashscope.aliyuncs.com/compatible-mode/v1' ||
+          typeof demand?.StatementIsTruthy !== 'string' || options?.screenshotIncluded === false || !context?.screenshot ||
+          error?.name !== 'ServiceError' || error.dump?.type !== 'extract' ||
+          error.message !== 'XML parse error: Missing required field: data-json') throw error;
+      const modelTimeout = config.timeout ?? 180000;
+      const limit = Math.min(observation.deadline, modelTimeout > 0 ? started + modelTimeout : Infinity);
+      const remaining = Math.floor(limit - performance.now());
+      if (!Number.isFinite(remaining) || remaining <= 0) throw error;
+      const signals = [observation.signal, execution?.abortSignal].filter(Boolean);
+      const signal = AbortSignal.any([...signals, AbortSignal.timeout(remaining)]);
+      signal.throwIfAborted();
+      observation.retried = true;
+      console.warn('Model observation missing data-json; requesting the same captured observation once');
+      args[6] = {...execution, abortSignal: signal};
+      const response = await extract.apply(this, args);
+      signal.throwIfAborted();
+      if (performance.now() >= limit || typeof response?.data?.StatementIsTruthy !== 'boolean') throw error;
+      return response;
+    }
+  };
+}
+'''
+
+
 RUNNER_ZXB_UPDATE_ADAPTER = r'''
 function installOptionalAppUpdateGuard(agent) {
   if (process.env.MIDSCENE_ZXB_OPTIONAL_UPDATE !== '1') return;
@@ -2845,6 +2899,7 @@ RUNNER_PROGRESS_OBSERVER = r'''
       const printRecords = {};
       this.setupAgent = async (...setupArgs) => {
         const result = await setup.apply(this, setupArgs);
+        installZxbObservationRetry(result.agent);
         installOptionalAppUpdateGuard(result.agent);
         installKeyboardDismiss(result.agent);
         installNativeBack(result.agent);
@@ -2915,7 +2970,7 @@ def progress_observer_env(job_dir, device_id, dynamic_required=False, target_pac
     env["MIDSCENE_DYNAMIC_OBJECT_REQUIRED"] = "1" if dynamic_required else "0"
     try:
         path = (job_dir / "runner-progress-observer.cjs").resolve()
-        path.write_text(RUNNER_ZXB_MODEL_TRANSPORT + RUNNER_ZXB_UPDATE_ADAPTER + RUNNER_KEYBOARD_DISMISS_ADAPTER + RUNNER_PRINT_RECOVERY_ADAPTER + RUNNER_DYNAMIC_OBJECT_ADAPTER + RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
+        path.write_text(RUNNER_ZXB_MODEL_TRANSPORT + RUNNER_ZXB_OBSERVATION_RETRY + RUNNER_ZXB_UPDATE_ADAPTER + RUNNER_KEYBOARD_DISMISS_ADAPTER + RUNNER_PRINT_RECOVERY_ADAPTER + RUNNER_DYNAMIC_OBJECT_ADAPTER + RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
         # NODE_OPTIONS is scoped to this CLI subprocess, not the machine.
         option = '--require ' + json.dumps(str(path), ensure_ascii=False)
         env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " " + option).strip()
