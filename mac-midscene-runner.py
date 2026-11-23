@@ -2358,6 +2358,137 @@ def stop_midscene_process(proc):
 
 # Kept inline so updating the standalone Mac Runner remains a one-file install.
 # Read-only adapter for the public ScriptPlayer status exposed by Midscene 1.13.
+# These published business regressions may defer an optional app update. Other
+# UI jobs, including upgrade tests, retain the ordinary Android behavior.
+ZXB_REGRESSION_FILES = {
+    'OBJ保龄球打印',
+    '姓名牌打印',
+    '文字建模',
+    '模型导入-微信导入',
+    '标牌打印',
+    '客服对话',
+    '打印记录查看',
+    '普通印章打印',
+    '小白客商城-耗材',
+    '关节龙打印',
+    '模型导入-本地导入',
+    '我的收藏查看',
+    '模型生成记录',
+    '十二生肖印章打印',
+    '个人作品按类型筛选',
+    '个人导入文件保存期限',
+    '个人成长能力报告',
+    '主题配套套件介绍',
+    '勋章挑战与已获勋章',
+    '印章图库分类切换',
+    '印章推荐文案快速替换',
+    '印章设计退出确认保留编辑',
+    '印章阴刻红色试盖',
+    '广场作品详情',
+    '广场推荐和最新作品',
+    '成长乐园建模大冒险',
+    '成长乐园教材分科',
+    '成长乐园科创项目',
+    '我的设备状态与控制入口',
+    '掐丝珐琅手工教程播放',
+    '掐丝珐琅挂件选图指引',
+    '新手必学课程目录',
+    '服务中心故障解答',
+    '服务中心设备与自助问题',
+    '标牌文字八字边界',
+    '浏览主题专区模型',
+    '设备耗材颜色面板',
+    '设备详情与部件保养',
+    '邀请打印规则与记录',
+    '首页搜索模型详情',
+    '首页热门与最新模型',
+    '魔法涂鸦创作模式',
+}
+ZXB_AI_REGRESSIONS = {
+    "uid_b246f99b5ef544a8812f9aeefc7f666a_r5.yaml": "我的页面入口跨端验收20261015",
+    "跨端导航验收20261013.yaml": "智小白3D跨端导航验收",
+}
+
+
+def should_defer_zxb_update(job):
+    if (RUNNER_PLATFORM != "android" or not job.get("ui_batch_id")
+            or job.get("ui_execution_contract") != "ui-v1" or job.get("app_id") != "com.kfb.model"
+            or job.get("target_package") != "com.kfb.model" or job.get("platform") != "android"):
+        return False
+    name, filename = job.get("target_task_name"), job.get("file")
+    if not name or any(term in job.get("yaml_content", "") for term in ("发布新版本啦", "立即更新", "下次再说", "AppUpdateTransAct")):
+        return False
+    if job.get("module") == "AI测试":
+        return ZXB_AI_REGRESSIONS.get(filename) == name
+    return job.get("module") == "3D打印基线" and name in ZXB_REGRESSION_FILES and filename == name + ".yaml"
+
+
+RUNNER_ZXB_UPDATE_ADAPTER = r'''
+function installOptionalAppUpdateGuard(agent) {
+  if (process.env.MIDSCENE_ZXB_OPTIONAL_UPDATE !== '1') return;
+  const device = agent.page;
+  if (process.env.MIDSCENE_PLATFORM !== 'android' || process.env.MIDSCENE_NATIVE_TARGET_PACKAGE !== 'com.kfb.model' ||
+      !device || ['getAdb','screenshotBase64','tapPoint'].some(name => typeof device[name] !== 'function')) {
+    throw Error('Optional update guard requires the bound Android SDK');
+  }
+  const app = 'com.kfb.model';
+  const update = app + '/com.mango.bridge.ui.update.AppUpdateTransAct';
+  const isHome = name => name === app+'/.MainActivity' || name === app+'/com.kfb.model.MainActivity';
+  const foreground = async adb => {
+    const state = await adb.shell("dumpsys activity activities | grep -E 'topResumedActivity=|mLastPausedActivity:'");
+    const matches = [...String(state).matchAll(/topResumedActivity=.*?\bu\d+\s+([\w.$/]+)\s+t(-?\d+)/g)];
+    if (matches.length > 1) throw Error('Ambiguous Android foreground');
+    const [, current, task] = matches[0] || [];
+    const paused = [...String(state).matchAll(/mLastPausedActivity:.*?\bu\d+\s+([\w.$/]+)\s+t(-?\d+)/g)];
+    return {current, homeBelow: paused.some(m => m[2] === task && isHome(m[1]))};
+  };
+  async function handle() {
+    const adb = await device.getAdb();
+    const before = await foreground(adb);
+    if (before.current !== update) return false;
+    if (!before.homeBelow) throw Error('Update dialog outside the expected home task');
+    const xml = await adb.shell('file=$(mktemp /data/local/tmp/qa-kfb-update.XXXXXX) || exit 1; trap \'rm -f "$file"\' EXIT; uiautomator dump "$file" >/dev/null && cat "$file"');
+    const nodes = [...String(xml).matchAll(/<node\s+([^>]+)>/g)].map(match =>
+      Object.fromEntries([...match[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(attr => [attr[1], attr[2]])));
+    function control(id, text, clickable) {
+      const found = nodes.filter(n => n.package === app && n['resource-id'] === app+':id/base_u3d_dlg_'+id);
+      if (found.length !== 1 || found[0].text !== text || found[0].enabled !== 'true' ||
+          (clickable && found[0].clickable !== 'true')) throw Error('Unrecognized or mandatory app update dialog');
+      return found[0];
+    }
+    control('title','发布新版本啦',false);
+    control('btn_update','立即更新',true);
+    const later = control('btn_later','下次再说',true);
+    const rect = /^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/.exec(later.bounds);
+    if (!rect || +rect[3] <= +rect[1] || +rect[4] <= +rect[2]) throw Error('Invalid bounds for defer update');
+    const ready = await foreground(adb);
+    if (ready.current !== update || !ready.homeBelow) throw Error('Update dialog changed before dismissal');
+    await adb.shell('input tap '+Math.floor((+rect[1]+ +rect[3])/2)+' '+Math.floor((+rect[2]+ +rect[4])/2));
+    for (let i=0;i<10;i++) {
+      if (isHome((await foreground(adb)).current)) {
+        console.log('Optional 智小白3D update dismissed via 下次再说; verified MainActivity');
+        return true;
+      }
+      await new Promise(r=>setTimeout(r,150));
+    }
+    throw Error('Home did not resume after deferring the optional app update');
+  }
+  let pending;
+  const check = () => pending || (pending = handle().finally(() => {pending = undefined;}));
+  const screenshot = device.screenshotBase64.bind(device);
+  device.screenshotBase64 = async (...args) => {
+    const image = await screenshot(...args);
+    return await check() ? screenshot(...args) : image;
+  };
+  const tap = device.tapPoint.bind(device);
+  device.tapPoint = async (...args) => {
+    await check();
+    return tap(...args);
+  };
+}
+'''
+
+
 RUNNER_KEYBOARD_DISMISS_ADAPTER = r'''
 function installKeyboardDismiss(agent) {
   const prefix='平台软键盘收起v1：', marker=prefix+'dismissKeyboard';
@@ -2573,13 +2704,13 @@ RUNNER_PROGRESS_OBSERVER = r'''
     const paths = [process.argv[1]];
     const version = require(require.resolve('@midscene/cli/package.json', {paths})).version;
     if (!/^1\.13\./.test(version)) {
-      if(process.env.MIDSCENE_DYNAMIC_OBJECT_REQUIRED==='1')throw new Error('运行时对象选择需要已验证的执行器版本');
+      if(process.env.MIDSCENE_ZXB_OPTIONAL_UPDATE==='1'||process.env.MIDSCENE_DYNAMIC_OBJECT_REQUIRED==='1')throw new Error('运行时对象选择需要已验证的执行器版本');
       return;
     }
     const { ScriptPlayer } = require(require.resolve('@midscene/core/yaml', {paths}));
     const original = ScriptPlayer?.prototype?.run;
     if (typeof original !== 'function') {
-      if(process.env.MIDSCENE_DYNAMIC_OBJECT_REQUIRED==='1')throw new Error('运行时对象选择适配器不可用');
+      if(process.env.MIDSCENE_ZXB_OPTIONAL_UPDATE==='1'||process.env.MIDSCENE_DYNAMIC_OBJECT_REQUIRED==='1')throw new Error('运行时对象选择适配器不可用');
       return;
     }
     const actionNames = {launch:'启动应用',terminate:'关闭应用',aiTap:'点击',aiWaitFor:'等待',aiAssert:'检查',ai:'操作',aiAction:'操作',aiInput:'输入内容',aiScroll:'滚动',sleep:'等待',runAdbShell:'设备操作',aiQuery:'提取信息'};
@@ -2599,6 +2730,7 @@ RUNNER_PROGRESS_OBSERVER = r'''
       const printRecords = {};
       this.setupAgent = async (...setupArgs) => {
         const result = await setup.apply(this, setupArgs);
+        installOptionalAppUpdateGuard(result.agent);
         installKeyboardDismiss(result.agent);
         installNativeBack(result.agent);
         installDynamicObject(result.agent, () => this.currentTaskIndex);
@@ -2636,7 +2768,7 @@ RUNNER_PROGRESS_OBSERVER = r'''
       catch(error) { finish(); throw error; }
     };
   } catch (error) {
-    if(process.env.MIDSCENE_DYNAMIC_OBJECT_REQUIRED==='1')throw error;
+    if(process.env.MIDSCENE_ZXB_OPTIONAL_UPDATE==='1'||process.env.MIDSCENE_DYNAMIC_OBJECT_REQUIRED==='1')throw error;
     /* Unsupported installation retains legacy progress for ordinary cases. */
   }
 })();
@@ -2668,7 +2800,7 @@ def progress_observer_env(job_dir, device_id, dynamic_required=False, target_pac
     env["MIDSCENE_DYNAMIC_OBJECT_REQUIRED"] = "1" if dynamic_required else "0"
     try:
         path = (job_dir / "runner-progress-observer.cjs").resolve()
-        path.write_text(RUNNER_KEYBOARD_DISMISS_ADAPTER + RUNNER_PRINT_RECOVERY_ADAPTER + RUNNER_DYNAMIC_OBJECT_ADAPTER + RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
+        path.write_text(RUNNER_ZXB_UPDATE_ADAPTER + RUNNER_KEYBOARD_DISMISS_ADAPTER + RUNNER_PRINT_RECOVERY_ADAPTER + RUNNER_DYNAMIC_OBJECT_ADAPTER + RUNNER_PROGRESS_OBSERVER, encoding="utf-8")
         # NODE_OPTIONS is scoped to this CLI subprocess, not the machine.
         option = '--require ' + json.dumps(str(path), ensure_ascii=False)
         env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " " + option).strip()
@@ -2769,7 +2901,7 @@ def validate_dynamic_yaml(text, target_package=""):
     return True
 
 
-def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id, target_package=""):
+def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id, target_package="", defer_zxb_update=False):
     _APP_STOP_PROOF.clear()
     started = time.time()
     stdout_lines = []
@@ -2813,6 +2945,10 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id, target_p
         if cancelled:
             return {"status":"cancelled", "stdout":"", "stderr":"平台已取消执行", "returncode":-1, "duration":0}
         midscene_command = execution_command(midscene_bin, yaml_path, device_id)
+        observer_env = progress_observer_env(job_dir, device_id, validate_dynamic_yaml(yaml_path.read_text(encoding="utf-8"), target_package), target_package)
+        observer_env["MIDSCENE_ZXB_OPTIONAL_UPDATE"] = "1" if defer_zxb_update else "0"
+        if defer_zxb_update and not (job_dir / "runner-progress-observer.cjs").is_file():
+            raise RuntimeError("智小白3D 回归更新提示处理器不可用")
         proc = subprocess.Popen(
             midscene_command,
             cwd=str(job_dir),
@@ -2820,7 +2956,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id, target_p
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=RUNNER_PLATFORM == "ios" or job_id in _UI_DELIVERIES,
-            env=progress_observer_env(job_dir, device_id, validate_dynamic_yaml(yaml_path.read_text(encoding="utf-8"), target_package), target_package)
+            env=observer_env
         )
         if job_id in _UI_DELIVERIES:
             proc._ui_process_group = True
@@ -3028,7 +3164,7 @@ def run_standard_job(job):
             result = execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id)
         else:
             result = with_app_cleanup(
-                lambda: execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id, job.get("target_package", "") if job.get("ui_execution_contract") == "ui-v1" else ""),
+                lambda: execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id, job.get("target_package", "") if job.get("ui_execution_contract") == "ui-v1" else "", should_defer_zxb_update(job)),
                 lambda: close_android_test_app(job_id, device_id, app_package),
                 attempt_dir / "teardown.json")
         write_text(attempt_dir / "stdout.log", result["stdout"])
