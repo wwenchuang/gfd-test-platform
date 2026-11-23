@@ -21,7 +21,7 @@
     "case_id": "COM_KFB_MODEL_b245f8b77517",
     "module": "3D打印基线",
     "filename": "姓名牌打印.yaml",
-    "sha256": "c716157351a96f52d7d44be426f77c4b295045aaad05636ea232e3b636ab0566"
+    "sha256": "20d48fcba38032fa360d5809c5b8369b78d56fb01613a586f84f4903b675cdb9"
   },
   {
     "case_id": "COM_KFB_MODEL_4f9e47eb53d2",
@@ -33,13 +33,13 @@
     "case_id": "COM_KFB_MODEL_0e27ae1d28a0",
     "module": "3D打印基线",
     "filename": "模型导入-微信导入.yaml",
-    "sha256": "94e5e235e03d14d847bc941b53a5431bc6a24978cf3ee79889d07df1cb2848ab"
+    "sha256": "fe0b76b558d3cb63844ad4b064145092ddf156dde9901c9b3368d0f9e144015c"
   },
   {
     "case_id": "COM_KFB_MODEL_38708c2d47ee",
     "module": "3D打印基线",
     "filename": "标牌打印.yaml",
-    "sha256": "2e1279582e4e9321682d5a5f7c2f75cf3874fb2e0d4fde80cd42bb182a4e9670"
+    "sha256": "c638833a31fdefe08b7dcebb5263d94262b84fff2afa80144659295e41e16da2"
   },
   {
     "case_id": "COM_KFB_MODEL_bf612450b118",
@@ -63,7 +63,7 @@
     "case_id": "COM_KFB_MODEL_9b7d287f912f",
     "module": "3D打印基线",
     "filename": "小白客商城-耗材.yaml",
-    "sha256": "935ee078990a5bd2b3f709e25fe3d83d04c1ddbecaf7985b1f2ad3a0187a4f67"
+    "sha256": "e80d8a6bfacbec68f59ed741a4fa1ecc404950386ba1f0721151893fb8b500e3"
   },
   {
     "case_id": "COM_KFB_MODEL_f14f42c5f10b",
