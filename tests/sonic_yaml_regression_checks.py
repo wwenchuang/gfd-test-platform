@@ -536,7 +536,7 @@ def test_published_baselines():
                 check_order(name, flow, [(WAIT, "隐藏"), (TAP, "画面"), (ASSERT, "总时长", "倍速")])
                 assert TAP in flow[-2], "读取视频进度时需使用刚刚唤出的控件"
             if name == "魔法涂鸦创作模式":
-                check_order(name, flow, [(TAP, "自由涂鸦"), ("ai", "我知道了"), (ASSERT, "笔画粗细")])
+                check_order(name, flow, [(TAP, "自由涂鸦"), (TAP, "我知道了", "静态标题"), (WAIT, "体验提示已消失"), (ASSERT, "笔画粗细")])
             if name.startswith("成长乐园"):
                 assert not any("课程内容或带" in step.get(WAIT, "") for step in flow), name
                 check_order(name, flow, [(TAP, "进入课程"), ("ai", "体验提示"), (ASSERT,)])
