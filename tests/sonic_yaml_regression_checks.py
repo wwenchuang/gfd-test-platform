@@ -153,7 +153,7 @@ ROUTES = {
         (WAIT, DEVICE, "模型处理完成", "打印编号"), ("runAdbShell", "open the fresh record"),
         (ASSERT, "分节龙形", "设备状态完美"), (TAP, "确认打印"),
         (ASSERT, "确认已安装底板", "确认挤出喷头", "安全检查"), ("runAdbShell", "consume the bound record"),
-        (WAIT, "当前设备", DEVICE, "关节龙"), (ASSERT, DEVICE, "当前任务", "关节龙", "最近打印"),
+        (WAIT, "当前设备", "EP3-" + DEVICE, "关节龙"), (ASSERT, "EP3-" + DEVICE, "当前任务", "关节龙", "最近打印"),
     ],
 }
 PREVIEW_CASES = {"文字建模", "标牌打印", "模型导入-微信导入", "OBJ保龄球打印", "姓名牌打印", "普通印章打印", "十二生肖印章打印"}
