@@ -166,7 +166,8 @@ def test_timer_starts_at_five_and_skips_reentry(daily, tmp_path, monkeypatch, da
     clock = daily.datetime.fromisoformat(date + 'T05:00:00+08:00')
     monkeypatch.setattr(daily, 'now', lambda: clock)
     path = tmp_path / (date + '.json')
-    slept, executed = [], []
+    slept, executed, notices = [], [], []
+    monkeypatch.setattr(daily, 'daily_sender', lambda: lambda card: notices.append(card) or {'code': 0})
     def pause(seconds):
         saved = json.loads(path.read_text())
         assert saved['status'] == 'scheduled' and saved['batches'] == {}
@@ -183,6 +184,7 @@ def test_timer_starts_at_five_and_skips_reentry(daily, tmp_path, monkeypatch, da
     assert json.loads(path.read_text())['operate_at'] == clock.isoformat()
     assert 'OnCalendar=*-*-* 05:00:00 Asia/Shanghai' in ENTRY.with_name('midscene-3d-daily.timer').read_text()
     assert executed == [1]
+    assert len(notices) == 1 and json.loads(path.read_text())['feishu']['status'] == 'sent'
     assert json.loads(path.read_text())['final']
 
 
@@ -267,3 +269,32 @@ def test_busy_printer_allows_model_functions_and_blocks_print(daily, monkeypatch
     status = daily.run_stages(record, tmp_path / 'day.json', phases[-2:], daily.now() + daily.timedelta(hours=1))
     assert status == 'skipped_printer_busy_or_unknown'
     assert record['batches'] == {'previews': 'models'}
+
+
+def test_daily_card_shows_partial_run_and_report(daily):
+    rows = cases(daily, remaining=0)
+    record = {'date': '2026-11-24', 'status': 'skipped_printer_busy_or_unknown',
+              'batches': {'smoke': 'uib_' + 'a' * 32},
+              'outcomes': {'smoke': {'1': 'passed', '2': 'failed', '3': 'passed'}}}
+    card = daily.daily_card(record, rows, 'https://qa.example')
+    text = json.dumps(card, ensure_ascii=False)
+    assert all(word in text for word in ('通过 2', '失败 1', '未完成 1', '打印机', rows[2]['filename'][:-5],
+                                         'https://qa.example/task-manager.html?ui_batch=uib_'))
+
+
+@pytest.mark.parametrize(('reply', 'expected'), [({'code': 0}, 'sent'), ({'code': 1001}, 'rejected'),
+                                                ({'ok': True}, 'unknown'), (TimeoutError(), 'unknown')])
+def test_daily_notice_one_attempt(daily, tmp_path, reply, expected):
+    path = tmp_path / '2026-11-24.json'
+    record = {'date': '2026-11-24', 'status': 'stopped_smoke', 'batches': {}}
+    calls = []
+    def send(card):
+        assert json.loads(path.read_text())['feishu']['status'] == 'sending'
+        calls.append(card)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+    daily.deliver_daily(record, path, cases(daily), send)
+    daily.deliver_daily(json.loads(path.read_text()), path, cases(daily), send)
+    assert len(calls) == 1
+    assert json.loads(path.read_text())['feishu']['status'] == expected
