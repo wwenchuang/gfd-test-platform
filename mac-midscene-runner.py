@@ -2599,6 +2599,8 @@ function installOptionalAppUpdateGuard(agent) {
   }
   const app = 'com.kfb.model';
   const update = app + '/com.mango.bridge.ui.update.AppUpdateTransAct';
+  const popup = app + '/com.mango.flutter.act.PopupFlutterBoostAct';
+  const splash = app + '/.splash.SplashActivity';
   const isHome = name => name === app+'/.MainActivity' || name === app+'/com.kfb.model.MainActivity';
   const foreground = async adb => {
     const state = await adb.shell("dumpsys activity activities | grep -E '^[[:space:]]*(topResumedActivity=|[*] (Task[{]|Hist[[:space:]]))'");
@@ -2612,7 +2614,7 @@ function installOptionalAppUpdateGuard(agent) {
     if (!current) throw Error('Unknown Android foreground');
     const [, record, user, name, task] = current;
     const result = {name, record, user, task};
-    if (name !== update) return result;
+    if (name !== update && name !== popup) return result;
 
     const at = lines.indexOf(resumed[0]);
     const header = /^\* Task\{\w+ #(\d+)\s/.exec(lines[at - 1] || '');
@@ -2629,13 +2631,26 @@ function installOptionalAppUpdateGuard(agent) {
   async function handle() {
     const adb = await device.getAdb();
     let before = await foreground(adb);
-    const transition = before.focusCount !== undefined;
+    let transition = before.focusCount !== undefined;
     // During startup the activity manager can briefly expose zero or multiple resumed activities.
     for (let reads=1; before.focusCount !== undefined && reads<9; reads++) {
       await new Promise(resolve => setTimeout(resolve, 300));
       before = await foreground(adb);
     }
     if (before.focusCount !== undefined) throw Error('Ambiguous Android foreground after 9 observations; resumed count: '+before.focusCount);
+    if (before.name === splash) {
+      const launch = before;
+      transition = true;
+      // Wait only for the actual cold-start activity. The business assertion gets a fresh frame.
+      for (let reads=0; reads<50 && (before.name===splash || before.focusCount!==undefined); reads++) {
+        await new Promise(resolve=>setTimeout(resolve,500));
+        before=await foreground(adb);
+      }
+      if (before.name===splash || before.focusCount!==undefined) throw Error('SplashActivity did not finish launching');
+      if (before.task!==launch.task || before.user!==launch.user || !before.name.startsWith(app+'/')) {
+        throw Error('App launch left the expected Android task');
+      }
+    }
     if (before.name !== update) return transition ? 'transition' : false;
     if (!before.homeRecord) throw Error('Update dialog outside the expected home task');
     const xml = await adb.shell('file=$(mktemp /data/local/tmp/qa-kfb-update.XXXXXX) || exit 1; trap \'rm -f "$file"\' EXIT; uiautomator dump "$file" >/dev/null && cat "$file"');
@@ -2661,6 +2676,11 @@ function installOptionalAppUpdateGuard(agent) {
       if (isHome(resumed.name) && resumed.record === before.homeRecord && resumed.task === before.task && resumed.user === before.user) {
         console.log('Optional 智小白3D update dismissed via 下次再说; verified MainActivity');
         return transition ? 'transition' : true;
+      }
+      if (resumed.name===popup && resumed.homeRecord===before.homeRecord &&
+          resumed.task===before.task && resumed.user===before.user) {
+        console.log('Optional update dismissed; app popup above the same MainActivity requires a fresh observation');
+        return 'transition';
       }
       await new Promise(r=>setTimeout(r,150));
     }
