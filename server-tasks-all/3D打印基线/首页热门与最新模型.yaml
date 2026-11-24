@@ -11,9 +11,21 @@ tasks:
   - aiWaitFor: 首页模型推荐区有「热门」和「最新」
     timeout: 12000
   - aiTap: 模型推荐区域的「热门」
-  - aiWaitFor: 「热门」选中并加载了有标题的模型卡片
+  - aiWaitFor: 首页「热门」标签选中，标签下的模型列表已显示封面图片
+    timeout: 12000
+  - aiScroll: 热门标签下方的模型封面列表
+    direction: down
+    distance: 420
+    scrollType: singleAction
+  - aiWaitFor: 模型列表里至少一张卡片能看到封面和对应的非空模型标题
     timeout: 12000
   - aiTap: 同一分类栏的「最新」
-  - aiWaitFor: 首页「最新」分类已选中，其下有带封面及标题的模型卡片，未显示网络错误
+  - aiWaitFor: 首页「最新」标签选中，标签下的模型列表已显示封面图片
     timeout: 12000
-  - aiAssert: 首页「最新」分类已选中，其下有带封面及标题的模型卡片，未显示网络错误
+  - aiScroll: 最新标签下方的模型封面列表
+    direction: down
+    distance: 420
+    scrollType: singleAction
+  - aiWaitFor: 模型列表里至少一张卡片能看到封面和对应的非空模型标题
+    timeout: 12000
+  - aiAssert: 最新模型列表显示了带封面和标题的模型卡片，没有网络错误或空列表提示

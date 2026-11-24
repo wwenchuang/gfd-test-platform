@@ -582,6 +582,12 @@ def test_published_baselines():
             check = validate_yaml_static_executable(source, strict=True)
             assert check["executionLevel"] == "executable", (name, check["errors"], check["warnings"])
             flow = task["flow"]
+            if name == "首页热门与最新模型":
+                for category in ("热门", "最新"):
+                    check_order(name, flow, [(TAP, category), (WAIT, category, "封面"),
+                                             ("aiScroll", category), (WAIT, "封面", "标题")])
+                scrolls = [step for step in flow if "aiScroll" in step]
+                assert len(scrolls) == 2 and all(step["direction"] == "down" for step in scrolls)
             if name == "设备详情与部件保养":
                 check_order(name, flow, [(ASSERT, "喷头组件", "打印平台", "百分比"),
                                          ("ai", "规格"), (ASSERT, DEVICE, "最大打印尺寸")])
