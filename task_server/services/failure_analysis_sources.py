@@ -12,9 +12,10 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from urllib.parse import urlsplit
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from task_server.api_testing.reprint_diagnosis import reprint_hint
 from task_server.api_testing import access
 from task_server.api_testing.executor import discover_sensitive_values, redact
 from task_server.api_testing.models.case import ApiCase, ApiCaseVersion
@@ -39,6 +40,9 @@ def _safe_receipt(row):
     if not isinstance(raw, dict):
         return {}
     facts = {}
+    hint = reprint_hint(row.get('name'), raw.get('trace'))
+    if hint:
+        facts['reprint_hint'] = hint
     stage = row.get('failure_category')
     if stage in ('setup', 'cleanup', 'business_response', 'product_assertion'):
         facts['failure_stage'] = stage
@@ -202,7 +206,7 @@ class EvidenceSource:
                    ApiExecutionCase.case_version_id, ApiExecutionCase.endpoint_id,
                    ApiExecutionCase.environment_revision_id, ApiExecutionCase.status,
                    ApiExecutionCase.failure_category, ApiExecutionCase.duration_ms,
-                   ApiCase.name]
+                   func.coalesce(ApiCaseVersion.request_template['name'].as_string(), ApiCase.name).label('name')]
         if full:
             columns.append(ApiExecutionCase.sanitized_result)
         else:
@@ -425,6 +429,9 @@ class EvidenceSource:
                     result['evidence'].append(self._evidence('request_trace', case_id, '同次接口回执摘要', receipt))
                 return self._finish(result)
             trace = self._trace(row)
+            hint = reprint_hint(row.get('name'), trace.get('trace'))
+            if hint:
+                trace = {'reprint_hint': hint, **trace}
             for key in ('request', 'response', 'trace'):
                 if not trace.get(key):
                     result['missing'].append(key + '_not_recorded')

@@ -579,7 +579,7 @@ async function restoreArchivedReports(): Promise<void> {
                   <b :class="`status-${String(result.status).toLowerCase()}`">{{ statusLabel(result.status) }}</b>
                   <div>
                     <strong>{{ result.case_name || result.endpoint_summary || result.path }}</strong>
-                    <small>{{ result.method }} {{ result.path }}</small>
+                    <small>{{ result.reprint_hint ? '用例目标 · ' : '' }}{{ result.method }} {{ result.path }}</small>
                   </div>
                   <p>{{ caseResultSummary(result) }}</p>
                 </article>

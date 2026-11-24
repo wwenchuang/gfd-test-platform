@@ -54,13 +54,16 @@ describe('ReportsView', () => {
     const context = useContextStore()
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
     vi.spyOn(context, 'loadOptions').mockResolvedValue()
-    useExecutionsStore().executions = [{ ...report, summary: {
+    const hint = '设备异常。GET devices/info 返回 deviceStatus=error，前置检查停止，未发出重打请求。'
+    useExecutionsStore().executions = [{ ...report, case_results: report.case_results.map(r => ({ ...r, reprint_hint: hint })), summary: {
       ...report.summary, agent_patrol: { message: '回归巡检 · 重复 2', 调查状态: 'limited',
         结论: '前置检查存在待切片任务', 下一步: '核对本次请求和断言' },
       agent_patrol_notification: { status: 'sent' },
     } as unknown as ExecutionView['summary'] }]
     const wrapper = mount(ReportsView)
     const panel = wrapper.get('[aria-label="Agent 自动巡检"]')
+    expect(panel.text()).toContain(hint)
+    expect(wrapper.get('.report-detail-evidence').text()).toContain(hint)
     expect(panel.text()).toContain('调查受限')
     expect(panel.text()).toContain('前置检查存在待切片任务')
     expect(panel.get('a').attributes('href')).toBe('#/runs?executionId=report-1')

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import defer
 
+from ..reprint_diagnosis import REPRINT_CASES, reprint_hint
 from ..case_classification import is_one_time_case
 from .. import access
 
@@ -312,6 +313,18 @@ class ExecutionRepository:
         self.session.flush()
         return execution
 
+    def reprint_hints(self, children):
+        failed = [c.id for c in children if c.status in ('FAILED', 'BROKEN')]
+        if not failed:
+            return {}
+        name = ApiCaseVersion.request_template['name'].as_string()
+        rows = self.session.execute(select(
+            ApiExecutionCase.id, name, ApiExecutionCase.sanitized_result['trace'],
+        ).join(ApiCaseVersion, ApiCaseVersion.id == ApiExecutionCase.case_version_id)
+            .where(ApiExecutionCase.id.in_(failed), name.in_(REPRINT_CASES)))
+        return {case_id: hint for case_id, case_name, trace in rows
+                if (hint := reprint_hint(case_name, trace))}
+
     def display_metadata(self, execution, children, *, include_details=True):
         versions = self.get_case_versions(item.case_version_id for item in children)
         cases = self.get_cases(item.case_id for item in versions.values())
@@ -330,6 +343,7 @@ class ExecutionRepository:
             "versions": versions,
             "endpoints": endpoints,
             "failure_analyses": analyses,
+            "reprint_hints": self.reprint_hints(children),
             "events": self.read_events(
                 execution.id,
                 0,
@@ -354,6 +368,7 @@ class ExecutionRepository:
                 )
             )
         } if environment_ids else {}
+        reprint_hints = self.reprint_hints(children)
         events_by_execution = {execution_id: [] for execution_id in execution_ids}
         if execution_ids:
             events = self.session.scalars(
@@ -379,6 +394,7 @@ class ExecutionRepository:
                 "versions": versions,
                 "endpoints": endpoints,
                 "failure_analyses": {},
+                "reprint_hints": reprint_hints,
                 "events": tuple(events_by_execution.get(execution.id, ())),
             }
             for execution in execution_rows

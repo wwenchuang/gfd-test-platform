@@ -201,6 +201,7 @@ export function executionFailureBuckets(execution: ExecutionView): {
 }
 
 export function caseResultSummary(result: ExecutionCaseResult): string {
+  if (result.reprint_hint) return result.reprint_hint
   const detail = result.sanitized_result || {}
   const assertions = Array.isArray(detail.assertion_results) ? detail.assertion_results as Array<Record<string, unknown>> : []
   const failed = assertions.find(item => item.passed === false)

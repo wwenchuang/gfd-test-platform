@@ -370,3 +370,25 @@ def test_device_logs_match_only_authorized_execution(api, monkeypatch):
         assert [row['event_id'] for row in records] == [api.project]
         with pytest.raises(LookupError):
             source.get_device_logs(uid())
+
+
+def test_reprint_report_and_restricted_agent_use_same_version_evidence(api, monkeypatch):
+    from task_server.api_testing.models.case import ApiCaseVersion
+    from task_server.api_testing.repositories.execution_repository import ExecutionRepository
+    from task_server.services import failure_analysis_sources
+    monkeypatch.setattr(failure_analysis_sources, 'SECRET_CONTEXT_BYTES', 1)
+    with api.factory.begin() as db:
+        version = db.get(ApiCaseVersion, api.version)
+        version.request_template = {'name': '重新打印判断 - 创建后取消并清理'}
+    run, case = api.add(payload={'trace': [{
+        'stage': 'main', 'status': 'FAILED',
+        'request': {'method': 'POST', 'url': '/print3d/api/v1/printJob/createReprint?token=private'},
+        'response': {'status_code': 200, 'body': {'code': 1001, 'msg': 'private'}},
+    }]})
+    with api.factory() as db:
+        hints = ExecutionRepository(db).reprint_hints([SimpleNamespace(id=case, status='FAILED')])
+    with actor_context(api.actor):
+        evidence = adapter()(api.actor, 'api', run, session_factory=api.factory).get_request_trace(case)
+    assert '业务码 1001' in hints[case]
+    assert hints[case] == evidence['evidence'][0]['data']['reprint_hint']
+    assert 'private' not in json.dumps(evidence)

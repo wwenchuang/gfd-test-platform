@@ -624,6 +624,7 @@ export interface ExecutionCaseResult {
   method: string
   path: string
   status: string
+  reprint_hint?: string
   failure_category: string
   duration_ms: number
   sanitized_result: Record<string, unknown>

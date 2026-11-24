@@ -63,12 +63,15 @@ def _summary(db, run, job, username, analysis):
     failed = sum(row.status in FAILED for row in current)
     conclusion = _grounded_text(analysis or {}, 'facts')
     next_step = _grounded_text(analysis or {}, 'recommendations')
+    hints = list(dict.fromkeys(ExecutionRepository(db).reprint_hints(current).values()))
     if failed:
         conclusion = conclusion or f'本次有 {failed} 条用例失败或异常，原因待核实。'
         next_step = next_step or '打开报告中的失败用例，核对失败断言和同次请求回执。'
     else:
         conclusion = '本次没有失败或异常用例。'
         next_step = '打开报告核对恢复用例及其通过记录。' if groups['恢复'] else '在报告中核对执行范围和各用例终态。'
+    if hints:
+        conclusion = ' '.join(hints + [conclusion])
     return dict(message='回归巡检 · ' + '，'.join(f'{k} {len(v)}' for k, v in groups.items()),
                 对比明细=groups, 上次执行=prior, 本次执行=run.id, 结论=conclusion, 下一步=next_step,
                 调查状态=analysis['status'] if analysis else '本次无失败', 调查编号=analysis.get('id') if analysis else None)

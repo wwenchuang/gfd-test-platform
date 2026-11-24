@@ -1346,6 +1346,7 @@ class ExecutionService:
                     else "",
                     "status": item.status,
                     "failure_category": item.failure_category,
+                    "reprint_hint": display.get("reprint_hints", {}).get(item.id, ""),
                     "duration_ms": item.duration_ms,
                     "sanitized_result": (
                         copy.deepcopy(dict(item.sanitized_result))
