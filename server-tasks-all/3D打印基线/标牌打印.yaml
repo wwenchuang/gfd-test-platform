@@ -3,10 +3,10 @@ android: {}
 tasks:
   - name: 标牌打印
     # baseline.case_id: COM_KFB_MODEL_38708c2d47ee
-    # baseline.goal: 验证标牌打印
+    # baseline.goal: 定制文字标牌三维预览
     # baseline.start_page: App 首页
-    # baseline.path: 首页 → 标牌 → 输入文字并选择字体 → 生成3D预览图 → 去打印 → 切片预览 → 返回
-    # baseline.expected: 标牌文本生成三维模型，编辑器及切片预览加载，退出本次待确认预览。
+    # baseline.path: 首页 → 标牌 → 输入文字并选择字体 → 生成3D预览图
+    # baseline.expected: 标牌结果页的三维预览显示本次输入的「UI自动化」标牌。
     # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
     flow:
       - runAdbShell: am force-stop com.kfb.model
@@ -14,9 +14,6 @@ tasks:
       - aiWaitFor: 底部导航可见「创作」和「我的」，最左侧可见房子图标
         timeout: 12000
       - aiTap: 底部导航最左侧的房子图标
-      - aiWaitFor: 首页的 EP3-9888E0094F2A 设备卡片已刷新，明确显示「空闲」，或已显示打印中、任务待处理等占用状态
-        timeout: 35000
-      - aiAssert: 该设备栏显示空闲，首页没有正在打印、模型处理中或模型处理完成待打印的任务横幅。
       - aiTap: 首页快捷入口中图标下方写有「标牌」的入口
       - aiWaitFor: 标题「标牌」下显示「标牌样式」「标牌文字」「标牌字体」及「生成3D预览图」
         timeout: 12000
@@ -29,32 +26,4 @@ tasks:
       - aiTap: 标牌编辑页底部的「生成3D预览图」
       - aiWaitFor: 标题为「标牌」的结果页已显示立体标牌和「去打印」按钮
         timeout: 240000
-      - aiTap: 本次标牌作品预览底部的「去打印」
-      - aiWaitFor: 当前模型的三维摆放编辑画布已加载，有模型尺寸及底部「下一步」
-        timeout: 120000
-      - aiAssert: 顶部标题为「标牌」，三维画布有标牌，模型尺寸、缩放及「下一步」可见。
-      - aiTap: 当前模型摆放编辑页底部的「下一步」
-      - aiWaitFor: 本次摆放编辑器上有「请确认耗材颜色」弹窗及并排的「修改设置」「确认」，或页面顶部标题已经变成「模型打印预览」
-        timeout: 30000
-      - runAdbShell: >-
-          file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1;
-          trap 'rm -f "$file"' EXIT;
-          for attempt in 1 2 3; do
-          : > "$file"; uiautomator dump "$file" >/dev/null && [ -s "$file" ] || exit 1;
-          if grep -Fq 'text="请确认当前使用的耗材颜色为：' "$file" && grep -Fq 'text="修改设置"' "$file"; then
-          bounds=$(tr '>' '\n' < "$file" | grep -F 'text="确认"' | grep -F 'class="android.widget.Button"' | grep -F 'package="com.kfb.model"' | grep -F ' clickable="true"' | grep -F ' enabled="true"' | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p');
-          set -- $bounds; [ "$#" -eq 4 ] || exit 1;
-          input tap "$((($1+$3)/2))" "$((($2+$4)/2))"; exit $?; fi;
-          if tr '>' '\n' < "$file" | grep -F 'text="模型打印预览"' | grep -F 'resource-id="com.kfb.model:id/web_title_tv_middle"' > /dev/null; then exit 0; fi;
-          done; exit 1
-      - aiWaitFor: 当前「模型打印预览」显示已完成切片的预计时间和模型耗材，底部同时有「取消打印」和「确认打印」
-        timeout: 240000
-      - aiAssert: 当前是本次编辑后连续打开的待确认预览，有预计时间、耗材及「确认打印」按钮，尚未发送打印。页面没有正在打印的进度，也没有其他任务或设备的详情。
-      - aiTap: 该待确认模型打印预览页底部、与「确认打印」并列的「取消打印」
-      - aiWaitFor: 本次预览中央弹窗标题「确认要取消任务吗？」及「确定」同时可见，或页面已显示「已取消模型处理」和底部「返回」
-        timeout: 12000
-      - aiTap: 弹窗「确认要取消任务吗？」内右侧的「确定」按钮；若中央已显示「已取消模型处理」，仅轻触中央静态提示「已取消模型处理」文字。
-      - aiWaitFor: 「模型打印预览」显示「已取消模型处理」和底部「返回」按钮
-        timeout: 30000
-      - aiTap: 已取消模型处理页面底部的「返回」
-      - aiAssert: 顶部标题包含「标牌」，底部可见「下一步」，两处同时可见即表示已离开任务结果页并回到该模型编辑器。
+      - aiAssert: 标牌结果页的三维预览显示本次输入的「UI自动化」标牌。

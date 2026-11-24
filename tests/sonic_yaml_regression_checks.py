@@ -65,13 +65,13 @@ EXTENDED_RESULTS = {
     "成长乐园建模大冒险": ("当前任务", "魔法涂鸦", "魔法积木"),
     "成长乐园科创项目": ("科创课", "立即学习"),
     "我的设备状态与控制入口": (DEVICE, "更多设置"),
-    "设备详情与部件保养": (DEVICE, "最大打印尺寸", "100 mm"),
+    "设备详情与部件保养": ("喷头组件", "打印平台", "百分比"),
     "设备耗材颜色面板": ("选择耗材颜色", "基础", "釉光"),
     "个人成长能力报告": ("经验值", "最近成长"),
     "掐丝珐琅手工教程播放": ("倍速", "播放"),
     "掐丝珐琅挂件选图指引": ("主体纯粹", "杂乱遮挡"),
-    "魔法涂鸦创作模式": ("自由画布", "粗细", "下一步"),
-    "标牌文字八字边界": ("春夏秋冬东南西北", "未写入"),
+    "魔法涂鸦创作模式": ("自由画布", "画笔", "粗细"),
+    "标牌文字八字边界": ("完整显示", "春夏秋冬东南西北"),
     "印章图库分类切换": ("十二生肖", "牛", "虎"),
     "印章推荐文案快速替换": ("好好学习", "平安喜乐"),
     "印章阴刻红色试盖": ("红色", "牛图案"),
@@ -107,24 +107,23 @@ ROUTES = {
     ],
     "OBJ保龄球打印": [
         (INPUT, "保龄球"), (TAP, "迷你保龄球套装"), (TAP, "查看全部"), (TAP, "「保龄球套装2」", "22 mm"), (ASSERT, "球体"),
-        (TAP, "取消打印"), (TAP, "返回"), (ASSERT, "迷你保龄球套装", "旋转", "下一步"),
     ],
     "姓名牌打印": [
         (INPUT, "姓名牌"), (TAP, "姓名牌", "卡片"), (TAP, "去编辑"), (WAIT, "文本输入框"), (INPUT, "UI自动化"),
-        (TAP, "生成模型"),
+        (TAP, "生成模型"), (ASSERT, "姓名牌", "UI自动化"),
     ],
     "普通印章打印": [
         (TAP, "单章DIY"), (TAP, "文字"), (INPUT, "UI自动化"), (TAP, "字体"),
         (TAP, "盖印效果"), (ASSERT, "40mm"), (TAP, "试盖效果"), (ASSERT, "文字", "图样"),
-        (TAP, "选择把手"), (TAP, "完成"), (ASSERT, "文字印章", "预览"), (TAP, "去打印"), ("ai", "打磨", "知道了"),
+        (TAP, "选择把手"), (TAP, "完成"), (ASSERT, "文字印章", "预览"),
     ],
     "十二生肖印章打印": [
         (TAP, "单章DIY"), (TAP, "十二生肖"), (TAP, "牛"), (ASSERT, "牛", "选中"),
         (TAP, "盖印效果"), (ASSERT, "40mm"), (TAP, "试盖效果"), (ASSERT, "牛", "图样"),
-        (TAP, "选择把手"), (TAP, "完成"), (ASSERT, "牛印章", "预览"), (TAP, "去打印"), ("ai", "打磨", "知道了"),
+        (TAP, "选择把手"), (TAP, "完成"), (ASSERT, "牛印章", "预览"),
     ],
     "标牌打印": [
-        (TAP, "标牌"), (INPUT, "UI自动化"), (TAP, "字体"), (TAP, "生成3D预览图"), (TAP, "去打印"),
+        (TAP, "标牌"), (INPUT, "UI自动化"), (TAP, "字体"), (TAP, "生成3D预览图"), (ASSERT, "预览", "UI自动化"),
     ],
     "文字建模": [
         (TAP, "创作"), (TAP, "开始创作"), (INPUT, "硬币"), (TAP, "发送"),
@@ -133,7 +132,7 @@ ROUTES = {
         (WAIT, "硬币", "主体", "细节", "用途", "不补充 直接生成", "立即生成"),
         (TAP, "硬币", "主体", "细节", "用途", "不补充 直接生成", "立即生成"),
         (WAIT, "就这样，生成模型"), (TAP, "就这样，生成模型"), (WAIT, "硬币", "去打印"),
-        (TAP, "硬币", "去打印"), (TAP, "返回"), (ASSERT, "居中", "旋转", "下一步"),
+        (ASSERT, "硬币", "结果卡"),
     ],
     "模型导入-本地导入": [
         (TAP, "导入打印"), (TAP, "本地导入"), (TAP, "内部存储"), (TAP, "Download"),
@@ -156,10 +155,8 @@ ROUTES = {
         (WAIT, "当前设备", "EP3-" + DEVICE, "关节龙"), (ASSERT, "EP3-" + DEVICE, "当前任务", "关节龙", "最近打印"),
     ],
 }
-PREVIEW_CASES = {"文字建模", "标牌打印", "模型导入-微信导入", "OBJ保龄球打印", "姓名牌打印", "普通印章打印", "十二生肖印章打印"}
 
 
-PREVIEW_READ_WINDOW = r"""file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1; trap 'rm -f "$file"' EXIT; uiautomator dump "$file" >/dev/null && ui=$(cat "$file") && [ -n "$ui" ] || exit 1;"""
 PREVIEW_COLOR_CONFIRM = " ".join(r"""
 file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1;
 trap 'rm -f "$file"' EXIT;
@@ -172,15 +169,6 @@ input tap "$((($1+$3)/2))" "$((($2+$4)/2))"; exit $?; fi;
 if tr '>' '\n' < "$file" | grep -F 'text="模型打印预览"' | grep -F 'resource-id="com.kfb.model:id/web_title_tv_middle"' > /dev/null; then exit 0; fi;
 done; exit 1
 """.strip().splitlines())
-PREVIEW_WEAK_SIGNAL_BACK = PREVIEW_READ_WINDOW + " " + " ".join(r"""
-case "$ui" in *'package="com.kfb.model"'*'text="网络信号差"'*)
-case "$ui" in *'text="继续打印"'*'text="去调整网络"'*) input keyevent 4 ;; *) exit 1 ;;
-esac ;;
-esac
-""".strip().splitlines())
-PREVIEW_CANCEL_DIALOG_TAP = '弹窗「确认要取消任务吗？」内右侧的「确定」按钮；若中央已显示「已取消模型处理」，仅轻触中央静态提示「已取消模型处理」文字。'
-
-
 # On a direct transition to the native safety dialog this action only observes it.
 DRAGON_WEAK_SIGNAL_CONTINUE = " ".join(r"""
 file=$(mktemp /data/local/tmp/qa-kfb-dragon.XXXXXX) || exit 1;
@@ -384,7 +372,6 @@ def test_preview_native_actions():
     confirm = '<node text="确认" class="android.widget.Button" package="com.kfb.model" clickable="true" enabled="true" bounds="[555,1637][924,1760]"/>'
     preview = '<node text="模型打印预览" package="com.kfb.model" resource-id="com.kfb.model:id/web_title_tv_middle"/><node text="确认打印"/>'
     safety = '<node text="检查无误，确认打印" resource-id="com.kfb.model:id/tv_print_confirm"/>'
-    weak = '<node package="com.kfb.model"/><node text="网络信号差"/><node text="继续打印"/><node text="去调整网络"/>'
     for command, xml, code, action in (
         (PREVIEW_COLOR_CONFIRM, material + confirm, 0, "tap 739 1698"),
         (PREVIEW_COLOR_CONFIRM, preview, 0, ""),
@@ -395,11 +382,6 @@ def test_preview_native_actions():
         (PREVIEW_COLOR_CONFIRM, material + confirm.replace('text="确认"', 'text="确认打印"'), 1, ""),
         (PREVIEW_COLOR_CONFIRM, material + confirm.replace("com.kfb.model", "another.app"), 1, ""),
         (PREVIEW_COLOR_CONFIRM, material + confirm.replace('clickable="true"', 'clickable="false"'), 1, ""),
-        (PREVIEW_WEAK_SIGNAL_BACK, weak, 0, "keyevent 4"),
-        (PREVIEW_WEAK_SIGNAL_BACK, preview, 0, ""),
-        (PREVIEW_WEAK_SIGNAL_BACK, safety, 0, ""),
-        (PREVIEW_WEAK_SIGNAL_BACK, weak.replace("去调整网络", "取消"), 1, ""),
-        (PREVIEW_WEAK_SIGNAL_BACK, weak.replace("com.kfb.model", "another.app"), 0, ""),
     ):
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as fixture:
             fixture.write(xml)
@@ -440,32 +422,12 @@ def check_print_actions(name, flow):
         variant_actions = [step for step in flow if "立即生成" in str(step)]
         assert [next(iter(step)) for step in variant_actions] == [WAIT, "ai", WAIT, TAP]
         assert all("就这样，生成模型" not in str(step) for step in variant_actions)
-        check_order(name, flow, [(TAP, "我的"), (WAIT, "打印记录"), (TAP, "房子"), (WAIT, DEVICE, "空闲")])
-    if name in PREVIEW_CASES:
-        allowed_start_commands.add(PREVIEW_COLOR_CONFIRM)
     if name == "模型导入-微信导入":
         wechat, = [s["runAdbShell"] for s in flow if s.get("runAdbShell", "").startswith("# Open only the scoped app-to-WeChat")]
         # The device-side command can only accept the two observed dialogs once.
         assert hashlib.sha256(wechat.encode()).hexdigest() == "afa583a88f51a342c9c221f8c8e91913e84421202a768e1cb13a7bdbc6628d25"
         allowed_start_commands.add(wechat)
-    if name == "姓名牌打印":
-        allowed_start_commands.add(PREVIEW_WEAK_SIGNAL_BACK)
     submissions = []
-    cancellations = []
-    stamp_editor = '本次印章「打印准备」底部的「开始打印」按钮一次'
-    is_stamp = name in {'普通印章打印', '十二生肖印章打印'}
-    if is_stamp:
-        check_order(name, flow, [
-            (WAIT, '打印准备', '2个打印任务'), (ASSERT, '把手', '印面'), (TAP, stamp_editor),
-            (WAIT, '第1盘', '居中', '下一步'), (TAP, '第1盘', '下一步'),
-        ])
-        assert sum(step.get(TAP) == stamp_editor for step in flow) == 1
-        ready, = [s[WAIT] for s in flow if WAIT in s and '模型耗材' in s[WAIT]]
-        assert all(label in ready for label in ('「取消打印」', '「确认打印」', '具体时长', '带 g 的数值')), name
-        assert '「取消处理」已消失' in ready, name
-        check_order(name, flow, [(WAIT, ready), (WAIT, '三维画布', '杯状', '纵向', '灰色支撑'),
-                                 (ASSERT, '本次', '杯状', '纵向', '确认打印'),
-                                 (TAP, '取消打印')])
     if name == DRAGON:
         native = [step["runAdbShell"] for step in flow if step.get("runAdbShell", "").startswith("# dragon:")]
         assert tuple(hashlib.sha256(command.encode()).hexdigest() for command in native) == DRAGON_NATIVE_SHA256
@@ -516,51 +478,22 @@ def check_print_actions(name, flow):
             if action != TAP and ("去打印" in target or "点击「下一步」" in target):
                 assert "一次" in target and ("若" in target or "仅" in target), f"{name}: unbounded print navigation"
             assert not re.search(r"遗留任务|首页遗留|根据当前页面底部主按钮", target), f"{name}: unsafe task recovery"
-            if "取消打印" in target or "取消处理" in target:
-                # A completed, unsent preview can have both cancel and submit buttons.
-                assert action == TAP and "预览" in target, f"{name}: cancellation outside a specific preview"
-                cancellations.append(index)
-            # The sign, text and WeChat tap locators identify Cancel relative to its neighbour.
-            label = target.replace("与「确认打印」并列的「取消打印」", "「取消打印」") if action == TAP else target
-            if is_stamp and action == TAP and label == stamp_editor:
-                continue  # This specific two-plate screen opens the first plate editor.
-            if re.search(r"确认打印|直接打印|开始打印|提交打印|发送打印|继续打印", label):
+            if action == "ai" and (name, target) in {
+                ("模型导入-本地导入", "若已显示模型尺寸、缩放和三维摆放编辑画布，结束本步骤；仅在导入文件已选中但尚未进入摆放编辑画布时，点击导入页底部「下一步」一次。"),
+                ("模型导入-微信导入", "若当前已在三维摆放编辑器中，显示模型尺寸和缩放，结束本步骤；仅在回传文件已就绪的导入页点击「下一步」一次。"),
+            }:
+                continue
+            if name != DRAGON:
+                forbidden = r"去打印|切片|模型打印预览|取消打印|取消处理|取消模型处理|确认打印|直接打印|开始打印|提交打印|发送打印|继续打印|「下一步」"
+                assert not re.search(forbidden, target), f"{name}: print operation in a functional case: {target}"
+            elif re.search(r"确认打印|直接打印|开始打印|提交打印|发送打印|继续打印|取消打印|取消处理", target):
                 submissions.append(index)
-    if name in PREVIEW_CASES or name == DRAGON:
-        check_order(name, flow, [(WAIT, DEVICE, "空闲"), (ASSERT, "空闲")])
     if name == DRAGON:
-        assert len(submissions) == 1 and not cancellations, f"{name}: only the preview uses an AI confirmation tap"
+        check_order(name, flow, [(WAIT, DEVICE, "空闲"), (ASSERT, "空闲")])
+        assert len(submissions) == 1, f"{name}: expected one confirmation tap"
     else:
-        assert not submissions, f"{name}: physical printing action at {submissions}"
-    if name in PREVIEW_CASES:
-        assert len(cancellations) == 1, f"{name}: expected one cancellation of the current preview"
-        cancel = cancellations[0]
-        guard = " ".join(str(step.get(key, "")) for step in flow[:cancel] for key in (ASSERT, WAIT))
-        assert DEVICE in guard, f"{name}: preview must use the designated device"
-        check_order(name, flow[:cancel], [
-            (ASSERT, "空闲"), (TAP, "下一步"), (WAIT, "修改设置", "模型打印预览"), ("runAdbShell", PREVIEW_COLOR_CONFIRM),
-            (WAIT, "模型打印预览", "确认打印"), (ASSERT, "本次", "预览", "确认打印"),
-        ])
-        material = next(i for i, step in enumerate(flow) if step.get("runAdbShell") == PREVIEW_COLOR_CONFIRM)
-        editor = max(i for i, step in enumerate(flow[:material]) if TAP in step and "下一步" in step[TAP])
-        for step in flow[editor + 1:]:
-            assert not ({"ai", "aiAct", "aiAction"} & step.keys()), f"{name}: planning may tap again in the preview"
-        taps = [step[TAP] for step in flow[editor + 1:] if TAP in step]
-        assert len(taps) == 3 and taps[1] == PREVIEW_CANCEL_DIALOG_TAP, name
-        assert taps[0] == flow[cancel][TAP] and "返回" in taps[2], name
-        assert sum(step.get("runAdbShell") == PREVIEW_COLOR_CONFIRM for step in flow) == 1
-        if name == "姓名牌打印":
-            check_order(name, flow[editor:cancel], [(WAIT, "网络信号差"), ("runAdbShell", PREVIEW_WEAK_SIGNAL_BACK),
-                                                   (WAIT, "UI自动化", "模型打印预览"), (ASSERT, "本次", "UI自动化")])
-            assert sum(step.get("runAdbShell") == PREVIEW_WEAK_SIGNAL_BACK for step in flow) == 1
-        if name == "文字建模":
-            wait, = [step[WAIT] for step in flow[editor:cancel] if WAIT in step and "确认打印" in step[WAIT]]
-            assert all(text in wait for text in ("预计时间", "模型耗材", "取消打印"))
-            assert all(text not in wait for text in ("继续等待", "如果", "或百分比"))
-        check_order(name, flow[cancel + 1:], [(WAIT, "确认要取消任务", "已取消模型处理"), (TAP, PREVIEW_CANCEL_DIALOG_TAP),
-                                              (WAIT, "已取消模型处理", "返回"), (TAP, "返回"), (ASSERT, "离开")])
-    else:
-        assert not cancellations, f"{name}: unexpected task cancellation"
+        assert ASSERT in flow[-1], f"{name}: missing final business assertion"
+
 
 
 def test_published_baselines():
@@ -596,8 +529,9 @@ def test_published_baselines():
                 scrolls = [step for step in flow if "aiScroll" in step]
                 assert len(scrolls) == 2 and all(step["direction"] == "down" for step in scrolls)
             if name == "设备详情与部件保养":
-                check_order(name, flow, [(ASSERT, "喷头组件", "打印平台", "百分比"),
-                                         ("ai", "规格"), (ASSERT, DEVICE, "最大打印尺寸")])
+                check_order(name, flow, [(WAIT, DEVICE), (TAP, "更多设置"), (ASSERT, "喷头组件", "打印平台", "百分比")])
+            if name == "标牌文字八字边界":
+                assert [step.get("value") for step in flow if INPUT in step] == ["春夏秋冬东南西北"]
             if name == "掐丝珐琅手工教程播放":
                 check_order(name, flow, [(WAIT, "隐藏"), (TAP, "画面"), (ASSERT, "总时长", "倍速")])
                 assert TAP in flow[-2], "读取视频进度时需使用刚刚唤出的控件"

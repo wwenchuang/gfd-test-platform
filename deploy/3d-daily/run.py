@@ -14,8 +14,8 @@ PHONE = 'ecbfd645'
 MACHINE = '9888E0094F2A'
 SMOKE = ('我的收藏查看.yaml', '打印记录查看.yaml', '模型生成记录.yaml')
 DRAGON = '关节龙打印.yaml'
-# Each of these creates a slice, checks its preview and cancels that same slice.
-SLICE_PREVIEWS = (
+# Keep the original group membership and idempotency key for resumable daily runs.
+MODEL_FUNCTIONS = (
     '模型导入-微信导入.yaml', 'OBJ保龄球打印.yaml', '文字建模.yaml', '姓名牌打印.yaml',
     '标牌打印.yaml', '普通印章打印.yaml', '十二生肖印章打印.yaml',
 )
@@ -40,12 +40,12 @@ def plan(rows):
         ids.add(row['case_id'])
     if not {DRAGON, *SMOKE} <= by_file.keys():
         raise ValueError('missing_required_baselines')
-    remaining = [row for row in rows if row['filename'] not in (*SMOKE, *SLICE_PREVIEWS, DRAGON)]
+    remaining = [row for row in rows if row['filename'] not in (*SMOKE, *MODEL_FUNCTIONS, DRAGON)]
     phases = [('smoke', [by_file[name] for name in SMOKE])]
     for start in range(0, len(remaining), MAX_BATCH_CASES):
         name = 'remaining' if start == 0 else f'remaining_{start // MAX_BATCH_CASES + 1}'
         phases.append((name, remaining[start:start + MAX_BATCH_CASES]))
-    previews = [by_file[name] for name in SLICE_PREVIEWS if name in by_file]
+    previews = [by_file[name] for name in MODEL_FUNCTIONS if name in by_file]
     if previews:
         phases.append(('previews', previews))
     phases.append(('dragon', [by_file[DRAGON]]))
@@ -275,7 +275,7 @@ def run_stages(record, path, phases, deadline):
             if not preflight['ready']:
                 record['blockers'] = sorted({b['code'] for b in preflight['blockers']})
                 return 'preflight_blocked_' + name
-            if name in {'previews', 'dragon'}:
+            if name == 'dragon':
                 try:
                     idle = printer_idle()
                 except Exception:

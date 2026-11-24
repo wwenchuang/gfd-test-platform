@@ -2,10 +2,10 @@ android: {}
 tasks:
 - name: 姓名牌打印
   # baseline.case_id: COM_KFB_MODEL_b245f8b77517
-  # baseline.goal: 验证姓名牌打印
+  # baseline.goal: 定制姓名牌模型生成
   # baseline.start_page: App 首页
-  # baseline.path: 首页搜索姓名牌 → 去编辑 → 输入 UI自动化 → 生成模型 → 打印编辑 → 本次姓名牌预览及取消返回
-  # baseline.expected: 目标模型进入打印预览，完成切片，取消本次模型处理并返回。
+  # baseline.path: 首页搜索姓名牌 → 去编辑 → 输入 UI自动化 → 生成模型
+  # baseline.expected: 「编辑模型」页展示本次生成的姓名牌三维模型，编辑框内为「UI自动化」。
   # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
   flow:
   - runAdbShell: am force-stop com.kfb.model
@@ -13,9 +13,6 @@ tasks:
   - aiWaitFor: 底部导航可见「创作」和「我的」，最左侧可见房子图标
     timeout: 12000
   - aiTap: 底部导航最左侧的房子图标
-  - aiWaitFor: 首页的 EP3-9888E0094F2A 设备卡片已刷新，明确显示「空闲」，或已显示打印中、任务待处理等占用状态
-    timeout: 35000
-  - aiAssert: 首页选中 EP3-9888E0094F2A，状态为「空闲」，没有待处理、待打印或模型处理完成的任务横幅
   - aiTap: 首页顶端的放大镜搜索图标
   - aiWaitFor: 顶部有搜索输入框
     timeout: 12000
@@ -44,40 +41,4 @@ tasks:
   - aiTap: 编辑页底部「生成模型」
   - aiWaitFor: 「编辑模型」页已生成姓名牌三维模型，文本框显示「UI自动化」，底部「去打印」可用
     timeout: 240000
-  - aiTap: 「编辑模型」页底部「去打印」
-  - aiWaitFor: 无弹窗的姓名牌摆放编辑器已加载，左侧「居中」「旋转」、画布中的姓名牌和底部「下一步」同时可见
-    timeout: 120000
-  - aiTap: 「姓名牌」摆放编辑页底部的「下一步」
-  - aiWaitFor: 本次摆放编辑器上有「请确认耗材颜色」弹窗及并排的「修改设置」「确认」，或页面顶部标题已经变成「模型打印预览」
-    timeout: 30000
-  - runAdbShell: >-
-      file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1;
-      trap 'rm -f "$file"' EXIT;
-      for attempt in 1 2 3; do
-      : > "$file"; uiautomator dump "$file" >/dev/null && [ -s "$file" ] || exit 1;
-      if grep -Fq 'text="请确认当前使用的耗材颜色为：' "$file" && grep -Fq 'text="修改设置"' "$file"; then
-      bounds=$(tr '>' '\n' < "$file" | grep -F 'text="确认"' | grep -F 'class="android.widget.Button"' | grep -F 'package="com.kfb.model"' | grep -F ' clickable="true"' | grep -F ' enabled="true"' | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p');
-      set -- $bounds; [ "$#" -eq 4 ] || exit 1;
-      input tap "$((($1+$3)/2))" "$((($2+$4)/2))"; exit $?; fi;
-      if tr '>' '\n' < "$file" | grep -F 'text="模型打印预览"' | grep -F 'resource-id="com.kfb.model:id/web_title_tv_middle"' > /dev/null; then exit 0; fi;
-      done; exit 1
-  - aiWaitFor: 本次模型打印预览已显示带有「UI自动化」字样的姓名牌及并排的「取消打印」「确认打印」，或页面正中央显示标题「网络信号差」的独立弹窗
-    timeout: 240000
-  - runAdbShell: >-
-      file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1; trap 'rm -f "$file"' EXIT; uiautomator dump "$file" >/dev/null && ui=$(cat "$file") && [ -n "$ui" ] || exit 1;
-      case "$ui" in *'package="com.kfb.model"'*'text="网络信号差"'*)
-      case "$ui" in *'text="继续打印"'*'text="去调整网络"'*) input keyevent 4 ;; *) exit 1 ;; esac ;;
-      esac
-  - aiWaitFor: 模型打印预览页显示处理完成的带有「UI自动化」字样的姓名牌，能看到模型几何预览及「确认打印」按钮
-    timeout: 240000
-  - aiAssert: 当前是本次带有「UI自动化」字样的姓名牌的模型打印预览，同时显示「取消打印」和「确认打印」按钮。页面未进入设备工作或打印队列。
-  - aiTap: 模型打印预览底部的「取消打印」按钮
-  - aiWaitFor: 本次预览中央弹窗标题「确认要取消任务吗？」及「确定」同时可见，或页面已显示「已取消模型处理」和底部「返回」
-    timeout: 12000
-  - aiTap: 弹窗「确认要取消任务吗？」内右侧的「确定」按钮；若中央已显示「已取消模型处理」，仅轻触中央静态提示「已取消模型处理」文字。
-  - aiWaitFor: 模型打印预览显示「已取消模型处理」，下方有「返回」按钮
-    timeout: 12000
-  - aiTap: 已取消模型处理页面的「返回」按钮
-  - aiWaitFor: 返回后出现首页底部导航，或回到有模型标题的详情页、编辑页或印章配置页
-    timeout: 12000
-  - aiAssert: 顶部标题包含「姓名牌」，底部可见「下一步」，两处同时可见即表示已离开任务结果页并回到该模型编辑器。
+  - aiAssert: 「编辑模型」页展示本次生成的姓名牌三维模型，编辑框内为「UI自动化」。

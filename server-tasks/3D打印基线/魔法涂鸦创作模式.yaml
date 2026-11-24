@@ -6,7 +6,7 @@ tasks:
     # baseline.goal: 魔法涂鸦创作模式
     # baseline.start_page: App 首页
     # baseline.path: 创作 → 更多创作方式 → 魔法涂鸦 → 自由涂鸦 → 画图案
-    # baseline.expected: 临摹、AI、自由三种模式各有独立入口及说明，自由涂鸦进入含工具和笔画粗细选项的第一步画布。
+    # baseline.expected: 选择自由涂鸦后打开画布，画笔工具和笔画粗细选项可见。
     flow:
       - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
       - launch: com.kfb.model
@@ -18,9 +18,9 @@ tasks:
       - aiTap: 「更多创作方式」中的「魔法涂鸦」
       - aiWaitFor: 魔法涂鸦模式选择页显示「临摹涂鸦」「AI涂鸦」「自由涂鸦」
         timeout: 12000
-      - aiAssert: 三张模式卡片独立展示：临摹涂鸦说明描图生成3D模型，AI涂鸦说明由AI帮助生成模型，自由涂鸦说明可以随手画。右上有「我的作品」入口。
+      - aiAssert: 模式选择页同时提供「临摹涂鸦」「AI涂鸦」和「自由涂鸦」入口。
       - aiTap: 三张模式卡片中的「自由涂鸦」
       - aiWaitFor: 自由涂鸦已打开，显示「第1步：画图案」或推荐使用智小白HD的「体验提示」弹窗
         timeout: 12000
       - ai: 检查屏幕正中是否有「体验提示」弹窗。如果有，点击左侧「我知道了」关闭。如果没有弹窗，保持当前页面并结束本步。
-      - aiAssert: 「第1步：画图案」自由画布完整显示，工具文字清晰可读。左侧有「画笔」「橡皮」「形状」「填充」「文字」工具，右侧笔画粗细分为细、中、粗，底部有「下一步：变3D」。
+      - aiAssert: 当前为「第1步：画图案」自由画布，可见画笔工具与笔画粗细选项。

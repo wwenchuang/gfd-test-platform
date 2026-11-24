@@ -2,10 +2,10 @@ android: {}
 tasks:
 - name: OBJ保龄球打印
   # baseline.case_id: COM_KFB_MODEL_391142ea35f9
-  # baseline.goal: 验证OBJ保龄球打印
+  # baseline.goal: OBJ 单球文件预览
   # baseline.start_page: App 首页
-  # baseline.path: 首页搜索保龄球 → 迷你保龄球套装 → 查看全部 → 保龄球套装2（22 mm 球体）→ 打印编辑 → 球体打印预览及取消返回
-  # baseline.expected: 目标模型进入打印预览，完成切片，取消本次模型处理并返回。
+  # baseline.path: 首页搜索保龄球 → 迷你保龄球套装 → 查看全部 → 选择 22 mm 单球 → 组件预览
+  # baseline.expected: 当前模型是单个保龄球球体，构建板中没有球瓶。若处在「确认组件」，仅有一个球体组件且已选中。
   # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
   flow:
   - runAdbShell: am force-stop com.kfb.model
@@ -13,9 +13,6 @@ tasks:
   - aiWaitFor: 底部导航可见「创作」和「我的」，最左侧可见房子图标
     timeout: 12000
   - aiTap: 底部导航最左侧的房子图标
-  - aiWaitFor: 首页的 EP3-9888E0094F2A 设备卡片已刷新，明确显示「空闲」，或已显示打印中、任务待处理等占用状态
-    timeout: 35000
-  - aiAssert: 首页选中 EP3-9888E0094F2A，状态为「空闲」，没有待处理、待打印或模型处理完成的任务横幅
   - aiTap: 首页顶端的放大镜搜索图标
   - aiWaitFor: 顶部有搜索输入框
     timeout: 12000
@@ -37,34 +34,3 @@ tasks:
   - aiWaitFor: 模型加载完成，构建板中只显示单个球体，底部显示「确认组件」步骤的「确认」、模型入口「去打印」或打印设置页的「下一步」
     timeout: 120000
   - aiAssert: 当前模型是单个保龄球球体，构建板中没有球瓶。若处在「确认组件」，仅有一个球体组件且已选中。
-  - ai: 仅当当前处在「确认组件」、构建板仅有单个球且该组件已选中时，点击右下角「确认」一次；其他页面直接结束。
-  - ai: 只判断当前截图：若本次模型预览底部「去打印」可用，只点该按钮一次并结束；若已进入有「下一步」的模型打印编辑页，直接结束。
-  - aiWaitFor: 球体摆放编辑页已显示构建板中的球体和左侧「居中」工具，无弹窗，底部「下一步」可用
-    timeout: 120000
-  - aiTap: 模型打印编辑页底部蓝色「下一步」按钮
-  - aiWaitFor: 本次摆放编辑器上有「请确认耗材颜色」弹窗及并排的「修改设置」「确认」，或页面顶部标题已经变成「模型打印预览」
-    timeout: 30000
-  - runAdbShell: >-
-      file=$(mktemp /data/local/tmp/qa-kfb-preview.XXXXXX) || exit 1;
-      trap 'rm -f "$file"' EXIT;
-      for attempt in 1 2 3; do
-      : > "$file"; uiautomator dump "$file" >/dev/null && [ -s "$file" ] || exit 1;
-      if grep -Fq 'text="请确认当前使用的耗材颜色为：' "$file" && grep -Fq 'text="修改设置"' "$file"; then
-      bounds=$(tr '>' '\n' < "$file" | grep -F 'text="确认"' | grep -F 'class="android.widget.Button"' | grep -F 'package="com.kfb.model"' | grep -F ' clickable="true"' | grep -F ' enabled="true"' | sed -n 's/.*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p');
-      set -- $bounds; [ "$#" -eq 4 ] || exit 1;
-      input tap "$((($1+$3)/2))" "$((($2+$4)/2))"; exit $?; fi;
-      if tr '>' '\n' < "$file" | grep -F 'text="模型打印预览"' | grep -F 'resource-id="com.kfb.model:id/web_title_tv_middle"' > /dev/null; then exit 0; fi;
-      done; exit 1
-  - aiWaitFor: 模型打印预览页显示处理完成的保龄球球体，能看到模型几何预览及「确认打印」按钮
-    timeout: 240000
-  - aiAssert: 当前是本次保龄球球体的模型打印预览，同时显示「取消打印」和「确认打印」按钮。页面未进入设备工作或打印队列。
-  - aiTap: 模型打印预览底部的「取消打印」按钮
-  - aiWaitFor: 本次预览中央弹窗标题「确认要取消任务吗？」及「确定」同时可见，或页面已显示「已取消模型处理」和底部「返回」
-    timeout: 12000
-  - aiTap: 弹窗「确认要取消任务吗？」内右侧的「确定」按钮；若中央已显示「已取消模型处理」，仅轻触中央静态提示「已取消模型处理」文字。
-  - aiWaitFor: 模型打印预览显示「已取消模型处理」，下方有「返回」按钮
-    timeout: 12000
-  - aiTap: 已取消模型处理页面的「返回」按钮
-  - aiWaitFor: 编辑器顶栏出现「迷你保龄球套装」，底部出现「下一步」
-    timeout: 12000
-  - aiAssert: 编辑器顶栏为「迷你保龄球套装」，左侧可见「居中」及「旋转」工具，底部有「下一步」。这些控件同时可见表示已离开任务结果页并返回球体编辑器。

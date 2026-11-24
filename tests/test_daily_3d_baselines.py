@@ -235,23 +235,17 @@ def test_dragon_receipt_requires_a_unique_new_device_task(daily):
     assert daily.print_receipt(attempt, query, lambda _: None) is None
 
 
-def test_real_manifest_places_slice_cleanup_before_physical_print(daily):
+def test_real_manifest_places_model_functions_before_physical_print(daily):
     rows = json.loads(daily.MANIFEST.read_text())
     phases = daily.plan(rows)
     assert [name for name, _ in phases] == ['smoke', 'remaining', 'previews', 'dragon']
     assert [len(group) for _, group in phases] == [3, 33, 7, 1]
-    # The UI calls abandoning the current slice “取消打印” on the preview screen.
-    expected = set()
-    for row in rows:
-        path = ENTRY.parents[2] / 'server-tasks' / row['module'] / row['filename']
-        if any('aiTap:' in line and '取消打印' in line for line in path.read_text().splitlines()):
-            expected.add(row['case_id'])
-    assert {row['case_id'] for row in dict(phases)['previews']} == expected
+    assert tuple(row['filename'] for row in dict(phases)['previews']) == daily.MODEL_FUNCTIONS
     assert [row['filename'] for row in phases[-1][1]] == ['关节龙打印.yaml']
     assert len({row['case_id'] for _, group in phases for row in group}) == len(rows)
 
 
-def test_busy_printer_blocks_preview_before_dispatch(daily, monkeypatch, tmp_path):
+def test_busy_printer_allows_model_functions_and_blocks_print(daily, monkeypatch, tmp_path):
     from task_server.services import ui_execution_service, ui_execution_store
 
     phases = daily.plan(json.loads(daily.MANIFEST.read_text()))
@@ -261,8 +255,15 @@ def test_busy_printer_blocks_preview_before_dispatch(daily, monkeypatch, tmp_pat
     monkeypatch.setattr(ui_execution_store.UiExecutionStore, 'find_idempotent', lambda *_: None)
     monkeypatch.setattr(ui_execution_store.UiExecutionStore, '__init__', lambda self: None)
     monkeypatch.setattr(ui_execution_service, 'preflight_ui_batch', lambda *_: {'ready': True})
-    monkeypatch.setattr(ui_execution_service, 'create_ui_batch', lambda *_: pytest.fail('busy printer dispatched'))
+    def create(_actor, request, key):
+        assert key.endswith('-previews')
+        assert {case['case_id'] for case in request['cases']} == {row['case_id'] for row in phases[-2][1]}
+        return {'ui_batch_id': 'models'}
+    monkeypatch.setattr(ui_execution_service, 'create_ui_batch', create)
+    monkeypatch.setattr(daily, 'watch', lambda *_args, **_kwargs: [
+        {'case_id': row['case_id'], 'case_revision': row['sha256'], 'attempt_no': 1, 'status': 'passed'}
+        for row in phases[-2][1]])
     record = {'date': '2026-11-24', 'owner_id': 'user', 'batches': {}}
     status = daily.run_stages(record, tmp_path / 'day.json', phases[-2:], daily.now() + daily.timedelta(hours=1))
     assert status == 'skipped_printer_busy_or_unknown'
-    assert record['batches'] == {}
+    assert record['batches'] == {'previews': 'models'}

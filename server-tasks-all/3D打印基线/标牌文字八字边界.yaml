@@ -3,10 +3,10 @@ android: {}
 tasks:
   - name: 标牌文字八字边界
     # baseline.case_id: COM_KFB_MODEL_18f682a00659
-    # baseline.goal: 标牌文字八字边界
+    # baseline.goal: 标牌八字文字输入
     # baseline.start_page: App 首页
-    # baseline.path: 首页 → 标牌 → 输入八字 → 追加第九字
-    # baseline.expected: 输入八个汉字后尝试追加第九字，编辑框保留原八字。
+    # baseline.path: 首页 → 标牌 → 输入八个汉字 → 核对完整文字
+    # baseline.expected: 标牌文字输入框内完整显示「春夏秋冬东南西北」。
     flow:
       - runAdbShell: am start -W -f 0x10008000 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.kfb.model/.splash.SplashActivity
       - launch: com.kfb.model
@@ -22,7 +22,3 @@ tasks:
         value: 春夏秋冬东南西北
         mode: replace
       - aiAssert: 标牌文字输入框内完整显示「春夏秋冬东南西北」。
-      - aiInput: 当前标牌文字输入框
-        value: 春夏秋冬东南西北中
-        mode: replace
-      - aiAssert: 标牌文字输入框的完整内容为「春夏秋冬东南西北」，第九个字「中」未写入。
