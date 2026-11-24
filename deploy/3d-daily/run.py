@@ -14,6 +14,11 @@ PHONE = 'ecbfd645'
 MACHINE = '9888E0094F2A'
 SMOKE = ('我的收藏查看.yaml', '打印记录查看.yaml', '模型生成记录.yaml')
 DRAGON = '关节龙打印.yaml'
+# Each of these creates a slice, checks its preview and cancels that same slice.
+SLICE_PREVIEWS = (
+    '模型导入-微信导入.yaml', 'OBJ保龄球打印.yaml', '文字建模.yaml', '姓名牌打印.yaml',
+    '标牌打印.yaml', '普通印章打印.yaml', '十二生肖印章打印.yaml',
+)
 MAX_BATCH_CASES = 200  # ui_execution_service._normalize_request
 LOCAL = timezone(timedelta(hours=8))
 MANIFEST = Path(__file__).with_name('baselines.json')
@@ -35,11 +40,14 @@ def plan(rows):
         ids.add(row['case_id'])
     if not {DRAGON, *SMOKE} <= by_file.keys():
         raise ValueError('missing_required_baselines')
-    remaining = [row for row in rows if row['filename'] not in (*SMOKE, DRAGON)]
+    remaining = [row for row in rows if row['filename'] not in (*SMOKE, *SLICE_PREVIEWS, DRAGON)]
     phases = [('smoke', [by_file[name] for name in SMOKE])]
     for start in range(0, len(remaining), MAX_BATCH_CASES):
         name = 'remaining' if start == 0 else f'remaining_{start // MAX_BATCH_CASES + 1}'
         phases.append((name, remaining[start:start + MAX_BATCH_CASES]))
+    previews = [by_file[name] for name in SLICE_PREVIEWS if name in by_file]
+    if previews:
+        phases.append(('previews', previews))
     phases.append(('dragon', [by_file[DRAGON]]))
     return phases
 
@@ -93,11 +101,34 @@ ROLLBACK;
             and row.get('pending_command') == 0)
 
 
-def print_receipt(attempt, query=None):
-    """Correlate the Runner's model/device assertion with one fresh job number."""
+def submitted_slice(attempt):
+    from task_server.services.ui_execution_store import UiExecutionStore
+    from contextlib import closing
+    with closing(UiExecutionStore()._connect()) as db:
+        rows = db.execute("""SELECT a.content FROM ui_report_evidence e JOIN ui_report_artifacts a
+            USING(ui_batch_id,artifact_id) WHERE e.ui_batch_id=? AND e.attempt_id=? AND a.kind='html' LIMIT 2""",
+                          (attempt['ui_batch_id'], attempt['attempt_id'])).fetchall()
+    if len(rows) == 1:
+        return slice_from_report(bytes(rows[0][0]))
+    return None
+
+
+def slice_from_report(content):
+    markers = re.findall(rb'"output":"(verified|submitting) slice=([0-9]{19}) printer=9888E0094F2A(?=[" ])', content)
+    if (len(markers) == 2 and [action for action, _ in markers] == [b'verified', b'submitting']
+            and markers[0][1] == markers[1][1]):
+        return markers[0][1].decode()
+    return None
+
+
+def print_receipt(attempt, query=None, read_slice=submitted_slice):
+    """Require the exact slice submitted by this attempt and its printer acknowledgement."""
     start, finish = attempt.get('started_ns'), attempt.get('finished_ns')
     if (attempt['status'] != 'passed' or attempt['attempt_no'] != 1 or type(start) != int
             or type(finish) != int or not 0 < start <= finish):
+        return None
+    sn = read_slice(attempt)
+    if not sn or not re.fullmatch('[0-9]{19}', sn):
         return None
     if query is None:
         from task_server.services.print_job_evidence import _query as query
@@ -106,17 +137,20 @@ def print_receipt(attempt, query=None):
     rows = query(f"""
 SET SESSION MAX_EXECUTION_TIME=3000;
 START TRANSACTION READ ONLY;
-SELECT JSON_OBJECT('machine', device_id, 'print_sn', CAST(print_sn AS CHAR),
-                   'state', print_state)
-FROM print3d_pmc.devices_print_job WHERE device_id='9888E0094F2A'
-AND created_at BETWEEN FROM_UNIXTIME({lo}) AND FROM_UNIXTIME({hi})
-ORDER BY created_at, print_sn LIMIT 2;
+SELECT JSON_OBJECT('machine', d.device_id, 'print_sn', d.request_id, 'state', d.status,
+    'command_id',d.id, 'ack_id',(SELECT u.id FROM print3d_pmc.iot_ups u
+      WHERE u.device_id=d.device_id AND u.request_id=d.request_id
+      AND u.created_at BETWEEN d.created_at AND FROM_UNIXTIME({hi})
+      ORDER BY u.created_at,u.id LIMIT 1))
+FROM print3d_pmc.iot_downs d WHERE d.device_id='9888E0094F2A' AND d.cmd_code='print'
+AND d.created_at BETWEEN FROM_UNIXTIME({lo}) AND FROM_UNIXTIME({hi})
+ORDER BY d.created_at,d.id LIMIT 2;
 ROLLBACK;
 """, 'prod')
-    if (len(rows) != 1 or rows[0].get('machine') != MACHINE
-            or not re.fullmatch(r'[0-9]{1,20}', str(rows[0].get('print_sn', '')))):
+    if (len(rows) != 1 or rows[0].get('machine') != MACHINE or rows[0].get('print_sn') != sn
+            or rows[0].get('state') != 'ok' or not rows[0].get('ack_id') or not rows[0].get('command_id')):
         return None
-    return {key: rows[0][key] for key in ('machine', 'print_sn', 'state')}
+    return rows[0]
 
 
 def stage_complete(group, attempts, smoke=False):
@@ -241,7 +275,7 @@ def run_stages(record, path, phases, deadline):
             if not preflight['ready']:
                 record['blockers'] = sorted({b['code'] for b in preflight['blockers']})
                 return 'preflight_blocked_' + name
-            if name == 'dragon':
+            if name in {'previews', 'dragon'}:
                 try:
                     idle = printer_idle()
                 except Exception:

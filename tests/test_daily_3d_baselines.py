@@ -212,14 +212,57 @@ def test_phone_checks_exact_runner_sonic_and_legacy_queue(daily, tmp_path, monke
 def test_dragon_receipt_requires_a_unique_new_device_task(daily):
     attempt = {'started_ns': 1795141800123000000, 'finished_ns': 1795142000777000000,
                'status':'passed','attempt_no':1}
-    row = {'machine':'9888E0094F2A','print_sn':'321654','state':'printing'}
+    sn = '1574647169584504832'
+    row = {'machine':daily.MACHINE, 'print_sn':sn, 'state':'ok', 'command_id':234, 'ack_id':567}
+    markers = [(f'"output":"{action} slice={sn} printer={daily.MACHINE}"').encode()
+               for action in ('verified', 'submitting')]
+    assert daily.slice_from_report(b','.join(markers)) == sn
+    for invalid in [markers[0], b','.join(reversed(markers)), b','.join(markers + markers[1:]),
+                    markers[0] + markers[1].replace(sn.encode(), b'9' * 19)]:
+        assert daily.slice_from_report(invalid) is None
     sql = []
     def query(statement, env):
         sql.append((statement, env))
         return [row]
-    assert daily.print_receipt(attempt, query) == row
+    read = lambda _: sn
+    assert daily.print_receipt(attempt, query, read) == row
     assert sql[0][1] == 'prod' and 'LIMIT 2' in sql[0][0]
     assert '1795141800' in sql[0][0] and '1795142000' in sql[0][0]
-    assert daily.print_receipt(attempt, lambda *_: [row, row]) is None
-    assert daily.print_receipt(attempt, lambda *_: [dict(row,machine='other')]) is None
-    assert daily.print_receipt(dict(attempt, started_ns=None), query) is None
+    for rows in [[row,row], [dict(row,machine='other')], [dict(row,ack_id=None)],
+                 [dict(row,print_sn='9'*19)], [dict(row,state='failed')]]:
+        assert daily.print_receipt(attempt, lambda *_: rows, read) is None
+    assert daily.print_receipt(dict(attempt, started_ns=None), query, read) is None
+    assert daily.print_receipt(attempt, query, lambda _: None) is None
+
+
+def test_real_manifest_places_slice_cleanup_before_physical_print(daily):
+    rows = json.loads(daily.MANIFEST.read_text())
+    phases = daily.plan(rows)
+    assert [name for name, _ in phases] == ['smoke', 'remaining', 'previews', 'dragon']
+    assert [len(group) for _, group in phases] == [3, 33, 7, 1]
+    # The UI calls abandoning the current slice “取消打印” on the preview screen.
+    expected = set()
+    for row in rows:
+        path = ENTRY.parents[2] / 'server-tasks' / row['module'] / row['filename']
+        if any('aiTap:' in line and '取消打印' in line for line in path.read_text().splitlines()):
+            expected.add(row['case_id'])
+    assert {row['case_id'] for row in dict(phases)['previews']} == expected
+    assert [row['filename'] for row in phases[-1][1]] == ['关节龙打印.yaml']
+    assert len({row['case_id'] for _, group in phases for row in group}) == len(rows)
+
+
+def test_busy_printer_blocks_preview_before_dispatch(daily, monkeypatch, tmp_path):
+    from task_server.services import ui_execution_service, ui_execution_store
+
+    phases = daily.plan(json.loads(daily.MANIFEST.read_text()))
+    ready_target = {'platform': 'android', 'device_id': daily.PHONE, 'runner_id': 'test-runner'}
+    monkeypatch.setattr(daily, 'phone_target', lambda: ready_target)
+    monkeypatch.setattr(daily, 'printer_idle', lambda: False)
+    monkeypatch.setattr(ui_execution_store.UiExecutionStore, 'find_idempotent', lambda *_: None)
+    monkeypatch.setattr(ui_execution_store.UiExecutionStore, '__init__', lambda self: None)
+    monkeypatch.setattr(ui_execution_service, 'preflight_ui_batch', lambda *_: {'ready': True})
+    monkeypatch.setattr(ui_execution_service, 'create_ui_batch', lambda *_: pytest.fail('busy printer dispatched'))
+    record = {'date': '2026-11-24', 'owner_id': 'user', 'batches': {}}
+    status = daily.run_stages(record, tmp_path / 'day.json', phases[-2:], daily.now() + daily.timedelta(hours=1))
+    assert status == 'skipped_printer_busy_or_unknown'
+    assert record['batches'] == {}
