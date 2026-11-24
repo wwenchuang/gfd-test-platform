@@ -66,7 +66,7 @@
     "case_id": "COM_KFB_MODEL_9d60338c7365",
     "module": "3D打印基线",
     "filename": "普通印章打印.yaml",
-    "sha256": "14c7914cf8174d8f66d892d8550ed352e2b03541ba0438623d59bb4637610277",
+    "sha256": "b81de30bc81df8efeb44eb214d1e165066c2868402041147cf69f35fa6b33662",
     "core": false
   },
   {
@@ -108,7 +108,7 @@
     "case_id": "COM_KFB_MODEL_eae567b5f2ba",
     "module": "3D打印基线",
     "filename": "十二生肖印章打印.yaml",
-    "sha256": "9efe1a73e907ffb5af26d44949d332d78022accb0b376efee061f5b0caeffcf6",
+    "sha256": "fac5b27c920a9b979c4f49ca52fd29d71db5b31bcdb51403fde8cf471fe0081e",
     "core": false
   },
   {
