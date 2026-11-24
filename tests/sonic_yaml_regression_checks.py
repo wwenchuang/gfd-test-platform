@@ -462,6 +462,9 @@ def check_print_actions(name, flow):
         ready, = [s[WAIT] for s in flow if WAIT in s and '模型耗材' in s[WAIT]]
         assert all(label in ready for label in ('「取消打印」', '「确认打印」', '具体时长', '带 g 的数值')), name
         assert '「取消处理」已消失' in ready, name
+        check_order(name, flow, [(WAIT, ready), (WAIT, '三维画布', '立体把手', '清晰的外轮廓'),
+                                 (ASSERT, '本次第一盘', '把手', '确认打印'),
+                                 (TAP, '取消打印')])
     if name == DRAGON:
         native = [step["runAdbShell"] for step in flow if step.get("runAdbShell", "").startswith("# dragon:")]
         assert tuple(hashlib.sha256(command.encode()).hexdigest() for command in native) == DRAGON_NATIVE_SHA256
