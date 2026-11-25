@@ -275,6 +275,7 @@
     if(s.options.mode==='start'&&!app)renderDevices(s);else loadDevices(s);
   }
   function releaseDevicePicture(s,card){
+    card.classList.remove('ui-device-landscape');
     const img=card.querySelector('img');img.hidden=true;img.removeAttribute('src');delete img.dataset.pictureStamp;
     img.dataset.pictureEpoch=String((Number(img.dataset.pictureEpoch)||0)+1);card.dataset.pictureMustRevalidate='true';
     s.options.releasePicture?.(img);
@@ -299,6 +300,9 @@
         card=document.createElement('label');card.className='ui-simple-device';
         card.dataset.pictureMustRevalidate='true';
         card.innerHTML='<input type="radio" name="ui-device"><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><strong data-phone-name></strong><span data-phone-system></span><span data-phone-version></span><small data-phone-id></small><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
+        const preview=card.querySelector('.ui-simple-preview img');
+        preview.addEventListener('load',()=>card.classList.toggle('ui-device-landscape',
+          !preview.hidden&&preview.naturalWidth>preview.naturalHeight));
         const input=card.querySelector('input');input.dataset.deviceKey=key;input.onchange=()=>changePhone(s,key);
         s.deviceNodes.set(key,card);host.append(card);
       }
@@ -313,7 +317,7 @@
       connection.textContent=`${multiple&&d.connection_status!=='offline'?'多个在线连接 · ':''}执行机器：${d.target.runner_id}`;
       card._uiDevice=d;
       card.classList.toggle('ui-device-unavailable',d.connection_status!=='ready');
-      const img=card.querySelector('img');img.alt=`${d.name} 最近一次手机画面`;
+      const img=card.querySelector('img');img.alt=`${d.name} 最近一次设备画面`;
       card.querySelector('[data-picture-fallback]').textContent=d.snapshot_hint||'暂无截图';
       if(!d.snapshot_url||img.dataset.pictureStamp!==(d.snapshot_url+'|'+d.snapshot_captured_at)){
         if(img.dataset.pictureStamp||img.hasAttribute('src'))releaseDevicePicture(s,card);
