@@ -19,12 +19,12 @@
     }catch(_){/* Never replace unavailable secure randomness with a predictable request key. */}
     throw new Error('当前浏览器无法生成安全的请求标识，请更换浏览器后重试。');
   }
-  let state=null;
+  let state=null,deviceRadioSequence=0;
   function valid(s){return state===s && s.node.isConnected && s.identity===s.options.identity();}
   function store(s,key,value){try{sessionStorage.setItem(`ui-simple:${s.identity}:${key}`,JSON.stringify(value));}catch(_){/* Storage can be disabled; current-page behavior still works. */}}
   function read(s,key){try{return JSON.parse(sessionStorage.getItem(`ui-simple:${s.identity}:${key}`)||'null');}catch(_){return null;}}
   function notice(s,message,error=false){if(!valid(s))return;const n=s.node.querySelector('[data-ui-notice]');n.textContent=message;n.setAttribute('role',error?'alert':'status');n.classList.toggle('ui-simple-error',error);}
-  function leave(){window.UiExecutionReplay?.close();if(!state)return;state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);clearTimeout(state.pictureTimer);for(const c of state.pending.values())c.abort();state.pending.clear();for(const card of state.deviceNodes.values())releaseDevicePicture(state,card);state=null;}
+  function leave(){window.UiExecutionReplay?.close();if(!state)return;state.snapshotDialog?.close();state.reportView?.dispose();clearInterval(state.timer);clearTimeout(state.searchTimer);clearTimeout(state.pictureTimer);for(const c of state.pending.values())c.abort();state.pending.clear();for(const card of state.deviceNodes.values())releaseDevicePicture(state,card);state=null;}
   function reset(){const node=state?.node;leave();node?.replaceChildren();}
   async function request(s,slot,path,options={}){
     s.pending.get(slot)?.abort();const controller=new AbortController();s.pending.set(slot,controller);
@@ -264,6 +264,7 @@
   }
   function changeApp(s,app){
     if(s.busy||s.uncertain)return;
+    s.snapshotDialog?.close();
     const hadSelection=s.selected.size>0||!!s.target;
     s.app=app;s.module='';s.feature='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';s.notifyEnabled=false;s.notificationChannel=null;
     s.node.querySelector('[name="ui-app"]').value=app;
@@ -274,7 +275,28 @@
     s.node.querySelector('[data-ui-devices]')?.replaceChildren();invalidateStart(s);remember(s);loadCatalog(s);
     if(s.options.mode==='start'&&!app)renderDevices(s);else loadDevices(s);
   }
+  function showDeviceScreenshot(s,card,trigger){
+    const thumbnail=card.querySelector('img');
+    if(!valid(s)||thumbnail.hidden||!thumbnail.complete||!thumbnail.naturalWidth||s.snapshotDialog)return;
+    const dialog=document.createElement('dialog');
+    dialog.className='ui-device-snapshot-dialog';
+    dialog.setAttribute('aria-label',card._uiDevice.name+'截图');
+    dialog.innerHTML='<header><strong></strong><button type="button" class="btn-sm" autofocus>关闭</button></header><img>';
+    dialog.querySelector('strong').textContent=card._uiDevice.name;
+    const img=dialog.querySelector('img');
+    img.alt=thumbnail.alt;img.src=thumbnail.currentSrc||thumbnail.src;
+    s.snapshotDialog=dialog;
+    dialog.onclose=()=>{
+      dialog.remove();
+      if(s.snapshotDialog===dialog)s.snapshotDialog=null;
+      if(valid(s)&&trigger.isConnected&&!trigger.disabled)trigger.focus({preventScroll:true});
+    };
+    dialog.querySelector('button').onclick=()=>dialog.close();
+    dialog.onclick=event=>{if(event.target===dialog)dialog.close();};
+    s.node.append(dialog);dialog.showModal();
+  }
   function releaseDevicePicture(s,card){
+    card.querySelector('[data-device-zoom]').disabled=true;
     card.classList.remove('ui-device-landscape');
     const img=card.querySelector('img');img.hidden=true;img.removeAttribute('src');delete img.dataset.pictureStamp;
     img.dataset.pictureEpoch=String((Number(img.dataset.pictureEpoch)||0)+1);card.dataset.pictureMustRevalidate='true';
@@ -297,17 +319,26 @@
     for(const d of s.devices){
       const key=keyOf(d.target);keep.add(key);let card=s.deviceNodes.get(key);
       if(!card){
-        card=document.createElement('label');card.className='ui-simple-device';
+        card=document.createElement('div');card.className='ui-simple-device';
         card.dataset.pictureMustRevalidate='true';
-        card.innerHTML='<input type="radio" name="ui-device"><strong class="ui-device-title" data-phone-name></strong><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><span data-phone-system></span><span data-phone-version></span><small data-phone-id></small><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
+        card.innerHTML='<input type="radio" name="ui-device"><label class="ui-device-title" data-phone-name></label><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small><button type="button" data-device-zoom aria-haspopup="dialog" disabled><span aria-hidden="true">⤢</span></button></span><span class="ui-simple-device-info"><span data-phone-system></span><span data-phone-version></span><small data-phone-id></small><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
         const preview=card.querySelector('.ui-simple-preview img');
-        preview.addEventListener('load',()=>card.classList.toggle('ui-device-landscape',
-          !preview.hidden&&preview.naturalWidth>preview.naturalHeight));
+        const zoom=card.querySelector('[data-device-zoom]');
+        zoom.onclick=()=>showDeviceScreenshot(s,card,zoom);
+        preview.addEventListener('load',()=>{
+          zoom.disabled=preview.hidden||!preview.naturalWidth;
+          card.classList.toggle('ui-device-landscape',!zoom.disabled&&preview.naturalWidth>preview.naturalHeight);
+        });
+        preview.addEventListener('error',()=>{zoom.disabled=true;});
         const input=card.querySelector('input');input.dataset.deviceKey=key;input.onchange=()=>changePhone(s,key);
+        input.id='ui-device-radio-'+(++deviceRadioSequence);
+        card.querySelector('[data-phone-name]').htmlFor=input.id;
         s.deviceNodes.set(key,card);host.append(card);
       }
       const input=card.querySelector('input');input.checked=s.target===key;input.disabled=d.connection_status!=='ready';
       card.querySelector('[data-phone-name]').textContent=d.name;
+      const zoom=card.querySelector('[data-device-zoom]');
+      zoom.title='查看'+d.name+'截图大图';zoom.setAttribute('aria-label',zoom.title);
       card.querySelector('[data-phone-system]').textContent='系统：'+systemName(d.target.platform)+' '+(d.os_version||'版本未上报');
       const appVersion=d.connection_status==='mapping_missing'?'此系统未配置':d.app_version||'版本未上报';
       card.querySelector('[data-phone-version]').textContent='应用：'+(d.app_name||d.app_id)+' · 版本：'+appVersion;

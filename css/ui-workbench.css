@@ -314,3 +314,17 @@
 .ui-baseline-feature:not([hidden]){display:inline-flex;align-items:center;gap:8px;margin-left:auto;font-size:13px}
 .ui-baseline-feature select{min-height:34px;max-width:100%;padding:4px 8px;border:1px solid #3a4c58;border-radius:7px;background:#142028;color:#edf3f6;font:inherit}
 .ui-baseline-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:8px 0}
+
+.ui-device-title{cursor:pointer}
+.ui-device-title::after{content:"";position:absolute;inset:0}
+.ui-simple-device .ui-simple-preview{position:relative;pointer-events:none}
+.ui-simple-preview [data-device-zoom]{position:absolute;inset:0;z-index:1;pointer-events:auto;cursor:zoom-in;background:transparent;border:0;border-radius:8px;padding:0}
+.ui-simple-preview [data-device-zoom]:disabled{visibility:hidden}
+.ui-simple-preview [data-device-zoom]:focus-visible{outline:2px solid #acf1de;outline-offset:2px}
+.ui-simple-preview [data-device-zoom] span{position:absolute;bottom:3px;right:3px;display:grid;place-items:center;width:22px;height:22px;border-radius:5px;background:#121d25df;color:white;font-size:17px}
+.ui-device-snapshot-dialog{box-sizing:border-box;width:fit-content;max-width:96vw;max-height:94dvh;margin:auto;padding:0;border:1px solid #42575f;border-radius:12px;background:#142129;color:#edf3f6}
+.ui-device-snapshot-dialog::backdrop{background:rgb(4 10 14 / 84%)}
+.ui-device-snapshot-dialog header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 12px}
+.ui-device-snapshot-dialog header strong{min-width:0;overflow-wrap:anywhere;color:#acf1de}
+.ui-device-snapshot-dialog header button{flex:none}
+.ui-device-snapshot-dialog img{display:block;margin:auto;width:auto;height:auto;max-width:100%;max-height:calc(94dvh - 72px);object-fit:contain}
