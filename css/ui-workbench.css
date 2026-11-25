@@ -109,15 +109,16 @@
 .ui-simple-case-panel .ui-case-group{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(350px,50%)),1fr))}
 .ui-case-group>h3,.ui-case-group>button{grid-column:1/-1}
 .ui-simple-devices{grid-template-columns:1fr}
-.ui-simple-device{display:grid;grid-template-columns:76px minmax(0,1fr);align-items:center;gap:16px;padding:14px 16px}
-.ui-simple-device .ui-simple-preview{grid-column:1;grid-row:1;margin:0;padding:0;height:142px;max-width:76px}
+.ui-simple-device{display:grid;grid-template-columns:76px minmax(0,1fr);align-items:center;gap:8px 16px;padding:14px 16px}
+.ui-device-title{grid-column:1/-1;grid-row:1;flex:0 0 100%;box-sizing:border-box;min-width:0;padding-right:30px;color:#acf1de;font-size:16px;font-weight:650;line-height:1.4;text-align:left;overflow-wrap:anywhere}
+.ui-simple-device .ui-simple-preview{grid-column:1;grid-row:2;justify-content:flex-start;margin:0;padding:0;height:142px;max-width:76px}
 .ui-simple-preview img{border-width:3px;border-radius:12px}
 .ui-simple-preview img{height:auto;max-height:100%}
 .ui-simple-device.ui-device-landscape{display:flex;flex-flow:row wrap;align-items:center}
 .ui-device-landscape .ui-simple-preview{flex:1 1 145px;min-width:0;max-width:min(200px,100%);height:auto}
 .ui-device-landscape .ui-simple-preview img{width:100%;height:auto;border-radius:8px}
 .ui-device-landscape .ui-simple-device-info{flex:2 1 166px;min-width:0;overflow-wrap:anywhere}
-.ui-simple-device .ui-simple-device-info{grid-column:2;grid-row:1;text-align:left;padding-right:14px;gap:5px}
+.ui-simple-device .ui-simple-device-info{grid-column:2;grid-row:2;text-align:left;padding-right:14px;gap:5px}
 .ui-simple-device-info>strong{position:static;padding-right:10px;max-height:none;overflow:visible;font-size:15px}
 .ui-simple-device-info>[data-phone-version]{font-size:12px;line-height:1.5}
 .ui-simple-purpose{margin-top:12px;padding-top:12px}

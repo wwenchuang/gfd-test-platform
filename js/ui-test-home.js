@@ -299,7 +299,7 @@
       if(!card){
         card=document.createElement('label');card.className='ui-simple-device';
         card.dataset.pictureMustRevalidate='true';
-        card.innerHTML='<input type="radio" name="ui-device"><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><strong data-phone-name></strong><span data-phone-system></span><span data-phone-version></span><small data-phone-id></small><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
+        card.innerHTML='<input type="radio" name="ui-device"><strong class="ui-device-title" data-phone-name></strong><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><span data-phone-system></span><span data-phone-version></span><small data-phone-id></small><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
         const preview=card.querySelector('.ui-simple-preview img');
         preview.addEventListener('load',()=>card.classList.toggle('ui-device-landscape',
           !preview.hidden&&preview.naturalWidth>preview.naturalHeight));
