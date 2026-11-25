@@ -106,6 +106,7 @@ def test_device_refresh_reads_one_registry_and_no_case_sources(data):
     assert data[2]=={'catalog':0,'source':0,'runner':1}
     d=result['devices'][0]
     assert d['target']=={'runner_id':'mac','device_id':'phone','platform':'ios'}
+    assert d['app_name']=='测试应用'
     assert d['app_version']=='1.0 (7)' and d['connection_status']=='ready'
     encoded=json.dumps(result)
     assert 'private' not in encoded and 'never-return' not in encoded and 'wdaPort' not in encoded and 'evil' not in encoded
@@ -465,3 +466,10 @@ def test_selected_phone_filters_before_paging_and_core_selection(data, monkeypat
     assert page['items'][0]['case_id'] != next_page['items'][0]['case_id']
     with pytest.raises(ValueError,match='cursor_invalid'):
         catalog.get_ui_catalog(app_id=app,cursor=page['next_cursor'])
+
+
+def test_device_card_for_an_uninstalled_selected_application(data):
+    data[3]['mac']['devices'][0]['installed_apps'][0]['installed'] = False
+    device = catalog.get_ui_devices(None, APP)['devices'][0]
+    assert (device['app_name'], device['app_version'], device['connection_status']) == (
+        '测试应用', '未安装', 'app_not_installed')

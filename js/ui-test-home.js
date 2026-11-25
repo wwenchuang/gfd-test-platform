@@ -1,7 +1,7 @@
 // Simple UI workflow state is scoped to the signed-in identity and mounted page.
 (() => {
   const modes={start:'开始测试',library:'用例库',reports:'我的测试'};
-  const labels={ready:'连接就绪 · 开始前检查占用',offline:'手机或执行器已离线',upgrade_required:'执行器需要更新，请联系管理员',mapping_missing:'尚未配置 iOS 应用，请联系管理员补充应用配置',not_ready:'未就绪，请检查手机连接与解锁'};
+  const labels={app_not_installed:'此设备未安装所选应用',ready:'连接就绪 · 开始前检查占用',offline:'手机或执行器已离线',upgrade_required:'执行器需要更新，请联系管理员',mapping_missing:'尚未配置 iOS 应用，请联系管理员补充应用配置',not_ready:'未就绪，请检查手机连接与解锁'};
   const e=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const caseIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M7 3h7l4 4v14H7zM14 3v5h4M10 12h5M10 16h5"/></svg>';
   const keyOf=target=>JSON.stringify([target.runner_id,target.device_id,target.platform]);
@@ -256,13 +256,15 @@
       if(!card){
         card=document.createElement('label');card.className='ui-simple-device';
         card.dataset.pictureMustRevalidate='true';
-        card.innerHTML='<input type="radio" name="ui-device"><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><strong data-phone-name></strong><span data-phone-version></span><small data-phone-id></small><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
+        card.innerHTML='<input type="radio" name="ui-device"><span class="ui-simple-preview"><img hidden><small data-picture-fallback>暂无截图</small></span><span class="ui-simple-device-info"><strong data-phone-name></strong><span data-phone-system></span><span data-phone-version></span><small data-phone-id></small><small data-phone-state></small><small data-phone-connection></small><small data-phone-captured></small></span>';
         const input=card.querySelector('input');input.dataset.deviceKey=key;input.onchange=()=>changePhone(s,key);
         s.deviceNodes.set(key,card);host.append(card);
       }
       const input=card.querySelector('input');input.checked=s.target===key;input.disabled=d.connection_status!=='ready';
       card.querySelector('[data-phone-name]').textContent=d.name;
-      card.querySelector('[data-phone-version]').textContent=`${d.target.platform==='ios'?'iOS':'Android'} ${d.os_version||''} · 应用 ${d.app_version||'版本未上报'}`;
+      card.querySelector('[data-phone-system]').textContent='系统：'+systemName(d.target.platform)+' '+(d.os_version||'版本未上报');
+      const appVersion=d.connection_status==='mapping_missing'?'此系统未配置':d.app_version||'版本未上报';
+      card.querySelector('[data-phone-version]').textContent='应用：'+(d.app_name||d.app_id)+' · 版本：'+appVersion;
       card.querySelector('[data-phone-id]').textContent=`设备编号：${d.target.device_id||'未上报'}`;
       card.querySelector('[data-phone-state]').textContent=labels[d.connection_status]||'设备状态待确认';
       const connection=card.querySelector('[data-phone-connection]'),multiple=connections.get(JSON.stringify([d.target.platform,d.target.device_id]))>1;

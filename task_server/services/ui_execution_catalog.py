@@ -242,7 +242,9 @@ def get_ui_devices(actor, app_id):
             version = '未安装' if installed.get('installed') is False else ' '.join(filter(None,[
                 str(installed.get('version_name') or ''),
                 '('+str(installed['version_code'])+')' if installed.get('version_code') is not None else ''])) or '版本未上报'
-            row = {'app_id':app_id,'target':{'runner_id':runner_id,'device_id':device_id,'platform':platform},
+            if state == 'ready' and installed.get('installed') is False:
+                state = 'app_not_installed'
+            row = {'app_id':app_id, 'app_name':app.get('name') or app_id, 'target':{'runner_id':runner_id,'device_id':device_id,'platform':platform},
                    'name':device.get('label') or device.get('model') or device_id,
                    'os_version':device.get('ios_version' if platform=='ios' else 'android_version') or '',
                    'resolution':device.get('resolution') or '', 'connection_status':state,
