@@ -72,7 +72,7 @@
     s.node.querySelector('[data-ui-case-count]').textContent='';
     invalidateStart(s);remember(s);loadCatalog(s);
   }
-  function filters(s){return {app_id:s.app,module:s.module,query:s.query,scope:s.includeDrafts?'all':'published',...catalogTarget(s)};}
+  function filters(s){return {app_id:s.app,module:s.module,query:s.query,feature:s.feature,selection:'1',scope:s.includeDrafts?'all':'published',...catalogTarget(s)};}
   function buttonState(s){
     if(!valid(s))return;
     pictureButtonState(s);
@@ -90,6 +90,7 @@
     if(startHint)startHint.textContent=s.busy?'正在核对用例和手机，请稍候。':s.uncertain?'请先核对上次提交结果，避免重复执行。':!s.options.canAdmit()?'测试服务暂不可用，请刷新或联系管理员。':!s.options.canExecute()?'当前账号没有执行权限，请联系管理员。':!s.app?'先选择要测试的应用。':!s.selected.size?'勾选至少一条已发布基线。':!device?'请选择一台连接就绪的手机。':device.connection_status!=='ready'?(labels[device.connection_status]||'手机尚未就绪，请检查连接后刷新。'):'已准备好，点击开始测试。';
     s.node.querySelector('[data-ui-selection-count]').textContent=`已选 ${s.selected.size} 条用例${device?' · '+device.name:''}`;
     }
+    updateBulkButton(s);
     const selected=s.node.querySelector('[data-ui-selected]'),signature=JSON.stringify([...s.selected]);
     if(selected.dataset.signature!==signature){
       selected.dataset.signature=signature;selected.replaceChildren();
@@ -129,6 +130,30 @@
     };
     return button;
   }
+  function updateBulkButton(s){
+    const button=s.node.querySelector('[data-ui-bulk]');
+    if(!button)return;
+    const cases=s.matchingCases||[],count=s.matchingCount||0;
+    const full=cases.length>0&&cases.every(item=>s.selected.get(item.case_id)?.revision===item.revision);
+    const missing=cases.filter(item=>!s.selected.has(item.case_id)).length;
+    const tooMany=count>200||s.selected.size+missing>200;
+    const needsPhone=s.options.mode==='start'&&!catalogTarget(s);
+    button.textContent=full?`取消全选（${count} 条）`:`全选基线（${count} 条）`;
+    button.disabled=s.busy||s.uncertain||!s.options.canExecute()||needsPhone||!cases.length||tooMany;
+    button.title=needsPhone?'先选择要运行的手机':tooMany?'单次最多选择 200 条，请缩小范围':'只更改当前筛选结果的勾选，包含所有分页';
+  }
+  function toggleMatching(s){
+    const button=s.node.querySelector('[data-ui-bulk]');
+    if(!valid(s)||!button||button.disabled)return;
+    const cases=s.matchingCases;
+    const remove=cases.every(item=>s.selected.get(item.case_id)?.revision===item.revision);
+    for(const item of cases){
+      if(remove)s.selected.delete(item.case_id);
+      else s.selected.set(item.case_id,item);
+    }
+    for(const input of s.node.querySelectorAll('[data-case-id]'))input.checked=s.selected.has(input.dataset.caseId);
+    invalidateStart(s);
+  }
   function renderCases(s,data){
     const host=s.node.querySelector('[data-ui-cases]');host.replaceChildren();
     const groups=s.app?[{name:'',items:data.items||[]}]:data.groups||[];
@@ -160,8 +185,22 @@
       empty.textContent=s.includeDrafts?'没有匹配用例，试试其他应用或关键词。':'没有匹配的已发布基线，试试其他应用或关键词。';
       host.append(empty);
     }
-    if(s.app&&data.release_core)host.prepend(coreSelectionButton(s,data.release_core));
-    s.node.querySelector('[data-ui-case-count]').textContent=`${data.total||0} 条${catalogTarget(s)?systemName(catalogTarget(s).platform)+' 可运行':'匹配'}${s.includeDrafts?'用例':'基线'}${s.app?'':' · 每个应用先显示 3 条'}`;
+    s.matchingCases=data.matching_cases||[];s.matchingCount=data.selectable_count||0;
+    const feature=s.node.querySelector('[name="ui-feature"]');
+    feature.parentElement.hidden=!s.app;
+    const counts={...(data.features||{})};
+    if(s.feature&&!Object.hasOwn(counts,s.feature))counts[s.feature]=0;
+    options(feature,Object.entries(counts).sort(([a],[b])=>a.localeCompare(b,'zh-CN'))
+      .map(([name,count])=>[name,`${name}（${count}）`]),'全部功能');
+    feature.value=s.feature;
+    if(s.app){
+      const bar=document.createElement('div');bar.className='ui-baseline-actions';
+      const bulk=document.createElement('button');bulk.type='button';bulk.className='btn-sm';
+      bulk.dataset.uiBulk='';bulk.onclick=()=>toggleMatching(s);bar.append(bulk);
+      if(data.release_core&&(!s.feature||data.release_core.total))bar.append(coreSelectionButton(s,data.release_core));
+      host.prepend(bar);
+    }
+    s.node.querySelector('[data-ui-case-count]').textContent=`${catalogTarget(s)?systemName(catalogTarget(s).platform)+' · ':''}${data.total||0} 条${catalogTarget(s)?'可运行':'匹配'}${s.includeDrafts?'用例':'基线'}${s.app?'':' · 每个应用先显示 3 条'}`;
     s.next=data.next_cursor||'';
     s.node.querySelector('[data-ui-prev]').disabled=!s.previous.length;
     s.node.querySelector('[data-ui-next]').disabled=!s.next;
@@ -206,6 +245,9 @@
     }
   }
   function lockCatalogPages(s){
+    s.matchingCases=[];s.matchingCount=0;
+    const bar=s.node.querySelector('.ui-baseline-actions');
+    if(bar)for(const button of bar.querySelectorAll('button'))button.disabled=true;
     s.next='';
     s.node.querySelector('[data-ui-prev]').disabled=true;
     s.node.querySelector('[data-ui-next]').disabled=true;
@@ -223,7 +265,7 @@
   function changeApp(s,app){
     if(s.busy||s.uncertain)return;
     const hadSelection=s.selected.size>0||!!s.target;
-    s.app=app;s.module='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';s.notifyEnabled=false;s.notificationChannel=null;
+    s.app=app;s.module='';s.feature='';s.cursor='';s.previous=[];s.selected.clear();s.devices=[];s.target='';s.notifyEnabled=false;s.notificationChannel=null;
     s.node.querySelector('[name="ui-app"]').value=app;
     s.pending.get('devices')?.abort();s.pending.delete('devices');for(const card of s.deviceNodes.values())releaseDevicePicture(s,card);s.deviceNodes.clear();
     const cases=s.node.querySelector('[data-ui-cases]');cases.replaceChildren();cases.textContent='正在加载当前应用的用例…';
@@ -475,17 +517,17 @@
   }
   function mount(node,options){
     leave();const mode=modes[options.mode]?options.mode:'start';
-    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canRefreshPictures:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],deviceLoading:false,deviceError:false,selected:new Map(),app:'',module:'',query:'',includeDrafts:false,composing:false,cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},releaseEnabled:false,notifyEnabled:false,notificationChannel:null,pictureRefreshAfter:0};
+    const s={node,options:{canExecute:()=>false,canNotify:()=>false,canRefreshPictures:()=>false,canAdmit:()=>true,...options,mode},identity:options.identity(),pending:new Map(),deviceNodes:new Map(),reportNodes:new Map(),devices:[],deviceLoading:false,deviceError:false,selected:new Map(),app:'',module:'',query:'',includeDrafts:false,feature:'',composing:false,cursor:'',previous:[],next:'',target:'',batchId:'',batchSettled:false,busy:false,startIntent:null,uncertain:false,rerunKeys:{},releaseEnabled:false,notifyEnabled:false,notificationChannel:null,pictureRefreshAfter:0};
     state=s;const saved=read(s,'selection');if(saved&&typeof saved.app==='string'){s.app=saved.app;s.module=typeof saved.module==='string'?saved.module:'';s.target=typeof saved.target==='string'?saved.target:'';}
     s.startIntent=mode==='library'?null:read(s,'pending');s.uncertain=!!s.startIntent;
     const entry=options.entrySelection;
     if(mode==='start'&&!s.uncertain&&entry&&typeof entry.app==='string'&&Array.isArray(entry.cases)){
       s.app=entry.app;s.module='';s.target='';
-      for(const item of entry.cases.slice(0,100)){
+      for(const item of entry.cases.slice(0,200)){
         if(item&&typeof item.case_id==='string'&&typeof item.revision==='string')s.selected.set(item.case_id,{case_id:item.case_id,revision:item.revision,task_name:item.task_name});
       }
     }
-    node.classList.add('ui-simple');node.dataset.uiMode=mode;node.innerHTML=`<header class="ui-simple-heading"><div><p>工作台 <span aria-hidden="true">/</span> UI 自动化</p><h1>${modes[mode]}</h1></div><div class="ui-workbench-mark" aria-hidden="true"><i></i><i></i><span>从容测试<br>安心发布</span></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里保留每次测试的结果、步骤和截图；标记“用于发版”的测试结束后自动生成报告。':mode==='library'?'创建和查找用例，选好基线后到“开始测试”选择手机；未发布用例需先试跑通过。':'选择应用和手机后，勾选这台手机可运行的基线。需要发版报告时，勾选“用于发版”。'}</p>${mode==='start'?'<ol class="ui-workbench-flow" aria-label="测试流程"><li><b>01</b> 选择手机</li><li><b>02</b> 勾选基线</li><li><b>03</b> 查看结果</li></ol>':''}<p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><div class="ui-simple-search"><label for="ui-catalog-query">搜索基线 / 用例</label><div class="ui-simple-search-input"><input id="ui-catalog-query" type="search" name="ui-query" maxlength="200" placeholder="基线文件名、用例名或步骤关键词" aria-describedby="ui-catalog-search-hint"><button type="button" class="btn-sm" data-ui-search>搜索</button></div><small id="ui-catalog-search-hint">输入后自动筛选，按 Enter 或点搜索立即查找</small></div>':''}</div>${mode==='library'?'<label class="ui-simple-drafts"><input type="checkbox" data-ui-include-drafts> 显示未发布用例</label>':''}<div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<div class="ui-workbench-section-head"><h2>测试基线</h2><p data-ui-case-count role="status" aria-live="polite"></p></div><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode==='start'?'<section class="ui-simple-device-panel"><div class="ui-simple-heading"><h2>选择手机</h2><button type="button" class="btn-sm" data-ui-pictures-refresh hidden title="请求在线空闲手机采集截图，忙碌手机会跳过">刷新手机截图</button></div><p data-ui-picture-notice role="status" hidden></p><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div></section>':''}</div></fieldset>${mode==='library'?'<div class="ui-simple-submit"><div class="ui-workbench-selection"><small>已选基线</small><span data-ui-selection-count></span></div><button type="button" class="btn-primary" data-ui-go-start disabled>去开始测试 →</button></div>':''}${mode==='start'?'<div class="ui-simple-submit"><div class="ui-workbench-selection"><small>本次测试</small><span data-ui-selection-count></span><span id="ui-start-hint" data-ui-start-hint role="status" aria-live="polite"></span></div><div class="ui-simple-submit-actions"><div class="ui-simple-purpose"><label><input type="checkbox" data-ui-release> 用于发版</label><p data-ui-release-hint></p><div data-ui-notify-options hidden><label><input type="checkbox" data-ui-notify> 报告生成后发送飞书通知</label><p data-ui-notify-target></p></div></div><button type="button" class="btn-primary" data-ui-start aria-describedby="ui-start-hint" disabled>开始测试</button></div></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;
+    node.classList.add('ui-simple');node.dataset.uiMode=mode;node.innerHTML=`<header class="ui-simple-heading"><div><p>工作台 <span aria-hidden="true">/</span> UI 自动化</p><h1>${modes[mode]}</h1></div><div class="ui-workbench-mark" aria-hidden="true"><i></i><i></i><span>从容测试<br>安心发布</span></div><button type="button" class="btn-sm" data-ui-refresh>刷新</button></header><p class="ui-simple-intro">${mode==='reports'?'这里保留每次测试的结果、步骤和截图；标记“用于发版”的测试结束后自动生成报告。':mode==='library'?'创建和查找用例，选好基线后到“开始测试”选择手机；未发布用例需先试跑通过。':'选择应用和手机后，勾选这台手机可运行的基线。需要发版报告时，勾选“用于发版”。'}</p>${mode==='start'?'<ol class="ui-workbench-flow" aria-label="测试流程"><li><b>01</b> 选择手机</li><li><b>02</b> 勾选基线</li><li><b>03</b> 查看结果</li></ol>':''}<p data-ui-notice role="status"></p><button type="button" class="btn-sm" data-ui-recover hidden>核对上次提交</button><fieldset data-ui-form><div class="ui-simple-filters"><label>应用<select name="ui-app"><option value="">全部应用</option></select></label>${mode!=='reports'?'<label>模块<select name="ui-module"><option value="">全部模块</option></select></label><div class="ui-simple-search"><label for="ui-catalog-query">搜索基线 / 用例</label><div class="ui-simple-search-input"><input id="ui-catalog-query" type="search" name="ui-query" maxlength="200" placeholder="基线文件名、用例名或步骤关键词" aria-describedby="ui-catalog-search-hint"><button type="button" class="btn-sm" data-ui-search>搜索</button></div><small id="ui-catalog-search-hint">输入后自动筛选，按 Enter 或点搜索立即查找</small></div>':''}</div>${mode==='library'?'<label class="ui-simple-drafts"><input type="checkbox" data-ui-include-drafts> 显示未发布用例</label>':''}<div class="ui-simple-selection" data-ui-selected aria-label="已选择的用例"></div><div class="ui-simple-content"><section class="ui-simple-case-panel" aria-label="用例">${mode!=='reports'?'<div class="ui-workbench-section-head"><h2>测试基线</h2><p data-ui-case-count role="status" aria-live="polite"></p><label class="ui-baseline-feature" hidden>功能<select name="ui-feature"><option value="">全部功能</option></select></label></div><div data-ui-cases></div>':'<div data-ui-reports></div>'}<div class="ui-simple-pages"><button type="button" class="btn-sm" data-ui-prev disabled>上一页</button><button type="button" class="btn-sm" data-ui-next disabled>下一页</button></div></section>${mode==='start'?'<section class="ui-simple-device-panel"><div class="ui-simple-heading"><h2>选择手机</h2><button type="button" class="btn-sm" data-ui-pictures-refresh hidden title="请求在线空闲手机采集截图，忙碌手机会跳过">刷新手机截图</button></div><p data-ui-picture-notice role="status" hidden></p><p data-ui-device-hint></p><div class="ui-simple-devices" data-ui-devices></div></section>':''}</div></fieldset>${mode==='library'?'<div class="ui-simple-submit"><div class="ui-workbench-selection"><small>已选基线</small><span data-ui-selection-count></span></div><button type="button" class="btn-primary" data-ui-go-start disabled>去开始测试 →</button></div>':''}${mode==='start'?'<div class="ui-simple-submit"><div class="ui-workbench-selection"><small>本次测试</small><span data-ui-selection-count></span><span id="ui-start-hint" data-ui-start-hint role="status" aria-live="polite"></span></div><div class="ui-simple-submit-actions"><div class="ui-simple-purpose"><label><input type="checkbox" data-ui-release> 用于发版</label><p data-ui-release-hint></p><div data-ui-notify-options hidden><label><input type="checkbox" data-ui-notify> 报告生成后发送飞书通知</label><p data-ui-notify-target></p></div></div><button type="button" class="btn-primary" data-ui-start aria-describedby="ui-start-hint" disabled>开始测试</button></div></div>':''}<section data-ui-batch hidden aria-label="本次测试"></section>`;
     s.node.querySelector('[data-ui-recover]').hidden=!s.uncertain;
     s.node.querySelector('[data-ui-recover]').onclick=()=>start(s,true);
     if(s.uncertain)notice(s,'上次提交结果待确认，请先核对，避免重复执行。',true);
@@ -505,7 +547,8 @@
       s.node.querySelector('[data-ui-release]').onchange=event=>{s.releaseEnabled=event.target.checked;if(!s.releaseEnabled)s.notifyEnabled=false;invalidateStart(s);};
       s.node.querySelector('[data-ui-notify]').onchange=event=>{s.notifyEnabled=event.target.checked;invalidateStart(s);};
       }
-      s.node.querySelector('[name="ui-module"]').onchange=event=>{s.module=event.target.value;s.cursor='';s.previous=[];remember(s);loadCatalog(s);};
+      s.node.querySelector('[name="ui-feature"]').onchange=event=>{s.feature=event.target.value;s.cursor='';s.previous=[];loadCatalog(s);};
+      s.node.querySelector('[name="ui-module"]').onchange=event=>{s.module=event.target.value;s.feature='';s.cursor='';s.previous=[];remember(s);loadCatalog(s);};
       const queryInput=s.node.querySelector('[name="ui-query"]');
       queryInput.oninput=event=>{if(!event.isComposing)searchCatalog(s);};
       queryInput.addEventListener('compositionstart',()=>{s.composing=true;clearTimeout(s.searchTimer);lockCatalogPages(s);s.pending.get('catalog')?.abort();s.pending.delete('catalog');});

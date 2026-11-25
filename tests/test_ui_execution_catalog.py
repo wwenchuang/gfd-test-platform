@@ -473,3 +473,28 @@ def test_device_card_for_an_uninstalled_selected_application(data):
     device = catalog.get_ui_devices(None, APP)['devices'][0]
     assert (device['app_name'], device['app_version'], device['connection_status']) == (
         '测试应用', '未安装', 'app_not_installed')
+
+
+def test_feature_bulk_selection_uses_all_pages_and_excludes_drafts(data):
+    _, rows, _, _ = data
+    rows[0]['status'] = 'draft'
+    rows[1]['module'] = '模型导入'
+    result = catalog.get_ui_catalog(app_id=APP, scope='all', selection=True, limit=1)
+    assert result['features'] == {'账户': 6, '模型导入': 1}
+    assert len(result['items']) == 1 and result['next_cursor']
+    assert result['selectable_count'] == len(result['matching_cases']) == 6
+    assert 'c0' not in {item['case_id'] for item in result['matching_cases']}
+    filtered = catalog.get_ui_catalog(app_id=APP, feature='模型导入', selection=True)
+    assert [row['case_id'] for row in filtered['matching_cases']] == ['c1']
+    assert catalog.get_ui_catalog(app_id=APP, feature='模型导入', query='无此名称',
+                                  selection=True)['matching_cases'] == []
+    with pytest.raises(ValueError, match='cursor_invalid'):
+        catalog.get_ui_catalog(app_id=APP, feature='模型导入', cursor=result['next_cursor'])
+
+
+def test_published_3d_baselines_have_feature_groups_for_both_editions():
+    manifest = json.loads(catalog._CORE_MANIFEST.read_text())
+    groups = catalog._FEATURES['com.kfb.model']
+    assert all(groups.get(row['case_id']) for row in manifest)
+    from task_server.services.ui_case_platforms import _IOS_ORIGINS
+    assert all(groups.get(parent) for parent in _IOS_ORIGINS.values())

@@ -25,6 +25,9 @@ _CORE_APP = 'com.kfb.model'
 _CORE_MANIFEST = Path(__file__).resolve().parents[2] / 'deploy/3d-daily/baselines.json'
 
 
+_FEATURES = json.loads((Path(__file__).resolve().parents[1] / 'fixtures/ui_baseline_features.json').read_text(encoding='utf-8'))
+
+
 def _release_core_ids():
     try:
         entries = json.loads(_CORE_MANIFEST.read_text(encoding='utf-8'))
@@ -67,6 +70,7 @@ def _catalog_rows():
             platforms, original = platform_binding(asset)
             row['platforms'] = list(platforms)
             row['_original'] = original
+            row['feature'] = _FEATURES.get(row['app_id'], {}).get(original) or row['module'] or '未分组'
             row['release_core'] = (row['app_id'] == _CORE_APP and original in core_ids
                                    and ('android' in platforms or original != row['case_id']))
             row['execution_eligible'] = row['status'] in _EXECUTABLE
@@ -128,10 +132,11 @@ def _page(rows, cursor, fingerprint, limit):
     return [_public(row) for row in selected], next_cursor
 
 
-def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', limit=20, scope='all', publication=False, target=None):
+def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', limit=20, scope='all', publication=False, target=None, feature='', selection=False):
     profile = require_ui_actor(actor, permission='ui.view', app_id=app_id or None)
     if (type(limit) is not int or not 1 <= limit <= 100
             or not isinstance(query, str) or len(query) > 200
+            or not isinstance(feature, str) or len(feature) > 128
             or not isinstance(module, str) or len(module) > 128
             or not isinstance(app_id, str) or len(app_id) > 128
             or not isinstance(scope, str) or scope not in ('all', 'published')):
@@ -157,7 +162,8 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
         scoped_rows = [r for r in scoped_rows if r['execution_eligible']
                        and resolved['platform'] in r['platforms'] and _can_compile(r['_source'], contract)]
         compatible_cases = {r['case_id']: r['revision'] for r in scoped_rows}
-    rows = [r for r in scoped_rows if (not module or r['module'] == module)
+    module_rows = [r for r in scoped_rows if not module or r['module'] == module]
+    rows = [r for r in module_rows if (not feature or r['feature'] == feature)
             and (not query.strip() or query.strip().casefold() in r['_search'])]
     from .feishu_service import task_app_feishu_channel
     summaries = [{'app_id':app['package'], 'name':app.get('name') or app['package'],
@@ -186,7 +192,7 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
              'items':[_public(r) for r in group[:3]]}
             for a in summaries for group in [[r for r in rows if r['app_id']==a['app_id']]] if group],
             'total':len(rows), 'items':[], 'next_cursor':None}
-    fingerprint = hashlib.sha256(json.dumps([app_id,module,query,scope,target],ensure_ascii=False).encode()).hexdigest()[:16]
+    fingerprint = hashlib.sha256(json.dumps([app_id,module,query,scope,target,feature],ensure_ascii=False).encode()).hexdigest()[:16]
     items, next_cursor = _page(rows,cursor,fingerprint,limit)
     release_core = None
     if app_id == _CORE_APP:
@@ -198,9 +204,22 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
             core_ids = [by_original[key] for key in core_ids if key in by_original]
         cases = [{key: eligible[case_id][key] for key in ('case_id', 'revision', 'task_name')}
                  for case_id in core_ids] if len(eligible) == len(core_ids) else []
+        if feature:
+            matches = {row['case_id'] for row in rows}
+            cases = [case for case in cases if case['case_id'] in matches]
+            core_ids = [case_id for case_id in core_ids if case_id in matches]
         release_core = {'total': len(core_ids), 'cases': cases}
+    selection_data = {}
+    if selection:
+        counts = {}
+        for row in module_rows:
+            counts[row['feature']] = counts.get(row['feature'], 0) + 1
+        eligible_rows = [r for r in rows if r['execution_eligible']]
+        selection_data = {'features': counts, 'selectable_count': len(eligible_rows),
+                          'matching_cases': [{k:r[k] for k in ('case_id','revision','task_name')}
+                                             for r in eligible_rows] if len(eligible_rows) <= 200 else []}
     return {'apps':summaries, 'modules':modules, 'publication_modules':publication_modules, 'groups':[], 'total':len(rows),
-            'items':items, 'next_cursor':next_cursor, 'release_core':release_core, 'compatible_cases':compatible_cases}
+            'items':items, 'next_cursor':next_cursor, 'release_core':release_core, 'compatible_cases':compatible_cases, **selection_data}
 
 
 def get_ui_devices(actor, app_id):

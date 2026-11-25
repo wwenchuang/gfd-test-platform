@@ -32,6 +32,7 @@ test('release core selection crosses pages and stays editable through start and 
     if (url.pathname === '/api/ui-executions/catalog') {
       const scoped = url.searchParams.get('app_id') === app;
       body = {ok:true, apps, modules:['3D打印基线'], items:scoped?[first,extra]:[], groups:[], total:3,
+        features:{'导航':2,'账户':1}, selectable_count:3, matching_cases:[first,second,extra],
         compatible_cases:url.searchParams.has('device_id')?Object.fromEntries([first,second,extra].map(r=>[r.case_id,r.revision])):null,
         next_cursor:scoped?'next':null, release_core:scoped?{total:2,cases:[second,first]}:null};
     }
@@ -47,6 +48,10 @@ test('release core selection crosses pages and stays editable through start and 
   const library = page.locator('.ui-simple[data-ui-mode="library"]');
   await library.locator('[name="ui-app"]').selectOption(app);
   await library.getByText('核心流程', {exact:true}).waitFor();
+  await library.getByRole('button',{name:'全选基线（3 条）'}).click();
+  assert.equal(await library.locator('[data-ui-selected] button').count(),3);
+  await library.getByRole('button',{name:'取消全选（3 条）'}).click();
+  assert.equal(await library.locator('[data-ui-selected] button').count(),0);
   await library.locator('[data-case-id="普通用例"]').check();
   await library.getByRole('button', {name:/选择核心流程/}).click();
   assert.equal(await library.locator('[data-case-id="普通用例"]').isChecked(), false);

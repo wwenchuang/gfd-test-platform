@@ -105,7 +105,9 @@
 @media(min-width:901px) and (max-width:1150px) and (max-height:1000px){.ui-simple-preview{height:135px;margin:0}}
 
 /* Dense layouts use the available container, never a simulated browser viewport. */
-.ui-simple-case-panel{container-type:inline-size}
+/* Keep at most two columns, with 350px available per column. */
+.ui-simple-case-panel .ui-case-group{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(350px,50%)),1fr))}
+.ui-case-group>h3,.ui-case-group>button{grid-column:1/-1}
 .ui-simple-devices{grid-template-columns:1fr}
 .ui-simple-device{display:grid;grid-template-columns:76px minmax(0,1fr);align-items:center;gap:16px;padding:14px 16px}
 .ui-simple-device .ui-simple-preview{grid-column:1;grid-row:1;margin:0;padding:0;height:142px;max-width:76px}
@@ -151,10 +153,6 @@
 .ui-simple .ui-batch-report h2{font-size:21px}
 .ui-simple .ui-batch-report [data-report-summary]{font-size:15px;margin:14px 0}
 @container(min-width:700px){
- .ui-case-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
- .ui-case-group>h3,.ui-case-group>button{grid-column:1/-1}
- .ui-case-row{border-bottom:1px solid #2c3c45}
- .ui-case-row:last-child{border-bottom:1px solid #2c3c45}
  .ui-batch-layout{grid-template-columns:minmax(220px,.8fr) minmax(280px,1.2fr);gap:24px}
  .ui-batch-detail{border-left:1px solid #2c3e47;padding-left:24px}
 }
@@ -305,3 +303,8 @@
 #regression-patrol .patrol-meta, #regression-patrol .patrol-state { font-size: 12px; color: #bbccd3; }
 #regression-patrol .patrol-state:is([data-state=missed],[data-state=failed],[data-state=overdue]) { color: #ffa6aa; }
 #regression-patrol .patrol-state[data-state=completed], #regression-patrol a { color: #8ce8ce; }
+
+.ui-workbench-section-head:has(.ui-baseline-feature){flex-wrap:wrap}
+.ui-baseline-feature:not([hidden]){display:inline-flex;align-items:center;gap:8px;margin-left:auto;font-size:13px}
+.ui-baseline-feature select{min-height:34px;max-width:100%;padding:4px 8px;border:1px solid #3a4c58;border-radius:7px;background:#142028;color:#edf3f6;font:inherit}
+.ui-baseline-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:8px 0}
