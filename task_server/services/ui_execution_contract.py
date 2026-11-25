@@ -49,13 +49,13 @@ def _device_snapshot(device, target_package):
     return snapshot
 
 
-def resolve_ui_target(app_id, device_target, actor=None):
+def resolve_ui_target(app_id, device_target, actor=None, *, permission="ui.execute"):
     """Resolve one authorized app to one registered Runner device, without fallback."""
     def blocked(code):
         return {"ok": False, "block_code": code}
 
     try:
-        require_ui_actor(actor, app_id=app_id)
+        require_ui_actor(actor, permission=permission, app_id=app_id)
     except AccessDenied as error:
         return blocked(error.code)
     if not isinstance(device_target, dict) or any(not isinstance(device_target.get(key), str) or not device_target[key].strip()

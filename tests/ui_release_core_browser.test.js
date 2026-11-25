@@ -32,6 +32,7 @@ test('release core selection crosses pages and stays editable through start and 
     if (url.pathname === '/api/ui-executions/catalog') {
       const scoped = url.searchParams.get('app_id') === app;
       body = {ok:true, apps, modules:['3D打印基线'], items:scoped?[first,extra]:[], groups:[], total:3,
+        compatible_cases:url.searchParams.has('device_id')?Object.fromEntries([first,second,extra].map(r=>[r.case_id,r.revision])):null,
         next_cursor:scoped?'next':null, release_core:scoped?{total:2,cases:[second,first]}:null};
     }
     if (url.pathname === '/api/ui-executions/devices') body = {ok:true,devices:[

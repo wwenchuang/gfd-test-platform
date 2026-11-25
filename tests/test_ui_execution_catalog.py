@@ -438,3 +438,30 @@ def test_release_core_uses_exact_android_ids_in_manifest_order_across_filters(da
     manifest.unlink()
     catalog.clear_catalog_cache()
     assert catalog.get_ui_catalog(None, app_id=app)['release_core'] == {'total': 0, 'cases': []}
+
+
+def test_selected_phone_filters_before_paging_and_core_selection(data, monkeypatch):
+    profile, rows, _, _ = data
+    app = 'com.kfb.model'
+    profile['scope']['ui_apps'].append(app)
+    ref = json.loads(catalog._CORE_MANIFEST.read_text())
+    from task_server.services.ui_case_platforms import _COUNTERPARTS
+    original = next(e['case_id'] for e in ref if e['core'] and
+                    _COUNTERPARTS[e['case_id']] not in (None, e['case_id']))
+    variant = _COUNTERPARTS[original]
+    shared = next(k for k,v in _COUNTERPARTS.items() if k == v)
+    app_config = {'package':app,'enabled':True,'platform_mappings':{'ios':'test.ios'}}
+    monkeypatch.setattr(catalog.business_line_service, 'configured_test_applications', lambda: [app_config])
+    monkeypatch.setattr(catalog.business_line_service, 'configured_test_application', lambda _: app_config)
+    for cid in (original, variant, shared, 'unrelated'):
+        rows.append({**rows[0], 'app_package':app, 'case_id':cid, 'platform':'android'})
+    monkeypatch.setattr(catalog.case_service, 'task_case_yaml', lambda _: SOURCE.replace(APP,app))
+    target = {'runner_id':'mac','device_id':'phone','platform':'ios'}
+    page = catalog.get_ui_catalog(app_id=app,target=target,limit=1)
+    assert set(page['compatible_cases']) == {variant, shared}
+    assert page['total'] == 2 and page['items'][0]['release_core']
+    assert variant in {r['case_id'] for r in page['release_core']['cases']}
+    next_page = catalog.get_ui_catalog(app_id=app,target=target,cursor=page['next_cursor'])
+    assert page['items'][0]['case_id'] != next_page['items'][0]['case_id']
+    with pytest.raises(ValueError,match='cursor_invalid'):
+        catalog.get_ui_catalog(app_id=app,cursor=page['next_cursor'])

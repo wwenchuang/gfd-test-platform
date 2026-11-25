@@ -6,6 +6,7 @@ import re
 
 from . import business_line_service, case_service
 from .operation_attribution import current_actor
+from .ui_case_platforms import platform_binding
 from .ui_case_compiler import compile_ui_case
 from .ui_execution_contract import AccessDenied, require_ui_actor, resolve_ui_target
 from .ui_execution_store import BatchConflict, UiExecutionStore, default_db_path
@@ -166,7 +167,10 @@ def _prepare_ui_batch(actor, normalized, profile, key, request_hash):
         metadata['app_name'] = application.get('name') or asset.get('app_name') or '应用'
         snapshots.append({"case_id": case["case_id"], "case_revision": case["revision"],
                           "source_yaml": source, "source_hash": case["revision"], "metadata": metadata})
+        platforms, _ = platform_binding(asset)
         for target, resolution in zip(normalized["targets"], resolved_targets):
+            if resolution["platform"] not in platforms:
+                raise BatchValidationError("case_platform_mismatch")
             from .ui_attempt_progress import stable_step_ids
             compiled = compile_ui_case({"yaml_content": source,
                 "step_ids": stable_step_ids(case["case_id"], case["revision"], source)}, resolution)

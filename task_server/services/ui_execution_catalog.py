@@ -1,5 +1,6 @@
 """Permission-filtered summaries for the simple UI entry, separate from device polling."""
 import base64
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -11,7 +12,9 @@ from urllib.parse import urlencode
 import yaml
 
 from . import business_line_service, case_service, runner_service
-from .ui_execution_contract import CROSS_PLATFORM_ACTIONS, require_ui_actor
+from .ui_execution_contract import CROSS_PLATFORM_ACTIONS, require_ui_actor, resolve_ui_target
+from .ui_case_compiler import compile_ui_case
+from .ui_case_platforms import platform_binding
 
 _CACHE_SECONDS = 30
 _cache_lock = threading.Lock()
@@ -61,8 +64,11 @@ def _catalog_rows():
             row = {key: str(asset.get(key) or '') for key in
                    ('case_id', 'task_name', 'module', 'status', 'platform', 'business')}
             row['app_id'] = str(asset['app_package'])
-            row['release_core'] = (row['app_id'] == _CORE_APP and row['platform'] == 'android'
-                                   and row['case_id'] in core_ids)
+            platforms, original = platform_binding(asset)
+            row['platforms'] = list(platforms)
+            row['_original'] = original
+            row['release_core'] = (row['app_id'] == _CORE_APP and original in core_ids
+                                   and ('android' in platforms or original != row['case_id']))
             row['execution_eligible'] = row['status'] in _EXECUTABLE
             row['block_code'] = '' if row['execution_eligible'] else 'generated_case_gate_required'
             row['revision'] = ''
@@ -81,8 +87,9 @@ def _catalog_rows():
             # Searchable in memory only; never return source, path, configuration or tokens.
             row['_search'] = '\n'.join([row['task_name'], str(asset.get('file') or ''), row['module'], str(asset.get('goal') or ''),
                                         str(asset.get('expected') or ''), source]).casefold()
+            row['_source'] = source
             rows.append(row)
-        rows.sort(key=lambda row: (-row['updated_ns'], row['case_id']))
+        rows.sort(key=_order)
         _cache, _cache_at = (rows, core_ids), time.monotonic()
         return _cache
 
@@ -91,16 +98,25 @@ def _public(row):
     return {key: value for key, value in row.items() if not key.startswith('_')}
 
 
+def _order(row):
+    return (0 if row['release_core'] else 1, -row['updated_ns'], row['case_id'])
+
+
+@lru_cache(maxsize=512)
+def _can_compile(source, target_contract):
+    return compile_ui_case({'yaml_content': source}, json.loads(target_contract))['ok']
+
+
 def _page(rows, cursor, fingerprint, limit):
     if cursor:
         try:
             if not isinstance(cursor, str) or len(cursor) > 1024:
                 raise ValueError()
             payload = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-            if (not isinstance(payload, list) or len(payload) != 3 or payload[0] != fingerprint
-                    or type(payload[1]) is not int or not isinstance(payload[2], str)):
+            if (not isinstance(payload, list) or len(payload) != 4 or payload[0] != fingerprint
+                    or type(payload[1]) is not int or type(payload[2]) is not int or not isinstance(payload[3], str)):
                 raise ValueError()
-            rows = [r for r in rows if (-r['updated_ns'], r['case_id']) > (payload[1], payload[2])]
+            rows = [r for r in rows if _order(r) > tuple(payload[1:])]
         except (ValueError, TypeError, UnicodeError) as error:
             raise ValueError('cursor_invalid') from error
     selected = rows[:limit]
@@ -108,11 +124,11 @@ def _page(rows, cursor, fingerprint, limit):
     if len(rows) > limit:
         last = selected[-1]
         next_cursor = base64.urlsafe_b64encode(json.dumps(
-            [fingerprint, -last['updated_ns'], last['case_id']], separators=(',', ':')).encode()).decode()
+            [fingerprint, *_order(last)], separators=(',', ':')).encode()).decode()
     return [_public(row) for row in selected], next_cursor
 
 
-def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', limit=20, scope='all', publication=False):
+def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', limit=20, scope='all', publication=False, target=None):
     profile = require_ui_actor(actor, permission='ui.view', app_id=app_id or None)
     if (type(limit) is not int or not 1 <= limit <= 100
             or not isinstance(query, str) or len(query) > 200
@@ -128,6 +144,19 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
     scoped_rows = [r for r in catalog_rows if r['app_id'] in allowed
                    and (not app_id or r['app_id'] == app_id)
                    and (scope == 'all' or r['status'] in _EXECUTABLE)]
+    compatible_cases = None
+    if target is not None:
+        if not app_id:
+            raise ValueError('app_required')
+        resolved = resolve_ui_target(app_id, target, actor, permission="ui.view")
+        if not resolved['ok']:
+            raise ValueError(resolved['block_code'])
+        contract = json.dumps({k: resolved[k] for k in
+                               ('ok', 'platform', 'target_package', 'platform_mappings', 'capabilities')},
+                              sort_keys=True)
+        scoped_rows = [r for r in scoped_rows if r['execution_eligible']
+                       and resolved['platform'] in r['platforms'] and _can_compile(r['_source'], contract)]
+        compatible_cases = {r['case_id']: r['revision'] for r in scoped_rows}
     rows = [r for r in scoped_rows if (not module or r['module'] == module)
             and (not query.strip() or query.strip().casefold() in r['_search'])]
     from .feishu_service import task_app_feishu_channel
@@ -157,17 +186,21 @@ def get_ui_catalog(actor=None, *, app_id='', module='', query='', cursor='', lim
              'items':[_public(r) for r in group[:3]]}
             for a in summaries for group in [[r for r in rows if r['app_id']==a['app_id']]] if group],
             'total':len(rows), 'items':[], 'next_cursor':None}
-    fingerprint = hashlib.sha256(json.dumps([app_id,module,query,scope],ensure_ascii=False).encode()).hexdigest()[:16]
+    fingerprint = hashlib.sha256(json.dumps([app_id,module,query,scope,target],ensure_ascii=False).encode()).hexdigest()[:16]
     items, next_cursor = _page(rows,cursor,fingerprint,limit)
     release_core = None
     if app_id == _CORE_APP:
-        eligible = {r['case_id']: r for r in scoped_rows if r['release_core'] and r['execution_eligible']}
+        eligible = {r['case_id']: r for r in scoped_rows if r['release_core'] and r['execution_eligible']
+                    and (target or 'android' in r['platforms'])}
         # Keep manifest order across searches and pages. A partial preset could omit a release check.
+        if target:
+            by_original = {row['_original']: row['case_id'] for row in eligible.values()}
+            core_ids = [by_original[key] for key in core_ids if key in by_original]
         cases = [{key: eligible[case_id][key] for key in ('case_id', 'revision', 'task_name')}
                  for case_id in core_ids] if len(eligible) == len(core_ids) else []
         release_core = {'total': len(core_ids), 'cases': cases}
     return {'apps':summaries, 'modules':modules, 'publication_modules':publication_modules, 'groups':[], 'total':len(rows),
-            'items':items, 'next_cursor':next_cursor, 'release_core':release_core}
+            'items':items, 'next_cursor':next_cursor, 'release_core':release_core, 'compatible_cases':compatible_cases}
 
 
 def get_ui_devices(actor, app_id):

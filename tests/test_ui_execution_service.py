@@ -314,3 +314,10 @@ def test_no_notify_actor_rejected_for_create_preflight_and_repeat_but_can_run_op
         assert create_ui_batch(None,omitted,'omitted')['selection']['notifications']['enabled'] is False
         assert create_ui_batch(None,request(),'false')['selection']['notifications']['enabled'] is False
     assert first['selection']['notifications']['enabled'] is True
+
+
+def test_android_case_cannot_be_submitted_to_ios_even_with_portable_steps(environment):
+    from task_server.services import ui_execution_service as service
+    environment['platform'] = 'android'
+    with actor_context(ACTORS['a']), pytest.raises(service.BatchValidationError, match='case_platform_mismatch'):
+        service.create_ui_batch(None, request(), 'idempotent-platform')

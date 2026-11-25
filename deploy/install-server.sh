@@ -120,6 +120,7 @@ install -d -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${APP_DIR}"
 install -d -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${APP_DIR}/deploy"
 install -d -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${APP_DIR}/deploy/3d-daily"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/3d-daily/baselines.json" "${APP_DIR}/deploy/3d-daily/baselines.json"
+install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/3d-daily/ios-counterparts.json" "${APP_DIR}/deploy/3d-daily/ios-counterparts.json"
 if [ -d "${SCRIPT_DIR}/load-agent" ]; then
   load_agent_env_backup=""
   if [ -f "${APP_DIR}/deploy/load-agent/.env" ]; then

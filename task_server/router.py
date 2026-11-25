@@ -6685,7 +6685,9 @@ def _get_ui_execution_catalog(handler, qs):
     try:
         result = get_ui_catalog(None, app_id=qs.get("app_id", ""), module=qs.get("module", ""),
                                 query=qs.get("query", ""), cursor=qs.get("cursor", ""), limit=int(qs.get("limit", 20)),
-                                scope=qs.get("scope", "all"), publication=qs.get("publication") == "1")
+                                scope=qs.get("scope", "all"), publication=qs.get("publication") == "1",
+                                target={k: qs.get(k, "") for k in ("runner_id", "device_id", "platform")}
+                                if any(k in qs for k in ("runner_id", "device_id", "platform")) else None)
     except (AccessDenied, ValueError, OSError) as error:
         _ui_batch_error(handler, error)
         return

@@ -23,6 +23,7 @@ BLOCKER_MESSAGES = {
     'target_required': '请选择明确的执行器和手机。',
     'device_not_found': '所选手机未连接到指定执行器。',
     'device_not_ready': '所选手机尚未就绪，请检查连接、解锁和控制服务。',
+    'case_platform_mismatch': '所选用例属于其他手机系统，请重新选择对应版本。',
     'platform_mismatch': '手机平台与所选执行平台不一致。',
     'occupancy_unavailable': '暂时无法确认手机占用状态，已暂停派发。',
     'device_busy': '手机正在执行任务或被远程控制，请等待空闲。',
