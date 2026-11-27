@@ -59,6 +59,12 @@ def _config(app):
                     or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',field['field_key']) or field['field_key'] in field_keys):
                 raise ValueError()
             field_keys.add(field['field_key'])
+        if 'developer_assignment' in target:
+            routing = target['developer_assignment']
+            if (not isinstance(routing,dict) or set(routing) != {'requirement_type','developer_field','assignee_field'}
+                    or any(not isinstance(v,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',v) for v in routing.values())
+                    or routing['assignee_field'] in field_keys):
+                raise ValueError()
         rules = target['rules']
         if not isinstance(rules,list) or not rules:
             raise ValueError()
@@ -100,7 +106,32 @@ def _rule(target, attempt):
     return matches[0] if len(matches)==1 else None
 
 
-def _deliver(db, target, key, title, description):
+def _assigned_developer(target, requirement, headers):
+    routing = target['developer_assignment']
+    project_key = target['project_key']
+    item = requirement['requirement_id']
+    if requirement['source'] != 'feishu-project:' + project_key or not re.fullmatch(r'[1-9][0-9]{0,18}',item):
+        return None
+    kind = routing['requirement_type']
+    reply = project.project_post(f'/open_api/{project_key}/work_item/{kind}/query', {
+        'work_item_ids':[int(item)], 'fields':[routing['developer_field']]}, headers=headers)
+    rows = reply.get('data')
+    if not isinstance(rows,list) or len(rows)!=1 or not isinstance(rows[0],dict):
+        return None
+    row = rows[0]
+    if (row.get('project_key'),row.get('work_item_type_key'),str(row.get('id'))) != (project_key,kind,item):
+        return None
+    from .feishu_requirement_sync import _value
+    fields = row.get('fields')
+    value = _value(fields,routing['developer_field']) if isinstance(fields,list) else None
+    if isinstance(value,list) and len(value)==1:
+        value = value[0]
+    if not isinstance(value,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',value):
+        return None
+    return {'field_key':routing['assignee_field'],'field_value':value}
+
+
+def _deliver(db, target, key, title, description, requirement):
     db.execute('INSERT OR IGNORE INTO ui_defect_receipts(tracking_key,title,description,status) VALUES(?,?,?,?)',
                (key,title,description,'draft'))
     def receipt():
@@ -123,6 +154,15 @@ def _deliver(db, target, key, title, description):
         headers = project.project_headers()
     except project.ProjectUnavailable as exc:
         return {**receipt(), 'detail':str(exc)}
+    assigned = []
+    if prior['status'] != 'receipt_unknown' and 'developer_assignment' in target:
+        try:
+            owner_field = _assigned_developer(target,requirement,headers)
+        except (project.ProjectRejected, project.ProjectUnavailable):
+            owner_field = None
+        if owner_field is None:
+            return {**receipt(), 'status':'owner_unresolved', 'detail':'requirement_developer_unavailable'}
+        assigned.append(owner_field)
     claimed = db.execute("UPDATE ui_defect_receipts SET status='receipt_unknown',detail='create_started' WHERE tracking_key=? AND status IN ('draft','configuration_required','rejected')",(key,)).rowcount
     prefix = '/open_api/'+target['project_key']+'/work_item/'
     try:
@@ -130,7 +170,7 @@ def _deliver(db, target, key, title, description):
             stored = db.execute('SELECT title,description FROM ui_defect_receipts WHERE tracking_key=?',(key,)).fetchone()
             fields = [{'field_key':target['evidence_field'],'field_value':stored['description']}]
             body = {'name':stored['title'], 'work_item_type_key':target['work_item_type_key'],
-                    'field_value_pairs':fields + target.get('field_value_pairs', [])}
+                    'required_mode':1, 'field_value_pairs':fields + assigned + target.get('field_value_pairs', [])}
             if 'template_id' in target:
                 body['template_id'] = target['template_id']
             item_id = project.project_post(prefix+'create', body, headers=headers).get('data')
@@ -178,7 +218,7 @@ def process_ui_batch(actor, batch_id):
         return {'status':'no_failed_attempts','attempts':[]}
     investigation = _investigate(actor, batch_id)
     target = _config(batch['app_id'])
-    if not target:
+    if not target or ((batch.get('selection') or {}).get('expected_build') and not target.get('developer_assignment')):
         return {'status':'configuration_required','detail':_CONFIG,'attempts':[], 'investigation':investigation}
     require_ui_actor(actor,permission='platform.notify',app_id=batch['app_id'])
     results = []
@@ -198,7 +238,10 @@ def process_ui_batch(actor, batch_id):
                 f"预期 {rule['expected']}",f"实际 {rule['diagnostic']}",f"失败步骤 {rule['step_id']}",
                 f"运行 {batch_id}，尝试 {attempt['attempt_id']}，Runner 任务 {attempt['job_id']}",
                 f"工作台 /task-manager.html?ui_batch={batch_id}"))
-            results.append({'attempt_id':attempt['attempt_id'], **_deliver(db,target,key,title,description)})
+            build = (batch.get('selection') or {}).get('expected_build')
+            if build:
+                description += f"\nQA 构建 {build['build_id']}，{build['package']} {build['version_name']} ({build['version_code']})"
+            results.append({'attempt_id':attempt['attempt_id'], **_deliver(db,target,key,title,description,requirement)})
     states = {r['status'] for r in results}
     return {'status':next(iter(states)) if len(states)==1 else 'mixed','attempts':results, 'investigation':investigation}
 

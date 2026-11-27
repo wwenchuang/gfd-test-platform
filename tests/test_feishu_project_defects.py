@@ -221,3 +221,31 @@ def test_two_workers_and_lost_network_reply_do_not_duplicate_issue(flow, monkeyp
         assert first.result(3)['attempts'][0]['status']=='receipt_unknown'
     assert tickets.process_ui_batch(ACTOR,BATCH)['attempts'][0]['status']=='receipt_unknown'
     assert len(created)==1
+
+
+@pytest.mark.parametrize('owner, expected', [('developer-qa','submitted'), ([], 'owner_unresolved')])
+def test_route_bug_by_current_requirement_developer(flow,monkeypatch,owner,expected):
+    from pathlib import Path
+    import os
+    cfg = Path(os.environ['MIDSCENE_FEISHU_DEFECT_CONFIG'])
+    data = json.loads(cfg.read_text())
+    data['apps']['app']['developer_assignment'] = dict(requirement_type='story', developer_field='dev',
+                                                       assignee_field='owner')
+    cfg.write_text(json.dumps(data))
+    monkeypatch.setattr(tickets,'requirement_for_batch',lambda _:dict(source='feishu-project:qa',requirement_id='71',revision='v2'))
+    route = []
+    def api(path,body,headers=None):
+        if path.endswith('/plugin_token'):
+            return {'error':{'code':0},'data':{'token':'fixture'}}
+        if path.endswith('/query'):
+            assert body['work_item_ids']==[71]
+            return {'err_code':0,'data':[dict(id=71,project_key='qa',work_item_type_key='story',
+                     fields=[dict(field_key='dev',field_value=owner)])]}
+        route.append(body)
+        return {'err_code':0,'data':871}
+    monkeypatch.setattr(tickets.project,'_post',api)
+    assert tickets.process_ui_batch(ACTOR,BATCH)['attempts'][0]['status']==expected
+    if owner:
+        assert {'field_key':'owner','field_value':owner} in route[0]['field_value_pairs']
+    else:
+        assert not route

@@ -59,6 +59,13 @@ def _db():
                 owner TEXT, source TEXT, event_id TEXT, intake_id TEXT NOT NULL,
                 PRIMARY KEY(owner,source,event_id));
             CREATE INDEX IF NOT EXISTS requirement_event_intake ON requirement_events(intake_id);
+            CREATE TABLE IF NOT EXISTS requirement_build_context (
+                owner TEXT, app_id TEXT, execution_revision TEXT, context TEXT NOT NULL,
+                PRIMARY KEY(owner,app_id,execution_revision));
+            CREATE TABLE IF NOT EXISTS requirement_stage_progress (
+                owner TEXT, source TEXT, app_id TEXT, requirement_id TEXT, stage TEXT, title TEXT,
+                revision TEXT, status TEXT, design_source TEXT, changed REAL,
+                PRIMARY KEY(owner,source,app_id,requirement_id,stage));
             CREATE TABLE IF NOT EXISTS requirement_handoffs (
                 intake_id TEXT, platform TEXT, request TEXT NOT NULL, batch_id TEXT UNIQUE, blocker TEXT,
                 PRIMARY KEY(intake_id,platform));
@@ -66,7 +73,7 @@ def _db():
         yield db
 
 
-def _binding(material, scenario):
+def _binding(material, scenario, *, release_plan=False, coverage=None):
     path = os.getenv('MIDSCENE_REQUIREMENT_BINDINGS')
     if not path:
         return []
@@ -79,6 +86,10 @@ def _binding(material, scenario):
         if not isinstance(mappings, list):
             raise ValueError()
         matched = [row for row in mappings if all(row.get(k) == material[k] for k in IDS)]
+        if not matched and release_plan and coverage:
+            matched = [row for row in mappings if isinstance(row,dict) and row.get('coverage')==coverage
+                       and row.get('source')==material['source'] and row.get('app_id')==material['app_id']
+                       and 'revision' not in row and 'requirement_id' not in row]
         if not matched and scenario:
             matched = [row for row in mappings if row.get('scenario') == scenario and
                        row.get('source') == material['source'] and row.get('app_id') == material['app_id'] and
@@ -92,7 +103,8 @@ def _binding(material, scenario):
             raise ValueError()
         requests = {}
         for run in runs:
-            if set(run) != {'cases', 'target', 'execution_policy'} or run['execution_policy'] != 'reviewed_non_printing':
+            keys = {'cases','target','execution_policy'}
+            if not isinstance(run,dict) or set(run) not in (keys,keys|{'remaining_cases'} if release_plan else keys) or run['execution_policy'] != 'reviewed_non_printing':
                 raise ValueError()
             request = dict(app_id=material['app_id'], cases=run['cases'], targets=[run['target']],
                            notifications={'enabled':False}, release_report={'enabled':True})
@@ -100,7 +112,16 @@ def _binding(material, scenario):
             platform = normalized['targets'][0]['platform']
             if platform in requests or len(normalized['cases']) > 3:
                 raise ValueError()
-            requests[platform] = request
+            if release_plan:
+                remaining = run.get('remaining_cases',[])
+                if not isinstance(remaining,list):
+                    raise ValueError()
+                if remaining:
+                    full = {**request,'cases':run['cases']+remaining}
+                    execution._normalize_request(full)  # validates distinct cases and published revision format
+                requests[platform] = (request,remaining)
+            else:
+                requests[platform] = request
         return requests.items()
     except (ValueError, KeyError, OSError, TypeError, AttributeError, RecursionError) as exc:
         raise MappingUnavailable('需求对应的冒烟映射配置不可用') from exc
@@ -125,13 +146,13 @@ def _record(owner, event, origin):
     return rid
 
 
-def _runs(rid, event, scenario):
+def _runs(rid, event, scenario, build_plan=None):
     with _db() as db:
         db.execute('BEGIN IMMEDIATE')
         rows = db.execute('SELECT * FROM requirement_handoffs WHERE intake_id=? ORDER BY platform', (rid,)).fetchall()
         if not rows:
             db.executemany('INSERT INTO requirement_handoffs (intake_id,platform,request) VALUES (?,?,?)',
-                           [(rid, plat, _json(req)) for plat, req in _binding(event, scenario)])
+                           [(rid, plat, _json(req)) for plat, req in (_binding(event, scenario) if build_plan is None else build_plan)])
             rows = db.execute('SELECT * FROM requirement_handoffs WHERE intake_id=? ORDER BY platform', (rid,)).fetchall()
         return rows
 
@@ -159,7 +180,7 @@ def _submit_run(actor, rid, row):
                    (batch_id, blocker, rid, platform))
 
 
-def submit(body, *, origin='workbench', scenario=None):
+def submit(body, *, origin='workbench', scenario=None, build_plan=None):
     event = _event(body)
     if origin == 'workbench' and event['source'].lower().startswith('feishu-project:'):
         raise ValueError('飞书项目来源由同步任务登记，请为手工录入选择工作台来源')
@@ -167,7 +188,7 @@ def submit(body, *, origin='workbench', scenario=None):
     for permission in ('ui.view', 'ui.execute'):
         require_ui_actor(actor, permission=permission, app_id=event['app_id'])
     rid = _record(actor['user_id'], event, origin)
-    for row in _runs(rid, event, scenario):
+    for row in _runs(rid, event, scenario, build_plan):
         _submit_run(actor, rid, row)
     return read(event['source'], event['event_id'])
 
@@ -182,6 +203,24 @@ def read(source, event_id):
         if not row:
             return None
         return _receipt(db, row, actor, event_id, private=True)
+
+
+def record_stage(event, stage, result):
+    actor = current_actor()
+    require_ui_actor(actor,permission='ui.view',app_id=event['app_id'])
+    with _db() as db:
+        if stage.startswith('qa_build_smoke.'):
+            db.execute("""DELETE FROM requirement_stage_progress WHERE owner=? AND source=? AND app_id=?
+                AND requirement_id=? AND stage='qa_build_smoke'""",
+                (actor['user_id'],event['source'],event['app_id'],event['requirement_id']))
+        db.execute("""INSERT INTO requirement_stage_progress VALUES (?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(owner,source,app_id,requirement_id,stage) DO UPDATE SET
+            title=excluded.title, revision=excluded.revision,status=excluded.status,
+            design_source=excluded.design_source,changed=excluded.changed WHERE
+            title!=excluded.title OR revision!=excluded.revision OR status!=excluded.status
+            OR design_source!=excluded.design_source""",
+            (actor['user_id'],event['source'],event['app_id'],event['requirement_id'],stage,
+             event['title'],event['revision'],result['status'],result.get('source_id',''),time.time()))
 
 
 def recent(limit=10):
@@ -202,8 +241,27 @@ def recent(limit=10):
                              WHERE e.intake_id=i.id ORDER BY e.rowid LIMIT 1) AS event_id
                              FROM requirement_intakes i WHERE ''' + condition +
                           ' ORDER BY i.created DESC LIMIT ?', (*params, limit)).fetchall()
-        return [_receipt(db, row, actor, row['event_id'], private=bool(
+        receipts = [_receipt(db, row, actor, row['event_id'], private=bool(
                 row['owner'] == actor['user_id'] or profile.get('is_superuser'))) for row in rows]
+        where = '' if apps=='*' else 'WHERE app_id IN ('+','.join('?' for _ in apps)+')'
+        stages = db.execute('SELECT * FROM requirement_stage_progress '+where+' ORDER BY changed DESC LIMIT ?',
+                            (*(apps if apps!='*' else []),limit)).fetchall()
+        for stage in stages:
+            # Execution receipts already link to the actual batch when submission succeeds.
+            if stage['stage'].startswith('qa_build_smoke') and stage['status'] in ('submitted','blocked','partial'):
+                continue
+            item={key:stage[key] for key in ('source','app_id','requirement_id','stage','title','revision','status')}
+            if stage['stage']=='development_design' and stage['status']=='design_completed':
+                from .feishu_development_design import last_design
+                row=last_design(db,stage['owner'],stage['design_source'])
+                if row and row['result']:
+                    result=json.loads(row['result'])
+                    item['design_cases']=[{k:c[k] for k in ('title','precondition','steps','expected','point_ids','plan') if k in c}
+                                          for c in result.get('cases',[])]
+            if stage['owner']==actor['user_id']:
+                item['design_source']=stage['design_source']
+            receipts.append({**item,'origin':'integration','created_at':stage['changed'],'batches':[],'blockers':[]})
+        return sorted(receipts,key=lambda item:item['created_at'],reverse=True)[:limit]
 
 
 def _receipt(db, row, actor, event_id, *, private):
@@ -229,6 +287,10 @@ def _receipt(db, row, actor, event_id, *, private):
         status = 'submitted'
     else:
         status = 'partial' if batches else 'blocked'
+    saved=db.execute('SELECT context FROM requirement_build_context WHERE owner=? AND app_id=? AND execution_revision=?',
+                     (row['owner'],row['app_id'],event['revision'])).fetchone()
+    if saved:
+        event['build_context']=json.loads(saved[0])
     return {**event, 'origin':row['origin'], 'created_at':row['created'], 'event_id':event_id, 'status':status, 'batches':batches, 'blockers':blockers}
 
 

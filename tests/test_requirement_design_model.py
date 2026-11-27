@@ -146,3 +146,14 @@ class RequirementDesignModelTests(unittest.TestCase):
         self.response['choices'][0]['finish_reason'] = 'length'
         with self.assertRaises(ValueError):
             self.generate()
+
+
+def test_planning_metadata_is_validated_and_source_linked():
+    case={'id':'C1','title':'详情入口','expected':'显示详情','steps':['打开入口'],'precondition':'已登录',
+          'point_ids':['T1'],'plan':{'kind':'ui','platforms':['android','ios'],'evidence':'详情截图','prerequisites':[]}}
+    draft={'points':[dict(id='T1',title='入口',expected='显示详情',refs=['P1'])],'cases':[case],'questions':[]}
+    assert design._validated_draft(draft,{'P1':{}})['cases'][0]['plan']==case['plan']
+    case['plan']['platforms']=['unknown','ios']
+    import pytest
+    with pytest.raises(ValueError,match='invalid_case_plan'):
+        design._validated_draft(draft,{'P1':{}})

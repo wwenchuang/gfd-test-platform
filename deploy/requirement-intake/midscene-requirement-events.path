@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh QA requirement plans when a verified change arrives
+
+[Path]
+PathExists=/var/lib/midscene-requirement-events/pending
+Unit=midscene-feishu-requirements.service
+
+[Install]
+WantedBy=multi-user.target

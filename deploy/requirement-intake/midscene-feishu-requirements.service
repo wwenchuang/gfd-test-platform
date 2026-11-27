@@ -10,6 +10,7 @@ Group=midscene
 WorkingDirectory=/opt/midscene-task-platform
 Environment=MIDSCENE_ENV_FILE=/opt/midscene.env
 EnvironmentFile=/etc/midscene-feishu-requirements.env
+ExecStartPre=/usr/bin/rm -f /var/lib/midscene-requirement-events/pending
 ExecStart=/opt/midscene-task-platform/.venv/bin/python -m task_server.services.feishu_requirement_sync
 NoNewPrivileges=true
 PrivateTmp=true

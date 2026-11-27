@@ -40,7 +40,7 @@
     "automation_filter": {
       "must_include_prompt_terms": [
         "本平台现有 YAML 风格参考",
-        "P0/P1/P2/P3",
+        "仅P0/P1",
         "真实支付",
         "优惠券/地址强依赖",
         "后台造数",

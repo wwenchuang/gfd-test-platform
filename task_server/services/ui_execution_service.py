@@ -14,7 +14,7 @@ from .ui_execution_store import BatchConflict, UiExecutionStore, default_db_path
 
 _REVISION = re.compile(r"^[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
-_REQUEST_KEYS = {"app_id", "cases", "targets", "suite_id", "suite_revision", "test_data_refs", "notifications", "release_report"}
+_REQUEST_KEYS = {"app_id", "cases", "targets", "suite_id", "suite_revision", "test_data_refs", "notifications", "release_report", "expected_build"}
 
 
 class BatchValidationError(ValueError):
@@ -82,7 +82,14 @@ def _normalize_request(request):
     if suite_id is not None:
         suite_id = _identifier(suite_id, "suite_invalid")
         suite_revision = _identifier(suite_revision, "suite_invalid")
-    return {"app_id": app_id, "cases": normalized_cases, "targets": normalized_targets,
+    build = request.get("expected_build")
+    extra = {}
+    if "expected_build" in request:
+        keys = {"package", "version_name", "version_code", "environment", "build_id"}
+        if not isinstance(build, dict) or set(build) != keys or build["environment"] != "qa":
+            raise BatchValidationError("expected_build_invalid")
+        extra["expected_build"] = {k: _identifier(build[k], "expected_build_invalid") for k in keys}
+    return {**extra, "app_id": app_id, "cases": normalized_cases, "targets": normalized_targets,
             "suite_id": suite_id, "suite_revision": suite_revision,
             "test_data_refs": references, "notifications": {"enabled": notifications["enabled"]},
             "release_report": {"enabled": release_report["enabled"]}}
@@ -143,6 +150,12 @@ def _prepare_ui_batch(actor, normalized, profile, key, request_hash):
         resolved = resolve_ui_target(normalized["app_id"], target, actor)
         if not resolved["ok"]:
             raise BatchValidationError(resolved["block_code"])
+        if build := normalized.get("expected_build"):
+            versions = resolved["device_snapshot"].get("app_versions") or []
+            if (resolved["target_package"] != build["package"] or len(versions) != 1
+                    or versions[0].get("installed") is not True or any(
+                        str(versions[0].get(k, "")) != build[k] for k in ("package","version_name","version_code"))):
+                raise BatchValidationError("app_version_changed")
         resolved = dict(resolved)
         mapping = {"app_id": normalized["app_id"], "platform_mappings": resolved["platform_mappings"],
                    "target_package": resolved["target_package"]}

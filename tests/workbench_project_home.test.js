@@ -38,3 +38,12 @@ test('read-only views do not submit or generate on load, administrators can hand
   await tick();
   assert.equal(selected,'f'.repeat(64));assert.equal(calls[1][1].body.event_id,'e');
 });
+test('application viewers can read the generated development cases without operating a device',async t=>{
+  const {page}=mount(t,['ui.view'],async()=>({items:[{title:'套件专区',origin:'integration',requirement_id:'31',
+    revision:'v1',status:'design_completed',design_cases:[{title:'套件详情',precondition:'已登录',steps:['打开套件'],
+    expected:'展示详情',plan:{evidence:'套件详情原图'}}]}]}));
+  await tick();
+  assert.match(page.textContent,/查看测试用例（1 条）/);
+  assert.match(page.textContent,/套件详情原图/);
+  assert.doesNotMatch(page.textContent,/打开需求设计详情/);
+});

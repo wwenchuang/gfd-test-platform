@@ -869,6 +869,13 @@ function attachRequirementDesign(page,current){
         const cases=details(row,'测试用例（'+result.cases.length+'）');
         for(const item of result.cases){
           write(cases,'h4',item.id+' · '+item.title);write(cases,'p','关联测试点　'+item.point_ids.join('、'));
+          if(item.plan){
+            const kinds={ui:'界面回归',api:'接口校验',manual:'人工核对'};
+            const platforms={android:'Android',ios:'iOS',web:'网页',service:'服务端',unknown:'适用端待确认'};
+            write(cases,'p',[kinds[item.plan.kind],...(item.plan.platforms||[]).map(p=>platforms[p])].filter(Boolean).join(' · '));
+            write(cases,'p','验收证据　'+item.plan.evidence);
+            if(item.plan.prerequisites?.length)write(cases,'p','执行依赖　'+item.plan.prerequisites.join('、'));
+          }
           write(cases,'p','前置条件　'+item.precondition);
           const steps=document.createElement('ol');cases.append(steps);
           for(const step of item.steps)write(steps,'li',step);

@@ -30,13 +30,13 @@
         "边界值",
         "状态迁移",
         "错误推测",
-        "每个 `requirement_point`"
+        "每个独立 `requirement_point`"
       ]
     },
     "automation_filter": {
       "must_include_prompt_terms": [
         "不依赖上一条用例留下的状态",
-        "P0/P1/P2/P3",
+        "仅P0/P1",
         "至少一个断言",
         "自然语言意图",
         "3D 打印链路",

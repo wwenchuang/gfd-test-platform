@@ -70,6 +70,10 @@ def _db():
 
 
 def _source_id(meta):
+    if meta.get('figma_refs') and meta.get('requirement_ref'):
+        # An unrelated frame edit changes the Figma file version, but identical bound
+        # frames and PRD content reuse the first immutable snapshot and its provenance.
+        meta = {**meta, 'figma_refs':[{k:r[k] for k in ('file_key','node_id')} for r in meta['figma_refs']]}
     return _digest(json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(',',':')).encode())
 
 
@@ -117,16 +121,8 @@ def _text(value, limit):
     return value.strip()
 
 
-def import_source(owner, body):
+def clean_prototype_png(encoded):
     from PIL import Image
-    if not isinstance(body,dict) or set(body) != {'title','app','version','clauses','image_base64'}:
-        raise ValueError('需要需求标题、应用、版本、条款和一张 PNG 原型')
-    meta = {k:_text(body[k],n) for k,n in [('title',160),('app',128),('version',100)]}
-    items = body['clauses']
-    if not isinstance(items,list) or not 1 <= len(items) <= 20:
-        raise ValueError('请填写 1 至 20 条 PRD 条款')
-    clauses = [_text(v,900) for v in items]
-    encoded = body['image_base64']
     if not isinstance(encoded,str) or len(encoded)>4*((MAX_IMAGE+2)//3):
         raise ValueError('原型图片超过 2 MiB')
     try:
@@ -144,6 +140,18 @@ def import_source(owner, body):
                 raise ValueError()
     except (ValueError, OSError, Image.DecompressionBombError) as e:
         raise ValueError('请使用 2 MiB 内、单幅且可正常解码的 PNG 原型') from e
+    return data
+
+
+def import_source(owner, body):
+    if not isinstance(body,dict) or set(body) != {'title','app','version','clauses','image_base64'}:
+        raise ValueError('需要需求标题、应用、版本、条款和一张 PNG 原型')
+    meta = {k:_text(body[k],n) for k,n in [('title',160),('app',128),('version',100)]}
+    items = body['clauses']
+    if not isinstance(items,list) or not 1 <= len(items) <= 20:
+        raise ValueError('请填写 1 至 20 条 PRD 条款')
+    clauses = [_text(v,900) for v in items]
+    data = clean_prototype_png(body['image_base64'])
     meta.update(source_type='excerpt',prd_file_sha256=_digest('\n'.join(clauses).encode()),
                 clauses=[dict(id='P'+str(i),text=v) for i,v in enumerate(clauses,1)],
                 prototypes=[dict(id='V1',file='prototype.png',caption='上传的原型图',sha256=_digest(data))])
@@ -315,7 +323,7 @@ def _generate(owner, username, sid, rid, lock):
             os.close(lock)
 
 
-def start(owner, username, sid, request_id):
+def start(owner, username, sid, request_id, *, wait=False):
     if not re.fullmatch('[a-f0-9]{64}',sid) or not re.fullmatch('[a-f0-9]{32}',request_id):
         raise ValueError('材料或请求编号无效')
     with _db() as db:
@@ -359,6 +367,9 @@ def start(owner, username, sid, request_id):
                 return existing()
             claimed=False
             lock=None
+            if wait:
+                # A oneshot sync service must retain its model worker until the result is durable.
+                worker.join()
             return existing()
         finally:
             if claimed:

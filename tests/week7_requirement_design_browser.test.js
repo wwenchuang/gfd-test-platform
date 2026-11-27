@@ -14,7 +14,7 @@ test('workbench previews authorized PNGs, polls to completion and downloads matc
     clauses:[{id:'P1',text:'搜索以关键词筛选'}], prototypes:[{id:'V1',caption:'搜索原型',sha256:id}]};
   const run = {id:'run-fixture',created:1730000000,status:'running'};
   const result = {points:[{id:'T1',title:'搜索结果',expected:'结果匹配',refs:['P1','V1']}],
-    cases:[{id:'C1',title:'关键词筛选',precondition:'已登录',steps:['输入关键词'],expected:'命中结果',point_ids:['T1']}],
+    cases:[{id:'C1',title:'关键词筛选',precondition:'已登录',steps:['输入关键词'],expected:'命中结果',point_ids:['T1'],plan:{kind:'ui',platforms:['android','ios'],evidence:'结果列表截图',prerequisites:['测试账号']}}],
     questions:[],checks:{partial:false,review_required:true},evidence:{model:'fixture-model',request_id:'fixture-request'}};
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nS8AAAAASUVORK5CYII=', 'base64');
   const candidate={id:'g1-C1',group:'g1',title:'测试点关联检查',precondition:'已有材料',steps:['查看列表'],expected:'显示模型',refs:['P1']};
@@ -78,7 +78,9 @@ test('workbench previews authorized PNGs, polls to completion and downloads matc
   assert.equal(await generate.isDisabled(),true);
   await page.getByText('已生成 · 待人工复核',{exact:false}).first().waitFor({timeout:8000});
   await page.getByText('测试用例（1）',{exact:true}).click();await page.getByText('关联测试点　T1',{exact:true}).waitFor();
-  const [download] = await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'下载证据 JSON'}).click()]);
+  await page.getByText('界面回归 · Android · iOS',{exact:true}).waitFor();
+  await page.getByText('验收证据　结果列表截图',{exact:true}).waitFor();
+  const [download] =  await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'下载证据 JSON'}).click()]);
   const evidence = JSON.parse(await fs.readFile(await download.path(),'utf8'));
   assert.equal(evidence.source.id,id);assert.equal(evidence.run.id,run.id);assert.equal(evidence.run.result.evidence.request_id,'fixture-request');
   assert.equal(await generate.isDisabled(),false);

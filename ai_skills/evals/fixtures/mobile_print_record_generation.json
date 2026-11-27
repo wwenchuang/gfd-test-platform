@@ -33,14 +33,14 @@
         "边界值",
         "决策表",
         "状态迁移",
-        "不适合自动化的场景也必须保留"
+        "automation_suitable=false"
       ]
     },
     "automation_filter": {
       "must_include_prompt_terms": [
         "Midscene 友好步骤约束",
         "本平台现有 YAML 风格参考",
-        "P0/P1/P2/P3",
+        "仅P0/P1",
         "列表区域或空态提示",
         "manual_cases",
         "真实支付",

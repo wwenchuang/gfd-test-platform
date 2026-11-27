@@ -1,7 +1,10 @@
 // Start a mapped smoke run from a requirement, or inspect the evidence without starting a run.
 window.WorkbenchProject = (() => {
   const intakePath = '/platform/requirement-design/intake';
-  const statuses = {awaiting_mapping:'已接收，等待配置对应基线', blocked:'执行受阻', partial:'部分平台已提交', submitted:'已提交回归'};
+  const statuses = {build_unavailable:'构建回执待核对 · 暂缓执行',source_unavailable:'需求或设计材料读取异常 · 暂缓测试',smoke_running:'冒烟执行中 · 后续回归等待结果',smoke_blocked:'冒烟未达继续条件 · 后续回归已暂停',design_completed:'测试设计已生成', design_failed:'测试设计生成失败',
+    design_running:'正在设计测试用例',design_busy:'测试设计等待模型资源',
+    awaiting_qa_build:'已转测 · 等待 QA 构建', design_changed_since_build:'已转测 · 构建对应的设计已变更',
+    awaiting_design:'已转测 · 等待当前版本测试设计',awaiting_reviewed_baselines:'已转测 · 待绑定已发布基线',awaiting_mapping:'已接收，等待配置对应基线', blocked:'执行受阻', partial:'部分平台已提交', submitted:'已提交回归'};
   function line(parent, text, tag='p') {
     const node = document.createElement(tag);
     node.textContent = text;
@@ -18,9 +21,34 @@ window.WorkbenchProject = (() => {
       else if (batches.some(batch => batch.status === 'running')) summary = '回归执行中';
     }
     line(output, receipt.title + ' · ' + summary);
-    line(output, (receipt.origin === 'integration' ? '飞书项目' : '工作台登记') + ' · ' + receipt.requirement_id + ' · ' + receipt.revision);
+    const build=receipt.build_context;
+    if(build) line(output,[build.phase==='smoke'?'冒烟':'功能回归','QA',build.platform==='ios'?'iOS':'Android',
+      build.version_name+' ('+build.version_code+')','构建 '+build.build_id].join(' · '));
+    line(output, (receipt.origin === 'integration' ? '飞书项目' : '工作台登记') + ' · ' + receipt.requirement_id + (/^[a-f0-9]{64}$/.test(build?.requirement_revision||receipt.revision)?'':' · '+(build?.requirement_revision||receipt.revision)));
     const designer = () => current() && hasPermission('platform.configure') && hasPermission('ui.view')
       && (currentAccessProfile?.is_superuser === true || currentAccessProfile?.scope?.ui_apps === '*');
+    if (receipt.design_cases?.length) {
+      const details=line(output,'','details');
+      line(details,'查看测试用例（'+receipt.design_cases.length+' 条）','summary');
+      for(const c of receipt.design_cases){
+        line(details,c.title,'h4');
+        line(details,'前置条件　'+c.precondition);
+        const steps=line(details,'','ol');
+        for(const step of c.steps || []) line(steps,step,'li');
+        line(details,'预期结果　'+c.expected);
+        if(c.plan?.evidence) line(details,'验收证据　'+c.plan.evidence);
+      }
+    }
+    if (receipt.status === 'design_completed' && designer() && /^[a-f0-9]{64}$/.test(receipt.design_source)) {
+      const button = line(output,'打开需求设计详情','button');
+      button.type='button';
+      button.onclick=() => {
+        const panel=output.closest('[data-practice-workbench]')?.querySelector('[data-requirement-design]');
+        if (!designer() || !panel) return;
+        panel.dispatchEvent(new CustomEvent('use-intake-source',{detail:receipt.design_source}));
+        panel.scrollIntoView({block:'start'});
+      };
+    }
     if (receipt.status === 'awaiting_mapping' && designer()) {
       const button = line(output,'用验收条件准备测试设计','button');
       button.type = 'button';
@@ -47,7 +75,7 @@ window.WorkbenchProject = (() => {
       link.href = '?ui_batch=' + encodeURIComponent(batch.ui_batch_id);
       const review = batch.defect_review;
       if (!review) continue;
-      const labels = {no_failed_attempts:'已执行用例无失败',configuration_required:'待配置飞书项目',permission_required:'需缺陷登记权限',needs_evidence:'证据不足，继续调查',receipt_unknown:'飞书回执待核对',rejected:'飞书拒绝创建',submitted:'缺陷已登记',mixed:'各失败项处理结果不同'};
+      const labels = {no_failed_attempts:'已执行用例无失败',configuration_required:'待配置飞书项目',permission_required:'需缺陷登记权限',owner_unresolved:'需求开发负责人待确认',needs_evidence:'证据不足，继续调查',receipt_unknown:'飞书回执待核对',rejected:'飞书拒绝创建',submitted:'缺陷已登记',mixed:'各失败项处理结果不同'};
       if (review.status !== 'no_failed_attempts' || batch.status !== 'passed') line(output, labels[review.status] || '调查结果待核对');
       for (const item of review.attempts || []) {
         if (item.status === 'submitted' && Number.isSafeInteger(item.issue_id)) line(output, '飞书项目缺陷 #' + item.issue_id);

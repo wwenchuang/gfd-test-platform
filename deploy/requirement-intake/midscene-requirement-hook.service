@@ -1,0 +1,17 @@
+[Unit]
+Description=Receive scoped Feishu Project and Figma QA events
+
+[Service]
+User=midscene
+Group=midscene
+WorkingDirectory=/opt/midscene-task-platform
+Environment=MIDSCENE_ENV_FILE=/opt/midscene.env
+EnvironmentFile=/etc/midscene-feishu-requirements.env
+ExecStart=/opt/midscene-task-platform/.venv/bin/python -m task_server.services.requirement_change_hook
+StateDirectory=midscene-requirement-events
+StateDirectoryMode=0700
+NoNewPrivileges=true
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
