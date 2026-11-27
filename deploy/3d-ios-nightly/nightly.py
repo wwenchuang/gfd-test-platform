@@ -1,6 +1,5 @@
 """Dispatch the nightly iPhone regression through the workbench and send one Feishu summary."""
 import argparse
-from collections import Counter
 from datetime import timedelta
 import fcntl
 import importlib.util
@@ -80,37 +79,17 @@ def dispatch(record, path, label, group, deadline):
 
 
 def card(record, rows, setup=False):
-    states = {k: v for group in record.get('outcomes', {}).values() for k, v in group.items()}
-    counts = Counter(states.values())
-    skipped = [row for row in rows if row.get('deferred')]
-    failed = [row['name'] for row in rows if states.get(row['case_id']) == 'failed']
-    prefix = 'iOS 每日回归' if record.get('schedule_version') else 'iOS 每晚回归'
-    if record.get('manual_run_id'):
-        prefix = 'iOS 手动回归'
-    if setup:
-        title = prefix + '已启用'
-        detail = '北京时间每天 22:00，Sonic iPhone 13。首轮从今晚开始，结束后本群会收到结果和工作台报告。'
-    else:
-        title = prefix + '｜' + record['status']
-        detail = (f"通过 {counts['passed']} · 失败 {counts['failed']} · 暂缓 {len(skipped)} · "
-                  f"未完成 {len(rows)-len(skipped)-counts['failed']-counts['passed']}")
-        if failed:
-            detail += '\n失败用例：' + '、'.join(failed)
-        if record.get('blockers'):
-            detail += '\n工作台预检：' + '、'.join(record['blockers'])
-    if record.get('schedule_version'):
-        target = record['target']
-        if setup:
-            detail = '回归结束后，本群会收到结果和工作台报告。'
-        detail += f"\n北京时间 {record['operate_at'][11:16]} · iOS · {target['runner_id']} / {target['device_id']}"
-    if skipped:
-        detail += '\n暂缓：' + '、'.join(row['name'] for row in skipped)
-    elements = [{'tag': 'div', 'text': {'tag': 'plain_text', 'content': detail}}]
-    for label, bid in record.get('batches', {}).items():
-        elements.append({'tag': 'markdown', 'content': f'[{label}报告]({BASE}/task-manager.html?ui_batch={bid})'})
-    return {'msg_type': 'interactive', 'card': {'header': {'template': 'blue' if setup else (
-        'green' if record['status'] == '已执行用例全部通过' else 'orange'),
-        'title': {'tag': 'plain_text', 'content': record['date'] + ' 智小白 3D · ' + title}}, 'elements': elements}}
+    from task_server.services.ui_regression_card import regression_card
+    if not setup:
+        reason = record['status']
+        if reason == '冒烟未达继续条件':
+            reason = '首批验证未通过继续条件，回归已停止'
+        return regression_card(record, rows, 'ios', reason, BASE)
+    start = (record.get('operate_at') or '')[11:16] or '22:00'
+    text = f'北京时间每天 {start} 执行。回归结束后可在本群查看结果和工作台报告。'
+    return {'msg_type': 'interactive', 'card': {'header': {'template': 'blue',
+            'title': {'tag': 'plain_text', 'content': '智小白 3D · iOS 定时回归已启用'}},
+            'elements': [{'tag': 'div', 'text': {'tag': 'plain_text', 'content': text}}]}}
 
 
 def notify(record, path, rows, setup):
@@ -167,6 +146,8 @@ def main():
             if record.get('schedule_digest') != metadata.get('schedule_digest'):
                 return
             if not setup and not record.get('final'):
+                from task_server.services.ui_regression_card import capture_phone
+                capture_phone(record, record.get('target', TARGET))
                 if snapshot and not path.exists():
                     daily.write_record(path, record)
                 try:

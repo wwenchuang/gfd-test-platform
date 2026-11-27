@@ -308,6 +308,8 @@ def run_stages(record, path, phases, deadline):
                 return 'skipped_phone_busy_or_unavailable_' + name
             if record.get('target') and target != record['target']:
                 return 'runner_changed'
+            from task_server.services.ui_regression_card import capture_phone
+            capture_phone(record, target)
             record['target'] = target
             request = batch_request(target, group)
             preflight = preflight_ui_batch(None, request)
@@ -343,12 +345,7 @@ def run_stages(record, path, phases, deadline):
 
 
 def daily_card(record, rows, base):
-    from urllib.parse import urlencode, urlsplit
-    outcomes = {}
-    for batch in record.get('outcomes', {}).values():
-        outcomes.update(batch)
-    passed = sum(outcomes.get(r['case_id']) == 'passed' for r in rows)
-    failures = [r.get('name') or Path(r['filename']).stem for r in rows if outcomes.get(r['case_id']) == 'failed']
+    from task_server.services.ui_regression_card import regression_card
     status = record['status']
     reasons = {
         'passed': '全部通过', 'finished_with_failures': '存在失败用例',
@@ -356,7 +353,7 @@ def daily_card(record, rows, base):
         'skipped_printer_status_unavailable': '打印机遥测不可用，已跳过实打',
         'dragon_receipt_unconfirmed': '打印下发与设备回执尚未对上',
         'runner_changed': '执行手机或 Runner 已变更', 'dispatch_window_ended': '执行时间窗口已结束',
-        'stopped_smoke': '冒烟阶段未满足继续执行条件', 'error': '调度中断，需查看工作台记录',
+        'stopped_smoke': '首批验证未通过继续条件，回归已停止', 'error': '调度中断，需查看工作台记录',
     }
     reason = reasons.get(status, '回归提前结束')
     if status == 'selection_blocked':
@@ -365,26 +362,7 @@ def daily_card(record, rows, base):
         reason = '测试手机忙或离线'
     if status.startswith('preflight_blocked_'):
         reason = '工作台执行前检查未通过'
-    text = (f"计划 {len(rows)} 条　通过 {passed}　失败 {len(failures)}　未完成 {len(rows)-passed-len(failures)}"
-            + ('\n失败用例：' + '、'.join(failures) if failures else ''))
-    if record.get('schedule_version'):
-        target = record['target']
-        text += f"\n北京时间 {record['operate_at'][11:16]} · Android · {target['runner_id']} / {target['device_id']}"
-    elements = [{'tag': 'div', 'text': {'tag': 'plain_text', 'content': text}}]
-    batches = record.get('batches', {})
-    labels = {'smoke': '冒烟', 'remaining': '基础功能', 'previews': '建模与导入', 'dragon': '关节龙实打'}
-    url = urlsplit(base)
-    if url.scheme in {'http','https'} and url.hostname and not (url.username or url.password or url.query or url.fragment):
-        links = [f"[{labels.get(stage, '基础功能')}报告]({base.rstrip('/')}/task-manager.html?{urlencode({'ui_batch': bid})})"
-                 for stage, bid in batches.items() if re.fullmatch(r'uib_[a-f0-9]{32}', bid)]
-        if links:
-            elements.append({'tag': 'markdown', 'content': ' · '.join(links)})
-    if batches and len(elements) == 1:
-        elements.append({'tag': 'div', 'text': {'tag': 'plain_text', 'content': '查看详情：测试工作台 → UI 测试报告'}})
-    kind = '手动 UI 回归' if record.get('manual_run_id') else '每日 UI 回归'
-    title = f"{record['date']} 智小白 3D {kind}｜{reason}"
-    return {'msg_type': 'interactive', 'card': {'header': {'template': 'green' if status == 'passed' else 'orange',
-            'title': {'tag': 'plain_text', 'content': title}}, 'elements': elements}}
+    return regression_card(record, rows, 'android', reason, base)
 
 
 def daily_sender():
@@ -500,6 +478,8 @@ def main():
                     raise ValueError('outside_daily_start_window')
                 record = {'date': str(start.date()), 'owner_id': actor['user_id'], 'created_at': clock.isoformat(),
                           'operate_at': start.isoformat(), 'status': 'scheduled', 'batches': {}, 'notify_daily': True, **metadata}
+                from task_server.services.ui_regression_card import capture_phone
+                capture_phone(record, record.get('target'))
                 write_record(path, record)
             delay = (datetime.fromisoformat(record['operate_at']) - now()).total_seconds()
             if delay > 0:
