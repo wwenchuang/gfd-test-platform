@@ -94,6 +94,8 @@ test('unknown submission survives reload and uses the exact same request id and 
   await retry.click();
   await page.getByText('执行事件 3 <img src=x>',{exact:true}).waitFor();
   assert.equal(originals.length,2);
+  assert.ok(Number.isInteger(originals[0].seed)&&originals[0].seed>=0&&originals[0].seed<=2147483647);
+  assert.equal(originals[0].event_count,500);
   assert.deepEqual(originals[1],originals[0]);
   assert.equal(writes.length,1);
 });
@@ -257,4 +259,24 @@ test('history identifies an offline phone and links its full serial to its model
   await page.route('**/api/ui-executions/devices?app_id=demo',route=>route.fulfill({json:{ok:true,devices:[]}}));
   await page.locator('.ui-monkey [data-refresh]').click();
   await page.getByRole('button',{name:/应用崩溃 · iOS 设备（机型未记录）/}).waitFor();
+});
+
+test('device picker explains an unavailable iPhone and restores it without losing the Android selection',async t=>{
+  const {page}=await fixture(t);
+  const android={name:'OPPO Reno9',target:{device_id:'android1',runner_id:'android-mac',platform:'android'},connection_status:'ready',monkey_supported:true};
+  const ios={name:'iPhone 13',target,connection_status:'offline',monkey_supported:false};
+  let online=false;
+  await page.route('**/api/ui-executions/devices?app_id=demo',route=>route.fulfill({json:{ok:true,devices:[android,online?{...ios,connection_status:'ready',monkey_supported:true}:ios]}}));
+  await page.locator('.ui-monkey [data-refresh]').click();
+  await page.getByText(/iPhone 13.*离线/).waitFor();
+  const picker=page.getByLabel('执行手机',{exact:true});
+  await picker.selectOption({label:'OPPO Reno9 · Android · 设备编号 android1'});
+  assert.equal(await page.getByLabel('事件数',{exact:true}).inputValue(),'500');
+  assert.equal(await page.getByLabel('随机种子',{exact:true}).inputValue(),'');
+  online=true;
+  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+  await picker.locator('optgroup[label="iOS"] option').waitFor({state:'attached'});
+  assert.match(await picker.locator('option:checked').textContent(),/OPPO/);
+  await picker.selectOption({label:'iPhone 13 · iOS · 设备编号 phone'});
+  assert.equal(await page.locator('[data-start]').isEnabled(),true);
 });

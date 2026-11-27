@@ -7,6 +7,7 @@
   };
   const live = run => ['queued','running','stopping'].includes(run?.status);
   const platform = target => target?.platform === 'ios' ? 'iOS' : 'Android';
+  const modeLabel = mode => ({mixed:'随机点击与滑动',browse:'仅随机滑动'})[mode] || '模式未记录';
   const sameTarget = (a,b) => a && b && ['platform','runner_id','device_id'].every(k=>a[k]===b[k]);
   const durationText = seconds => seconds>=60 && seconds%60===0 ? seconds/60+' 分钟' :
     (seconds>=60?Math.floor(seconds/60)+' 分 ':'')+seconds%60+' 秒';
@@ -15,7 +16,7 @@
     const owner = identity();
     let disposed = false, generation = 0, detailSequence = 0, refreshSequence = 0, timer;
     let app = '', directory = [], devices = [], runs = [], selected = null, pending = null, busy = false;
-    let schedules=[], schedulesReady=false, editing=null;
+    let schedules=[], schedulesReady=false, editing=null, checkingPhones=false, phoneSignature=null;
     const alive = () => !disposed && page.isConnected && identity() === owner;
     const q = selector => page.querySelector(selector);
     const pendingKey = () => 'ui.monkey.submit.' + JSON.stringify([owner,app]);
@@ -27,13 +28,15 @@
       <div class="monkey-grid"><section class="monkey-panel"><h2>执行配置</h2>
       <form><label>测试应用<select aria-label="测试应用" data-app><option value="">选择应用</option></select></label>
       <label>执行手机<select aria-label="执行手机" data-device><option value="">先选择应用</option></select></label>
+      <small data-phone-status role="status"></small>
       <label>执行方式<select aria-label="执行方式" data-kind><option value="manual">手动执行</option><option value="daily">每日定时</option></select></label>
       <label>操作模式<select aria-label="操作模式" data-mode><option value="mixed">随机点击与滑动</option><option value="browse">仅随机滑动</option></select></label>
       <p data-mode-note hidden>随机点击可能变更应用数据。请核对所选应用与手机。</p>
       <label>执行上限<select aria-label="执行上限" data-limit><option value="events">按事件数</option><option value="duration">按持续时长</option></select></label>
-      <div class="monkey-numbers"><label data-count-label>事件数<input data-count type="number" min="1" max="10000" step="1" value="100" required></label>
+      <div class="monkey-numbers"><label data-count-label>事件数<input data-count type="number" min="1" max="10000" step="1" value="500" required></label>
       <label data-duration-label hidden>持续时长（分钟）<input data-duration type="number" min="1" max="1440" step="1" value="30" required></label>
-      <label>随机种子<input data-seed type="number" min="0" max="2147483647" step="1" value="1" required></label></div>
+      <label>随机种子<input data-seed type="number" min="0" max="2147483647" step="1" placeholder="自动生成" aria-describedby="monkey-seed-help"></label></div>
+      <small id="monkey-seed-help">留空自动生成。复测时可填上次记录的种子，重用随机操作序列。</small>
       <div class="monkey-presets" data-presets hidden aria-label="常用时长">常用时长</div>
       <div class="monkey-numbers" data-daily-fields hidden><label>每日时间（北京时间）<input type="time" step="60" data-time required value="09:00"></label>
       <label>方案状态<select aria-label="方案状态" data-enabled><option value="true">启用</option><option value="false">停用</option></select></label></div>
@@ -51,6 +54,7 @@
     const mode = q('[data-mode]'), count = q('[data-count]'), seed = q('[data-seed]');
     const limit=q('[data-limit]'), minutes=q('[data-duration]'), kind=q('[data-kind]');
     const dailyTime=q('[data-time]'), enabled=q('[data-enabled]');
+    const selectedSeed=()=>seed.value===''?crypto.getRandomValues(new Uint32Array(1))[0] >>> 1:seed.valueAsNumber;
     const formBudget=()=>limit.value==='duration'?{duration_seconds:minutes.valueAsNumber*60}:{event_count:count.valueAsNumber};
     const formTarget=()=>devices[Number(deviceSelect.value)-1]?.target || (deviceSelect.value==='saved'?editing?.target:null);
     const say = text => { q('[data-notice]').textContent=text; };
@@ -123,7 +127,7 @@
         const name=phoneName(plan.target);
         title.textContent=plan.daily_time+' 北京时间 · '+(plan.enabled?'已启用':'已停用')+' · '+name;
         info.textContent=[platform(plan.target)+' · 设备编号 '+plan.target.device_id,
-          plan.mode==='mixed'?'混合':'浏览',plan.duration_seconds?'计划 '+durationText(plan.duration_seconds):plan.event_count+' 个事件','种子 '+plan.seed].join(' · ');
+          modeLabel(plan.mode),plan.duration_seconds?'计划 '+durationText(plan.duration_seconds):plan.event_count+' 个事件','种子 '+plan.seed].join(' · ');
         row.append(title,info);
         if(plan.enabled && plan.next_run_at){
           const next=new Date(plan.next_run_at);
@@ -157,7 +161,7 @@
         if(!alive())return;
         if(schedule?.app_id!==app||!sameTarget(schedule?.target,body.target))throw new Error('定时方案回执与所选设备不符。');
         schedules=[schedule,...schedules.filter(p=>!sameTarget(p.target,schedule.target))];
-        if(kind.value==='daily'&&sameTarget(formTarget(),schedule.target)){editing=schedule;enabled.value=String(schedule.enabled);}
+        if(kind.value==='daily'&&sameTarget(formTarget(),schedule.target)){editing=schedule;enabled.value=String(schedule.enabled);seed.value=schedule.seed;}
         renderPlans();notice.textContent='每日方案已保存。';
       }catch(error){if(alive())notice.textContent='保存结果待核对：'+error.message+'。可刷新读取已保存方案。';}
       finally{if(alive()){busy=false;controls();schedulePoll();}}
@@ -192,7 +196,7 @@
       q('[data-monkey-state]').classList.toggle('ui-activity-line',run.status==='running' && !run.connection_lost);
       q('[data-summary]').textContent = [appSelect.selectedOptions[0]?.textContent || run.app_id,
         phoneOption(run.target),
-        (run.mode==='mixed'?'混合':'浏览')+' · 种子 '+run.seed,'运行编号 '+run.run_id].join('　');
+        modeLabel(run.mode)+' · 种子 '+run.seed,'运行编号 '+run.run_id].join('　');
       const meter = detail.querySelector('progress');
       const timed=Number(run.duration_seconds)>0, actual=Number.isInteger(run.elapsed_seconds)?run.elapsed_seconds:null;
       meter.max=timed?run.duration_seconds:run.event_count;
@@ -269,24 +273,57 @@
         if(alive() && seq===detailSequence && version===generation)schedulePoll();
       }
     }
+    function updatePhones(rows){
+      const signature=JSON.stringify(rows?.map(d=>[d.target,d.name,d.connection_status,d.monkey_supported])??false);
+      if(signature===phoneSignature)return;
+      phoneSignature=signature;
+      const target=pending?.target || formTarget() || editing?.target;
+      if(Array.isArray(rows))directory=rows;
+      devices=(rows||[]).filter(d=>d.connection_status==='ready'&&d.monkey_supported===true);
+      deviceSelect.replaceChildren(option(devices.length?'选择手机':'暂无支持 Monkey 的就绪手机',''));
+      const reasons={offline:'设备或执行器离线',mapping_missing:'此应用未配置该系统的安装包',
+        upgrade_required:'执行器需要升级',not_ready:'设备预检未就绪',app_not_installed:'未安装所选应用'};
+      const hints=[];
+      for(const os of ['android','ios']){
+        const group=document.createElement('optgroup');group.label=os==='ios'?'iOS':'Android';
+        for(const d of (rows||[]).filter(d=>d.target.platform===os)){
+          const i=devices.indexOf(d);
+          if(i<0){
+            hints.push((d.name||group.label)+'（'+group.label+'）：'+(reasons[d.connection_status]||'尚未确认 Monkey 能力或应用安装状态'));
+            continue;
+          }
+          const o=option(phoneOption(d.target),String(i+1));group.append(o);
+        }
+        if(group.children.length)deviceSelect.append(group);
+        if(rows&&!rows.some(d=>d.target.platform===os))hints.push(group.label+'：设备目录未上报手机');
+      }
+      // Appending an optgroup can reset selection in native select controls.
+      const selectedIndex=devices.findIndex(d=>sameTarget(target,d.target));
+      deviceSelect.value=selectedIndex<0?'':String(selectedIndex+1);
+      if(pending&&!deviceSelect.value)deviceSelect.append(new Option(phoneOption(pending.target),'pending',true,true));
+      if(!pending&&editing&&!deviceSelect.value&&kind.value==='daily')deviceSelect.append(new Option(phoneOption(editing.target)+' · 未就绪','saved',true,true));
+      q('[data-phone-status]').textContent=rows?hints.join('；'):'未能读取设备状态，请刷新重试。';
+      controls();
+    }
+    async function pollPhones(){
+      if(!alive()||!app||busy||checkingPhones||document.hidden||phoneSignature===null)return;
+      checkingPhones=true;
+      const version=refreshSequence,currentApp=app;
+      try{
+        const result=await request('/ui-executions/devices?app_id='+encodeURIComponent(app));
+        if(alive()&&!busy&&version===refreshSequence&&app===currentApp)updatePhones(result.devices);
+      }catch{
+        if(alive()&&!busy&&version===refreshSequence&&app===currentApp)updatePhones(null);
+      }finally{checkingPhones=false;}
+    }
     async function refresh() {
       if(!alive() || !app || busy)return;
-      const currentApp=app, version=++refreshSequence, previousDevice=devices[Number(deviceSelect.value)-1]?.target;
+      const currentApp=app, version=++refreshSequence;
       const query='?app_id='+encodeURIComponent(currentApp);
       const results=await Promise.allSettled([request('/ui-executions/devices'+query),request('/ui-monkey/runs'+query),request('/ui-monkey/schedules'+query)]);
       if(!alive() || currentApp!==app || version!==refreshSequence || busy)return;
       const [phones,history,plans]=results;
-      if(phones.status==='fulfilled')directory=phones.value.devices || [];
-      devices = phones.status==='fulfilled' ? directory.filter(d=>d.connection_status==='ready'&&d.monkey_supported===true) : [];
-      deviceSelect.replaceChildren(option(devices.length?'选择手机':'暂无支持 Monkey 的就绪手机',''));
-      devices.forEach((d,i)=>{
-        const o=option(phoneOption(d.target),String(i+1));
-        const target=pending?.target || previousDevice || editing?.target;
-        o.selected=!!target && ['platform','runner_id','device_id'].every(k=>target[k]===d.target[k]);
-        deviceSelect.append(o);
-      });
-      if(pending && !deviceSelect.value)deviceSelect.append(new Option(phoneOption(pending.target),'pending',true,true));
-      if(!pending && editing && !deviceSelect.value && kind.value==='daily')deviceSelect.append(new Option(phoneOption(editing.target)+' · 未就绪','saved',true,true));
+      updatePhones(phones.status==='fulfilled'?phones.value.devices:null);
       schedulesReady=plans.status==='fulfilled'&&Array.isArray(plans.value.schedules);
       if(schedulesReady)schedules=plans.value.schedules.filter(p=>p.app_id===app&&p.target);
       renderPlans();q('[data-schedule-notice]').textContent=schedulesReady?'':'每日方案暂时无法读取，请刷新重试。';
@@ -299,6 +336,7 @@
     async function changeApp() {
       if(busy)return;
       app=appSelect.value;generation++;detailSequence++;clearTimeout(timer);
+      phoneSignature=null;q('[data-phone-status]').textContent='';
       selected=null;directory=[];devices=[];runs=[];pending=null;schedules=[];schedulesReady=false;editing=null;
       q('[data-schedule-notice]').textContent='';
       if(app){
@@ -325,7 +363,7 @@
       const target=formTarget();
       if(!pending && (!target || !form.reportValidity()))return;
       if(kind.value==='daily'){
-        await savePlan({app_id:app,target,mode:mode.value,...formBudget(),seed:seed.valueAsNumber,daily_time:dailyTime.value,enabled:enabled.value==='true'});
+        await savePlan({app_id:app,target,mode:mode.value,...formBudget(),seed:selectedSeed(),daily_time:dailyTime.value,enabled:enabled.value==='true'});
         return;
       }
       if(!pending && !devices.some(d=>sameTarget(target,d.target)))return;
@@ -335,7 +373,7 @@
         if(!pending){
           const bytes=crypto.getRandomValues(new Uint8Array(16));
           const requestId=Array.from(bytes,x=>x.toString(16).padStart(2,'0')).join('');
-          storePending({app_id:app,target,mode:mode.value,...formBudget(),seed:seed.valueAsNumber,request_id:requestId});
+          storePending({app_id:app,target,mode:mode.value,...formBudget(),seed:selectedSeed(),request_id:requestId});
         }
         controls();say('正在提交…');
         const data=await request('/ui-monkey/runs',{method:'POST',body:pending,timeoutMs:30000});
@@ -388,8 +426,9 @@
       }catch(error){if(alive())say(error.message);}
     }
     q('[data-refresh]').onclick=()=>app?refresh():catalog();
+    const phoneTimer=setInterval(pollPhones,30000);document.addEventListener('visibilitychange',pollPhones);
     controls();renderHistory();renderPlans();catalog();
-    return {refresh:()=>app?refresh():catalog(),dispose(){disposed=true;clearTimeout(timer);page.replaceChildren();}};
+    return {refresh:()=>app?refresh():catalog(),dispose(){disposed=true;clearTimeout(timer);clearInterval(phoneTimer);document.removeEventListener('visibilitychange',pollPhones);page.replaceChildren();}};
   }
   window.UiMonkey={mount};
 })();
