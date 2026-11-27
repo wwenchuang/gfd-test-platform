@@ -38,6 +38,12 @@ def isolated(tmp_path, monkeypatch, identity_db):
         yield runner
 
 
+def test_default_mode_is_mixed_and_explicit_browse_is_preserved():
+    request = {k: v for k, v in BODY.items() if k != 'mode'}
+    assert m.normalize_request(request)['mode'] == 'mixed'
+    assert m.normalize_request(BODY)['mode'] == 'browse'
+
+
 def claim_run():
     run = m.create_run(BODY)
     job = m.claim('mac', {'phone'})

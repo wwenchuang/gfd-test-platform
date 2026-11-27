@@ -28,7 +28,7 @@
       <form><label>测试应用<select aria-label="测试应用" data-app><option value="">选择应用</option></select></label>
       <label>执行手机<select aria-label="执行手机" data-device><option value="">先选择应用</option></select></label>
       <label>执行方式<select aria-label="执行方式" data-kind><option value="manual">手动执行</option><option value="daily">每日定时</option></select></label>
-      <label>操作模式<select aria-label="操作模式" data-mode><option value="browse">浏览 · 随机滑动</option><option value="mixed">混合 · 随机滑动与点击</option></select></label>
+      <label>操作模式<select aria-label="操作模式" data-mode><option value="mixed">随机点击与滑动</option><option value="browse">仅随机滑动</option></select></label>
       <p data-mode-note hidden>随机点击可能变更应用数据。请核对所选应用与手机。</p>
       <label>执行上限<select aria-label="执行上限" data-limit><option value="events">按事件数</option><option value="duration">按持续时长</option></select></label>
       <div class="monkey-numbers"><label data-count-label>事件数<input data-count type="number" min="1" max="10000" step="1" value="100" required></label>

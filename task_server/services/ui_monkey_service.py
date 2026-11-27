@@ -101,6 +101,7 @@ def normalize_request(request):
     fields = {'app_id', 'target', 'event_count', 'duration_seconds', 'seed', 'request_id', 'mode'}
     if not isinstance(request, dict):
         raise MonkeyError('invalid_request', '执行参数无效。')
+    mode = request.get('mode', 'mixed')
     count, duration = request.get('event_count'), request.get('duration_seconds')
     budget_ok = ((duration is None and type(count) is int and 1 <= count <= 10000) or
                  (count is None and type(duration) is int and 60 <= duration <= 86400))
@@ -111,9 +112,9 @@ def normalize_request(request):
             not isinstance(request.get('app_id'), str) or not request['app_id'].strip() or
             not budget_ok or
             type(request.get('seed')) is not int or not 0 <= request['seed'] <= 2147483647 or
-            request.get('mode', 'browse') not in ('browse', 'mixed')):
+            mode not in ('browse', 'mixed')):
         raise MonkeyError('invalid_request', '请选择应用、手机、模式和有效的事件数及随机种子。')
-    return {**request, **request['target'], 'mode': request.get('mode', 'browse'),
+    return {**request, **request['target'], 'mode': mode,
             'duration_seconds': duration, 'event_count': count}
 
 

@@ -37,6 +37,14 @@ def test_seeded_gestures_are_bounded_and_browse_never_taps():
             assert max(abs(points[0][i]-points[1][i]) for i in (0, 1)) > 30
 
 
+@pytest.mark.parametrize("platform", ["android", "ios"])
+def test_default_mode_includes_taps(platform):
+    from mobile_monkey_runner import Run
+    run = Run(dict(platform=platform, device_id="phone", app_id="com.example.app", event_count=8, seed=1),
+              lambda event: None, lambda: False)
+    assert run.mode == "mixed"
+
+
 def test_android_evidence_only_releases_target_classification():
     from mobile_monkey_runner import AndroidEvidence
     e = AndroidEvidence("com.example.app")
@@ -247,6 +255,8 @@ elif cmd[:2] == ['shell', 'dumpsys']:
     print('mCurrentFocus=Window{003 u0 com.example.app/.Main}')
     print('  Window #2 Window{003 u0 com.example.app/.Main}:')
     print('    Frames: parent=[0,0][1080,1200] frame=[30,40][1050,1130]')
+elif cmd[:3] == ['shell','input','tap']:
+    assert len(cmd) == 5
 elif cmd[:3] == ['shell','input','swipe']:
     assert len(cmd) == 8
 else: sys.exit(1)
@@ -260,6 +270,7 @@ else: sys.exit(1)
     progress, progress2, final = [json.loads(line) for line in cp.stdout.splitlines()]
     assert (progress["executed"], progress2["executed"]) == (1, 2)
     assert (final["status"], final["executed"], final["crash_log"]) == ("passed", 2, "")
+    assert " tap" in final["log"]
 
 
 @pytest.mark.parametrize("target", [{}, {"duration_seconds": 59}, {"duration_seconds": 86401},

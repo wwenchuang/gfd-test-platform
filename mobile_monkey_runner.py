@@ -58,7 +58,7 @@ class Run:
                 raise ValueError
             timeout = self.duration + 180
         seed = request.get("seed")
-        self.mode = request.get("mode", "browse")
+        self.mode = request.get("mode", "mixed")
         if (self.platform not in ("android", "ios") or self.mode not in ("browse", "mixed")
                 or not isinstance(self.device, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}", self.device)
                 or not isinstance(self.app, str) or not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*(\.[a-zA-Z0-9_-]+)+", self.app)

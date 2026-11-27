@@ -48,7 +48,7 @@ test('workbench filters devices, starts an exact seeded run, polls real progress
   const device=page.getByLabel('执行手机',{exact:true});
   await device.selectOption({label:'iPhone 13 · iOS · 设备编号 phone'});
   assert.doesNotMatch(await device.textContent(),/旧 Runner/);
-  await page.getByLabel('操作模式').selectOption('mixed');
+  assert.equal(await page.getByLabel('操作模式').inputValue(),'mixed');
   await page.getByText(/随机点击可能变更应用数据/).waitFor();
   await page.getByLabel('事件数',{exact:true}).fill('12');
   await page.getByLabel('随机种子').fill('42');
@@ -204,7 +204,7 @@ test('daily plans can be saved, reopened and toggled using the exact saved setti
   await page.getByRole('button',{name:'停用方案'}).click();
   await page.getByRole('button',{name:'启用方案'}).click();
   await page.getByRole('button',{name:'停用方案'}).waitFor();
-  assert.deepEqual(requests[0],{app_id:'demo',target,mode:'browse',duration_seconds:5400,seed:13,daily_time:'06:15',enabled:true});
+  assert.deepEqual(requests[0],{app_id:'demo',target,mode:'mixed',duration_seconds:5400,seed:13,daily_time:'06:15',enabled:true});
   assert.deepEqual(requests,[requests[0],{...requests[0],enabled:false},requests[0]]);
   assert.deepEqual(writes,[]);
   assert.match(await page.locator('[data-schedules]').textContent(),/手机忙碌/);
