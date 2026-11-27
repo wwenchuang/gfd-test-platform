@@ -46,7 +46,7 @@ async function fixture(t, execute=true, edit=true) {
 test('workbench filters devices, starts an exact seeded run, polls real progress and stops',async t=>{
   const {page,writes}=await fixture(t);
   const device=page.getByLabel('执行手机',{exact:true});
-  await device.selectOption({label:'iPhone 13 · iOS · mac / phone'});
+  await device.selectOption({label:'iPhone 13 · iOS · 设备编号 phone'});
   assert.doesNotMatch(await device.textContent(),/旧 Runner/);
   await page.getByLabel('操作模式').selectOption('mixed');
   await page.getByText(/随机点击可能变更应用数据/).waitFor();
@@ -61,7 +61,7 @@ test('workbench filters devices, starts an exact seeded run, polls real progress
   assert.ok(writes[0].request_id);
   await page.getByRole('button',{name:'停止执行',exact:true}).click();
   await page.locator('[data-monkey-state]').getByText('已停止',{exact:true}).waitFor();
-  await page.getByRole('button',{name:/old/}).click();
+  await page.getByRole('button',{name:/应用崩溃 · iPhone 13/}).click();
   await page.getByRole('button',{name:'AI 分析事故证据'}).click();
   await page.getByText('已采集崩溃',{exact:true}).waitFor();
   await page.getByText('待验证原因',{exact:true}).waitFor();
@@ -69,7 +69,7 @@ test('workbench filters devices, starts an exact seeded run, polls real progress
 });
 test('view-only users can inspect incident evidence',async t=>{
   const {page,writes}=await fixture(t,false);
-  await page.getByRole('button',{name:/old/}).click();
+  await page.getByRole('button',{name:/应用崩溃 · iPhone 13/}).click();
   await page.getByText('application crash evidence',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'开始 Monkey 测试'}).count(),0);
   assert.equal(await page.getByRole('button',{name:'AI 分析事故证据'}).count(),0);
@@ -85,7 +85,7 @@ test('unknown submission survives reload and uses the exact same request id and 
     if(originals.length===1)return route.abort();
     return route.fallback();
   });
-  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · mac / phone'});
+  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · 设备编号 phone'});
   await page.getByRole('button',{name:'开始 Monkey 测试'}).click();
   await page.getByRole('button',{name:'核对上次提交'}).waitFor();
   await page.reload();
@@ -118,7 +118,7 @@ test('leaving an active detail cancels polling and stale devices cannot enter a 
   assert.doesNotMatch(await page.getByLabel('执行手机',{exact:true}).textContent(),/iPhone/);
   await page.unroute('**/api/ui-executions/devices?app_id=demo');
   await page.getByLabel('测试应用',{exact:true}).selectOption('demo');
-  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · mac / phone'});
+  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · 设备编号 phone'});
   let polls=0;
   await page.route('**/api/ui-monkey/runs/monkey_test',async route=>{polls++;return route.fallback();});
   await page.getByRole('button',{name:'开始 Monkey 测试'}).click();
@@ -134,7 +134,7 @@ test('lost runner retains evidence count and a reduced-motion user sees no pulse
   const run={app_id:'demo',target,run_id:'monkey_test',mode:'browse',event_count:20,executed:4,seed:2,status:'running',started_ns:10e9,updated_ns:75e9};
   let lost=false;
   await page.route('**/api/ui-monkey/runs/monkey_test',route=>route.fulfill({json:{ok:true,run:{...run,connection_lost:lost}}}));
-  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · mac / phone'});
+  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · 设备编号 phone'});
   await page.getByRole('button',{name:'开始 Monkey 测试'}).click();
   await page.getByText('已执行 4 / 20 个事件').waitFor();
   assert.equal(await page.locator('[data-elapsed]').textContent(),'已运行 1 分 5 秒');
@@ -160,7 +160,7 @@ test('manual duration accepts custom minutes and displays only measured elapsed 
     if(route.request().method()!=='POST')return route.fallback();
     body=route.request().postDataJSON();return route.fulfill({json:{ok:true,run}});
   });
-  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · mac / phone'});
+  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · 设备编号 phone'});
   await page.getByLabel('执行上限').selectOption('duration');
   await page.getByRole('button',{name:'24 小时',exact:true}).click();
   assert.equal(await page.getByLabel('持续时长（分钟）').inputValue(),'1440');
@@ -187,7 +187,7 @@ test('daily plans can be saved, reopened and toggled using the exact saved setti
     return route.fulfill({json:{ok:true,schedules:saved?[saved]:[]}});
   });
   await page.getByLabel('执行方式').selectOption('daily');
-  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · mac / phone'});
+  await page.getByLabel('执行手机',{exact:true}).selectOption({label:'iPhone 13 · iOS · 设备编号 phone'});
   await page.getByLabel('执行上限').selectOption('duration');
   await page.getByLabel('持续时长（分钟）').fill('90');
   await page.getByLabel('每日时间（北京时间）').fill('06:15');
@@ -239,4 +239,22 @@ test('execute without edit can launch manual runs but cannot write daily plans',
   await page.getByRole('button',{name:'开始 Monkey 测试'}).waitFor();
   await page.getByLabel('执行方式').selectOption('daily');
   assert.equal(await page.getByRole('button',{name:'保存每日方案'}).count(),0);
+});
+
+test('history identifies an offline phone and links its full serial to its model in details',async t=>{
+  const {page}=await fixture(t,false);
+  await page.route('**/api/ui-executions/devices?app_id=demo',route=>route.fulfill({json:{ok:true,devices:[
+    {target:{...target,runner_id:'another'},name:'同号的其他设备',connection_status:'ready',monkey_supported:true},
+    {target,name:'iPhone 13',connection_status:'offline',monkey_supported:false}
+  ]}}));
+  await page.locator('.ui-monkey [data-refresh]').click();
+  await page.waitForFunction(()=>document.querySelector('.ui-monkey [data-device]').textContent.includes('同号的其他设备'));
+  const row=page.locator('[data-history] button').first();
+  assert.match(await row.innerText(),/iPhone 13/);
+  assert.doesNotMatch(await row.innerText(),/同号的其他设备|old/);
+  await row.click();
+  assert.match(await page.locator('[data-summary]').innerText(),/iPhone 13 · iOS · 设备编号 phone/);
+  await page.route('**/api/ui-executions/devices?app_id=demo',route=>route.fulfill({json:{ok:true,devices:[]}}));
+  await page.locator('.ui-monkey [data-refresh]').click();
+  await page.getByRole('button',{name:/应用崩溃 · iOS 设备（机型未记录）/}).waitFor();
 });

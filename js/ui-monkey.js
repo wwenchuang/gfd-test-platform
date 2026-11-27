@@ -14,7 +14,7 @@
   function mount(page, {request, identity, canExecute, canEdit}) {
     const owner = identity();
     let disposed = false, generation = 0, detailSequence = 0, refreshSequence = 0, timer;
-    let app = '', devices = [], runs = [], selected = null, pending = null, busy = false;
+    let app = '', directory = [], devices = [], runs = [], selected = null, pending = null, busy = false;
     let schedules=[], schedulesReady=false, editing=null;
     const alive = () => !disposed && page.isConnected && identity() === owner;
     const q = selector => page.querySelector(selector);
@@ -94,12 +94,19 @@
       else count.value=item.event_count;
       mode.value=item.mode;seed.value=item.seed;
     }
+    function phoneName(target) {
+      const name = directory.find(device => sameTarget(device.target,target))?.name;
+      return name && name !== target.device_id ? name : platform(target)+' 设备（机型未记录）';
+    }
+    function phoneOption(target) {
+      return phoneName(target)+' · '+platform(target)+' · 设备编号 '+target.device_id;
+    }
     function editPlan(plan){
       if(!plan||!canEdit()||busy||pending)return;
       editing=plan;
       const index=devices.findIndex(d=>sameTarget(d.target,plan.target));
       deviceSelect.querySelector('option[value="saved"]')?.remove();
-      if(index<0)deviceSelect.append(new Option(plan.target.runner_id+' / '+plan.target.device_id+' · 未就绪','saved',true,true));
+      if(index<0)deviceSelect.append(new Option(phoneOption(plan.target)+' · 未就绪','saved',true,true));
       else deviceSelect.value=String(index+1);
       kind.value='daily';loadBudget(plan);dailyTime.value=plan.daily_time;enabled.value=String(plan.enabled);
       controls();kind.scrollIntoView({block:'nearest'});
@@ -113,9 +120,9 @@
       }
       for(const plan of schedules){
         const row=document.createElement('article'),title=document.createElement('strong'),info=document.createElement('p');
-        const name=devices.find(d=>sameTarget(d.target,plan.target))?.name;
-        title.textContent=plan.daily_time+' 北京时间 · '+(plan.enabled?'已启用':'已停用')+(name?' · '+name:'');
-        info.textContent=[platform(plan.target)+' · '+plan.target.runner_id+' / '+plan.target.device_id,
+        const name=phoneName(plan.target);
+        title.textContent=plan.daily_time+' 北京时间 · '+(plan.enabled?'已启用':'已停用')+' · '+name;
+        info.textContent=[platform(plan.target)+' · 设备编号 '+plan.target.device_id,
           plan.mode==='mixed'?'混合':'浏览',plan.duration_seconds?'计划 '+durationText(plan.duration_seconds):plan.event_count+' 个事件','种子 '+plan.seed].join(' · ');
         row.append(title,info);
         if(plan.enabled && plan.next_run_at){
@@ -169,9 +176,9 @@
         const title=document.createElement('strong'), meta=document.createElement('small');
         const started = Number(run.created_ns) / 1e6;
         const date = started ? new Date(started).toLocaleString('zh-CN',{hour12:false})+' · ' : '';
-        title.textContent = (labels[run.status] || run.status) + ' · ' + run.target.device_id;
+        title.textContent = (labels[run.status] || run.status) + ' · ' + phoneName(run.target);
         const result=run.duration_seconds?'计划 '+durationText(run.duration_seconds)+' · '+run.executed+' 个事件':run.executed+' / '+run.event_count;
-        meta.textContent = date + result + ' · ' + run.run_id;
+        meta.textContent = date + result + ' · 设备尾号 ' + run.target.device_id.slice(-4);
         button.append(title,meta);
         button.onclick = () => { if (!busy) open(run); };
         host.append(button);
@@ -184,8 +191,8 @@
       q('[data-monkey-state]').textContent = labels[run.status] || '状态待核对';
       q('[data-monkey-state]').classList.toggle('ui-activity-line',run.status==='running' && !run.connection_lost);
       q('[data-summary]').textContent = [appSelect.selectedOptions[0]?.textContent || run.app_id,
-        platform(run.target)+' · '+run.target.runner_id+' / '+run.target.device_id,
-        (run.mode==='mixed'?'混合':'浏览')+' · 种子 '+run.seed,run.run_id].join('　');
+        phoneOption(run.target),
+        (run.mode==='mixed'?'混合':'浏览')+' · 种子 '+run.seed,'运行编号 '+run.run_id].join('　');
       const meter = detail.querySelector('progress');
       const timed=Number(run.duration_seconds)>0, actual=Number.isInteger(run.elapsed_seconds)?run.elapsed_seconds:null;
       meter.max=timed?run.duration_seconds:run.event_count;
@@ -269,16 +276,17 @@
       const results=await Promise.allSettled([request('/ui-executions/devices'+query),request('/ui-monkey/runs'+query),request('/ui-monkey/schedules'+query)]);
       if(!alive() || currentApp!==app || version!==refreshSequence || busy)return;
       const [phones,history,plans]=results;
-      devices = phones.status==='fulfilled' ? (phones.value.devices || []).filter(d=>d.connection_status==='ready'&&d.monkey_supported===true) : [];
+      if(phones.status==='fulfilled')directory=phones.value.devices || [];
+      devices = phones.status==='fulfilled' ? directory.filter(d=>d.connection_status==='ready'&&d.monkey_supported===true) : [];
       deviceSelect.replaceChildren(option(devices.length?'选择手机':'暂无支持 Monkey 的就绪手机',''));
       devices.forEach((d,i)=>{
-        const o=option(d.name+' · '+platform(d.target)+' · '+d.target.runner_id+' / '+d.target.device_id,String(i+1));
+        const o=option(phoneOption(d.target),String(i+1));
         const target=pending?.target || previousDevice || editing?.target;
         o.selected=!!target && ['platform','runner_id','device_id'].every(k=>target[k]===d.target[k]);
         deviceSelect.append(o);
       });
-      if(pending && !deviceSelect.value)deviceSelect.append(new Option(pending.target.runner_id+' / '+pending.target.device_id,'pending',true,true));
-      if(!pending && editing && !deviceSelect.value && kind.value==='daily')deviceSelect.append(new Option(editing.target.runner_id+' / '+editing.target.device_id+' · 未就绪','saved',true,true));
+      if(pending && !deviceSelect.value)deviceSelect.append(new Option(phoneOption(pending.target),'pending',true,true));
+      if(!pending && editing && !deviceSelect.value && kind.value==='daily')deviceSelect.append(new Option(phoneOption(editing.target)+' · 未就绪','saved',true,true));
       schedulesReady=plans.status==='fulfilled'&&Array.isArray(plans.value.schedules);
       if(schedulesReady)schedules=plans.value.schedules.filter(p=>p.app_id===app&&p.target);
       renderPlans();q('[data-schedule-notice]').textContent=schedulesReady?'':'每日方案暂时无法读取，请刷新重试。';
@@ -291,7 +299,7 @@
     async function changeApp() {
       if(busy)return;
       app=appSelect.value;generation++;detailSequence++;clearTimeout(timer);
-      selected=null;devices=[];runs=[];pending=null;schedules=[];schedulesReady=false;editing=null;
+      selected=null;directory=[];devices=[];runs=[];pending=null;schedules=[];schedulesReady=false;editing=null;
       q('[data-schedule-notice]').textContent='';
       if(app){
         pending=uncertain.get(pendingKey()) || null;
