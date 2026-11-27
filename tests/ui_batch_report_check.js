@@ -266,3 +266,21 @@ test('ordinary test mounts failure investigation without requesting a release re
  assert.equal(mounts[0].node.hidden,false);assert.equal(calls.some(([,method])=>method==='POST'),false);
  view.dispose();assert.equal(disposed,1);
 });
+
+test('screenshot names can be saved and restored in an expanded report',async t=>{
+ const item={kind:'jpg',attempt_id:'try1',artifact_id:'c'.repeat(64),auto_name:'打印记录查看 · 图片 01',display_name:'打印记录查看 · 图片 01',custom_name:''};
+ const writes=[];const f=setup(t,async (path,options)=>{
+   if(path.endsWith('/evidence/name')){writes.push(options.body);return {ok:true,custom_name:options.body.name};}
+   if(path.endsWith('/evidence'))return {ok:true,can_rename:true,artifacts:[item]};
+   return {ok:true,report:{status:'not_requested'}};
+ });await tick();
+ f.node.querySelector('details').open=true;
+ f.node.querySelector('[data-evidence-rename]').click();
+ const field=f.node.querySelector('input');field.value='我的设备列表';
+ f.node.querySelector('form').dispatchEvent(new f.w.Event('submit',{cancelable:true}));await tick();
+ assert.equal(writes[0].attempt_id,'try1');assert.equal(writes[0].previous_name,'');
+ assert.equal(f.node.querySelector('.ui-evidence-item strong').textContent,'我的设备列表');
+ assert.equal(f.node.querySelector('details').open,true);
+ f.node.querySelector('[data-evidence-rename]').click();f.node.querySelector('[data-name-reset]').click();await tick();
+ assert.equal(writes[1].previous_name,'我的设备列表');assert.equal(f.node.querySelector('.ui-evidence-item strong').textContent,item.auto_name);
+});

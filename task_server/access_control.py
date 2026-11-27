@@ -261,6 +261,8 @@ class MainAccess:
         if self._draft_permission(method, path):
             # Private draft services verify the persisted owner and current app scope.
             return
+        if method == 'POST' and re.fullmatch(r'/api/ui-executions/[^/]+/evidence/name', path):
+            return
         if method in {'POST', 'DELETE'} and path == '/api/ui-executions/web-check':
             # This fixed GET-only browser check verifies its owner and scope again.
             return
@@ -390,6 +392,8 @@ class MainAccess:
         draft_permission = self._draft_permission(method, path)
         if draft_permission:
             return draft_permission
+        if method == 'POST' and re.fullmatch(r'/api/ui-executions/[^/]+/evidence/name', path):
+            return 'ui.edit'
         if method in {'POST', 'DELETE'} and path == '/api/ui-executions/web-check':
             return 'ui.view'
         if method == "POST" and re.fullmatch(r"/api/ui-executions/[^/]+/deliveries/[0-9a-f]{64}/retry", path):

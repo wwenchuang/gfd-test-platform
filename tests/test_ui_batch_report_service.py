@@ -214,3 +214,51 @@ def test_revisiting_existing_digest_updates_current_report_head(dispatch_env):
         assert b'transient error' not in reports.download_ui_batch_report(None,batch['ui_batch_id'],'md')[0]
         assert reports.get_ui_batch_report(None,batch['ui_batch_id'],second['report_revision'])['snapshot']['attempts'][0]['result']['report_upload_error'] == 'transient error'
         assert b'transient error' not in reports.download_ui_batch_report(None,batch['ui_batch_id'],'md',second['report_revision'])[0]
+
+
+def test_image_names_persist_separately_from_frozen_report(dispatch_env, monkeypatch):
+    from task_server import identity
+    from task_server.services import ui_batch_report_service as reports
+    from task_server.services.ui_screenshot_names import rename, source_caption
+
+    batch, job, event = completed()
+    bid = batch['ui_batch_id']
+    artifact = reports.save_ui_artifact(job['job_id'], event, b'shot', 'jpg', source_caption({'step_label':'打开首页'}))
+    body = dict(artifact, name='当前设备首页', previous_name='')
+    with actor_context(ACTORS['a']):
+        revision = reports.build_ui_batch_report(None, bid)['report_revision']
+        item = reports.get_ui_batch_evidence(None,bid)['artifacts'][0]
+        assert '打开首页' in item['auto_name']
+        with pytest.raises(PermissionError):
+            rename(None,bid,body)
+        original = identity.get_access_profile
+        monkeypatch.setattr(identity, 'get_access_profile', lambda n: dict(original(n),permissions=['ui.view','ui.edit']))
+        assert rename(None,bid,body)['custom_name'] == '当前设备首页'
+        with pytest.raises(ValueError, match='刷新'):
+            rename(None,bid,dict(body,name='过期编辑'))
+        with pytest.raises(FileNotFoundError):
+            rename(None,bid,dict(body,attempt_id='wrong'))
+        report = reports.get_ui_batch_report(None,bid,revision)
+        assert report['named_evidence'][0]['display_name'] == '当前设备首页'
+        assert report['report_revision'] == revision
+        assert rename(None,bid,dict(body,name='',previous_name='当前设备首页'))['custom_name'] == ''
+        assert reports.get_ui_batch_evidence(None,bid)['artifacts'][0]['display_name'] == item['auto_name']
+
+
+def test_replay_matches_image_bytes_without_assuming_upload_order(dispatch_env):
+    import base64
+    import json
+    from task_server.services import ui_batch_report_service as reports
+    batch,job,event=completed()
+    bid = batch['ui_batch_id']
+    data = {'executions':[{'tasks':[{'subType':'Tap','param':{'locate':{'description':'设备列表'}},
+            'uiContext':{'screenshot':{'id':'before'}},'recorder':[{'timing':'after-calling','screenshot':{'id':'after'}}]}]}]}
+    html = '<script type="midscene_web_dump">'+json.dumps(data)+'</script>'
+    for key in ('after','before'):
+        html += '<script type="midscene-image" data-id="'+key+'">data:image/jpeg;base64,'+base64.b64encode(key.encode()).decode()+'</script>'
+        reports.save_ui_artifact(job['job_id'],event,key.encode(),'jpg')
+    reports.save_ui_artifact(job['job_id'],event,html.encode(),'html')
+    with actor_context(ACTORS['a']):
+        images=[a for a in reports.get_ui_batch_evidence(None,bid)['artifacts'] if a['kind']=='jpg']
+        assert images[0]['display_name'].endswith('点击「设备列表」后')
+        assert images[1]['display_name'].endswith('点击「设备列表」前')

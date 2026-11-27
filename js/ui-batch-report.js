@@ -18,14 +18,14 @@
     }
     const artifactPath=item=>base+'/artifacts/'+item.artifact_id;
     async function downloadEvidence(item){
-      const filename=await options.download(artifactPath(item));
+      const filename=await options.download(artifactPath(item),item.display_name);
       return `已发起下载：${filename}。请在浏览器下载记录中确认。`;
     }
     async function loadEvidence(force=false){
       if(evidenceLoaded&&!force)return;
       const data=await options.request(base+'/evidence',{signal:controller?.signal});if(!valid())return;
       if(!data?.ok||!Array.isArray(data.artifacts))throw new Error(data?.error||'执行证据读取失败，请刷新重试。');
-      evidenceLoaded=true;renderEvidence(data.artifacts);
+      evidenceLoaded=true;renderEvidence(data.artifacts,data.can_rename);
     }
     function closePreview(){
       const previous=preview;if(!previous)return;preview=null;
@@ -56,22 +56,55 @@
         if(!stillCurrent())return;current.url=URL.createObjectURL(blob);img.src=current.url;
       }catch(error){fail(error.message||'图片暂时无法读取，请重试。');}
     }
-    function renderEvidence(items){
-      const signature=JSON.stringify(items||[]);if(signature===evidenceSignature)return;evidenceSignature=signature;
-      const host=node.querySelector('[data-report-evidence]');host.replaceChildren();
+    function editName(button,row,item,items){
+      if(row.querySelector('form'))return;
+      const form=make('form'),field=make('input'),save=make('button','保存名称'),cancel=make('button','取消'),reset=make('button','恢复自动名称'),message=make('small');
+      field.type='text';field.maxLength=100;field.required=true;field.value=(item.custom_name||item.display_name||'').slice(0,100);
+      field.setAttribute('aria-label','截图名称');form.className='ui-report-actions';
+      save.type='submit';reset.type=cancel.type='button';reset.dataset.nameReset='';
+      for(const control of [save,cancel,reset])control.className='btn-sm';
+      message.setAttribute('role','status');button.hidden=true;
+      const close=()=>{form.remove();button.hidden=false;button.focus();};
+      async function persist(name){
+        if(form.getAttribute('aria-busy')==='true')return;
+        form.setAttribute('aria-busy','true');save.disabled=cancel.disabled=reset.disabled=true;
+        try{
+          const response=await options.request(base+'/evidence/name',{method:'POST',body:{attempt_id:item.attempt_id,artifact_id:item.artifact_id,previous_name:item.custom_name||'',name}});
+          if(!valid()||!form.isConnected)return;
+          if(!response?.ok)throw new Error(response?.error||response?.code||'名称保存失败，请重试');
+          const updated={...item,custom_name:response.custom_name,display_name:response.custom_name||item.auto_name};
+          renderEvidence(items.map(entry=>entry===item?updated:entry),true);
+          const focus=Array.from(node.querySelectorAll('[data-evidence-rename]')).find(el=>el.dataset.evidenceRename===item.artifact_id&&el.dataset.attempt===item.attempt_id);
+          focus?.focus();text('[data-report-message]',name?'截图名称已保存。':'已恢复自动名称。');
+        }catch(error){if(valid())message.textContent=error.message||'保存失败，请重试';}
+        finally{form.removeAttribute('aria-busy');save.disabled=cancel.disabled=reset.disabled=false;}
+      }
+      cancel.onclick=close;reset.onclick=()=>persist('');
+      form.onsubmit=event=>{event.preventDefault();const name=field.value.trim();if(name)persist(name);else message.textContent='请输入截图名称';};
+      field.onkeydown=event=>{if(event.key==='Escape'&&!cancel.disabled){event.preventDefault();close();}};
+      form.append(field,save,cancel);if(item.custom_name)form.append(reset);form.append(message);row.append(form);field.focus();field.select();
+    }
+    function renderEvidence(items,editable=false){
+      const signature=JSON.stringify([items||[],editable]);if(signature===evidenceSignature)return;evidenceSignature=signature;
+      const host=node.querySelector('[data-report-evidence]');evidenceOpen=host.querySelector('details')?.open??evidenceOpen;host.replaceChildren();
       const artifacts=(items||[]).filter(item=>/^[a-f0-9]{64}$/.test(item.artifact_id)&&['html','jpg','png'].includes(item.kind));
       const count=artifacts.length;
       if(count){
         const evidence=make('details');evidence.open=evidenceOpen;evidence.append(make('summary',`执行证据（${count} 份）`));
-        for(const [heading,items]of [['执行截图',artifacts.filter(item=>item.kind!=='html')],['报告附件',artifacts.filter(item=>item.kind==='html')]]){
-          if(!items.length)continue;evidence.append(make('h4',heading));
+        for(const [heading,group]of [['执行截图',artifacts.filter(item=>item.kind!=='html')],['报告附件',artifacts.filter(item=>item.kind==='html')]]){
+          if(!group.length)continue;evidence.append(make('h4',heading));
           const list=make('div');list.className='ui-evidence-list';
-          for(const [index,item]of items.entries()){
-            const isImage=item.kind!=='html',label=isImage?`截图 ${index+1}`:`原始报告 ${index+1}`,row=make('div'),info=make('div'),buttons=make('div'),button=make('button',isImage?'下载图片':'下载网页文件');
-            row.className='ui-evidence-item';info.append(make('strong',label),make('small',isImage?`${item.kind.toUpperCase()} 图片 · 可在线预览`:'HTML 网页文件 · 不是图片'));
+          for(const [index,item]of group.entries()){
+            const isImage=item.kind!=='html',label=isImage?(item.display_name||`执行现场 · 图片 ${index+1}`):`原始报告 ${index+1}`,row=make('div'),info=make('div'),buttons=make('div'),button=make('button',isImage?'下载图片':'下载网页文件');
+            row.className='ui-evidence-item';info.append(make('strong',label),make('small',isImage?[item.capture_context,item.kind.toUpperCase()].filter(Boolean).join(' · '):'HTML 网页文件 · 不是图片'));
             button.type='button';button.className='btn-sm';button.dataset.artifactId=item.artifact_id;
             button.onclick=()=>action(button,()=>downloadEvidence(item));buttons.append(button);
-            if(isImage){const open=make('button',`预览截图 ${index+1}`);open.type='button';open.className='btn-sm';open.dataset.evidencePreview=item.artifact_id;open.onclick=()=>previewImage(item,label);buttons.append(open);}
+            if(isImage){const open=make('button','预览原图');open.type='button';open.className='btn-sm';open.dataset.evidencePreview=item.artifact_id;open.setAttribute('aria-label','预览：'+label);open.onclick=()=>previewImage(item,label);buttons.append(open);}
+            if(isImage&&editable){
+              const rename=make('button','改名');rename.type='button';rename.className='btn-sm';
+              rename.dataset.evidenceRename=item.artifact_id;rename.dataset.attempt=item.attempt_id;
+              rename.setAttribute('aria-label','修改截图名称：'+label);rename.onclick=()=>editName(rename,row,item,artifacts);buttons.append(rename);
+            }
             row.append(info,buttons);list.append(row);
           }evidence.append(list);
         }host.append(evidence);
@@ -86,7 +119,7 @@
       }
     }
     function render(report){
-      if(status==='ready'&&report.status==='ready'&&revision&&revision===String(report.report_revision||''))return;
+      if(status==='ready'&&report.status==='ready'&&revision&&revision===String(report.report_revision||'')){if(report.named_evidence)renderEvidence(report.named_evidence,report.can_rename);return;}
       const focused=document.activeElement,previousEvidence=node.querySelector('details');
       if(node.contains(focused)){reportFocus=focused;evidenceFocus=focused===previousEvidence?.querySelector('summary')?'summary':focused.dataset.evidencePreview?'preview:'+focused.dataset.evidencePreview:focused.dataset.artifactId||null;}
       else if(focused!==document.body){reportFocus=null;evidenceFocus=null;}
@@ -118,7 +151,7 @@
         host.append(make('h3','🎯 覆盖场景及结果'));container.append(table);host.append(container);
         if(view.concerns?.length){host.append(make('h3','⚠️ 需关注事项'));const list=make('ul');for(const item of view.concerns)list.append(make('li',item));host.append(list);}
       }
-      renderEvidence(snapshot.artifacts||[]);
+      renderEvidence(report.named_evidence||snapshot.artifacts||[],report.can_rename);
       restoreFocus();
       if(!revealed){revealed=true;node.scrollIntoView?.({block:'start',behavior:'smooth'});}
     }

@@ -49,6 +49,11 @@ def _connect():
         CREATE INDEX IF NOT EXISTS ui_evidence_batch ON ui_report_evidence(ui_batch_id,created_ns);
         CREATE INDEX IF NOT EXISTS ui_reports_pending ON batches(created_ns)
             WHERE execution_settled=1 AND report_status='pending' AND report_requested_ns IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS ui_screenshot_indexes (attempt_id TEXT NOT NULL, artifact_id TEXT NOT NULL,
+            PRIMARY KEY(attempt_id,artifact_id));
+        CREATE TABLE IF NOT EXISTS ui_screenshot_names (
+            attempt_id TEXT NOT NULL, artifact_id TEXT NOT NULL, caption TEXT NOT NULL DEFAULT '',
+            custom_name TEXT NOT NULL DEFAULT '', PRIMARY KEY(attempt_id,artifact_id));
         CREATE TABLE IF NOT EXISTS ui_report_chunks (
             job_id TEXT NOT NULL, upload_id TEXT NOT NULL, part INTEGER NOT NULL,
             total INTEGER NOT NULL, content BLOB NOT NULL, created_ns INTEGER NOT NULL,
@@ -89,7 +94,7 @@ def _artifact_metadata(batch_id, artifact_id, kind, attempt_id=None):
             'url':f'/api/ui-executions/{batch_id}/artifacts/{artifact_id}'}
 
 
-def save_ui_artifact(job_id, credentials, content, kind):
+def save_ui_artifact(job_id, credentials, content, kind, caption=''):
     from task_server.config import MAX_UPLOAD_BODY_SIZE
     row = validate_ui_upload(job_id,credentials)
     if kind not in {'html','png','jpg'} or not content or len(content) > MAX_UPLOAD_BODY_SIZE:
@@ -104,6 +109,10 @@ def save_ui_artifact(job_id, credentials, content, kind):
                    (row['ui_batch_id'],artifact_id,kind,content))
         inserted = db.execute('INSERT OR IGNORE INTO ui_report_evidence VALUES(?,?,?,?)',
                              (row['ui_batch_id'],row['attempt_id'],artifact_id,time.time_ns())).rowcount
+        if caption and kind in ('png','jpg'):
+            db.execute("""INSERT INTO ui_screenshot_names(attempt_id,artifact_id,caption) VALUES(?,?,?)
+                ON CONFLICT(attempt_id,artifact_id) DO UPDATE SET caption=excluded.caption
+                WHERE ui_screenshot_names.caption=''""",(row['attempt_id'],artifact_id,caption))
         if kind == 'html':
             db.execute('DELETE FROM ui_report_chunks WHERE job_id=?',(job_id,))
         if inserted:
@@ -158,10 +167,11 @@ def _evidence(db,batch_id):
 
 def get_ui_batch_evidence(actor,batch_id):
     """Read the private manifest without rendering a report or reading its blobs."""
-    _batch(actor,batch_id)
+    from .ui_screenshot_names import can_rename, named_evidence
+    batch = _batch(actor,batch_id)
     db = _connect()
     try:
-        return {'ui_batch_id':batch_id,'artifacts':_evidence(db,batch_id)}
+        return {'ui_batch_id':batch_id,'artifacts':named_evidence(db,batch_id),'can_rename':can_rename(actor,batch)}
     finally:
         db.close()
 
@@ -307,6 +317,11 @@ def get_ui_batch_report(actor,batch_id,revision=None):
     try:
         result = _report(db,batch_id,revision)
         if not revision: result['status'] = batch['report_status']
+        if result.get('snapshot'):
+            from .ui_screenshot_names import can_rename, named_evidence
+            pinned = {(i.get('attempt_id'),i['artifact_id']) for i in result['snapshot'].get('artifacts',[])}
+            result['named_evidence'] = [i for i in named_evidence(db,batch_id) if (i['attempt_id'],i['artifact_id']) in pinned]
+            result['can_rename'] = can_rename(actor,batch)
         return result
     finally:
         db.close()

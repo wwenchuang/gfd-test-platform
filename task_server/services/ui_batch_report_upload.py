@@ -113,7 +113,9 @@ def private_callback_event(job_id,sequence,event):
                 except (ValueError,TypeError): continue
                 if len(content) > 2*1024*1024: continue
                 kind = 'png' if content.startswith(b'\x89PNG\r\n\x1a\n') else 'jpg' if content.startswith(b'\xff\xd8\xff') else None
-                if kind: save_ui_artifact(job_id,event,content,kind)
+                if kind:
+                    from .ui_screenshot_names import source_caption
+                    save_ui_artifact(job_id,event,content,kind,source_caption(shot))
     db = _connect()
     try:
         artifact = db.execute('''SELECT e.artifact_id FROM ui_report_evidence e JOIN ui_report_artifacts a

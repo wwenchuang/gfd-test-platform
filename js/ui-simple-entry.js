@@ -1302,7 +1302,7 @@ async function loadUiBatchImage(path,kind,{signal}={}){
     ensureCurrent();abort();throw error;
   }finally{clearTimeout(timeout);signal?.removeEventListener('abort',abort);uiSimplePictureRequests.delete(controller);}
 }
-async function downloadUiBatchFile(path){
+async function downloadUiBatchFile(path,imageName){
   const epoch=uiSimpleEpoch,identity=uiSimpleIdentity(),url=new URL(path,window.location.origin);
   const match=url.pathname.match(/^\/ui-executions\/uib_[A-Za-z0-9_]+\/(report\/download|artifacts\/[a-f0-9]{64})$/);
   const format=url.searchParams.get('format');
@@ -1320,7 +1320,9 @@ async function downloadUiBatchFile(path){
     if(Number(response.headers.get('content-length'))>64*1024*1024)throw new Error('文件过大，请联系管理员导出');
     const blob=await response.blob();if(!valid())throw new Error('下载已取消');
     if(blob.size>64*1024*1024)throw new Error('文件过大，请联系管理员导出');
-    const filename=responseAttachmentFilename(response,'测试报告.'+(format||({ 'image/png':'png','image/jpeg':'jpg' }[mime]||'html')));
+    const extension={'image/png':'png','image/jpeg':'jpg'}[mime];
+    const label=extension&&typeof imageName==='string'&&imageName.replace(/[<>:"/\\|?*\x00-\x1f\u202a-\u202e\u2066-\u2069]/g,' ').trim().slice(0,100);
+    const filename=label?label+'.'+extension:responseAttachmentFilename(response,'测试报告.'+(format||({ 'image/png':'png','image/jpeg':'jpg' }[mime]||'html')));
     const src=URL.createObjectURL(blob),link=document.createElement('a');link.href=src;link.download=filename;document.body.append(link);link.click();link.remove();
     setTimeout(()=>URL.revokeObjectURL(src),60000);return filename;
   }finally{clearTimeout(timeout);uiSimpleDownloads.delete(controller);}

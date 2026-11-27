@@ -6959,6 +6959,12 @@ def _get_ui_batch_evidence(handler, qs, match):
     _ui_report_response(handler, lambda: get_ui_batch_evidence(None, match.group(1)), match.group(1))
 
 
+@route_post_regex(r"^/api/ui-executions/([^/]+)/evidence/name$")
+def _rename_ui_screenshot(handler, qs, match):
+    from .services.ui_screenshot_names import rename
+    _ui_report_response(handler, lambda: rename(None, match.group(1), handler._body()), match.group(1))
+
+
 @route_get_regex(r"^/api/ui-executions/([^/]+)/report/download$")
 def _get_ui_batch_report_download(handler, qs, match):
     from .services.ui_batch_report_service import download_ui_batch_report
