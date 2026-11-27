@@ -90,7 +90,7 @@ function applyRestrictedActionControls() {
 }
 
 const WORKFLOW_PERMISSIONS = {
-  mobile_tracking: 'ui.view', ui_start: 'ui.view', ui_library: 'ui.view', ui_reports: 'ui.view',
+  ui_schedules: 'ui.view', mobile_tracking: 'ui.view', ui_start: 'ui.view', ui_library: 'ui.view', ui_reports: 'ui.view',
   identity: 'auth.manage', ai_practice: 'platform.configure', config: 'platform.configure', app_config: 'platform.configure',
   sonic_config: 'platform.configure', system_config: 'platform.configure', feishu_config: 'platform.notify',
   dashboard: 'ui.execute', agent: 'ui.execute', agent_confirm: 'ui.execute', agent_history: 'ui.view',
@@ -101,7 +101,8 @@ const WORKFLOW_PERMISSIONS = {
 
 function canAccessWorkflow(key) {
   if (key === "ai_billing") return currentAccessProfile?.is_superuser === true;
-  if (key === 'mobile_tracking') {
+  if (key === 'mobile_tracking' || key === 'ui_schedules') {
+    if (key === 'ui_schedules' && (typeof isUiSimpleAvailable !== 'function' || !isUiSimpleAvailable(key))) return false;
     const apps=currentAccessProfile?.scope?.ui_apps;
     return hasPermission('ui.view') && (currentAccessProfile?.is_superuser===true || apps==='*' || (Array.isArray(apps)&&apps.includes('com.kfb.model')));
   }

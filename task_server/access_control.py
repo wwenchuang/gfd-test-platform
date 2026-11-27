@@ -11,6 +11,15 @@ def _mcp_route(method, path):
             (method in {'GET','HEAD'} and path in {'/api/platform/mcp/runs','/api/platform/mcp/acceptance','/api/platform/mcp/junit','/api/platform/mcp/recovery-drill','/api/platform/mcp/report','/api/platform/mcp/diagnosis'}))
 
 
+def _schedule_permission(method, path):
+    if method in {'GET', 'HEAD'} and (path == '/api/ui-schedules' or
+            re.fullmatch(r'/api/ui-schedules/(android|ios)/options', path)):
+        return 'ui.view'
+    if method == 'POST' and re.fullmatch(r'/api/ui-schedules/(android|ios)(/run)?', path):
+        return 'ui.edit'
+    return None
+
+
 class AccessDenied(PermissionError):
     pass
 
@@ -226,6 +235,11 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
+        if _schedule_permission(method, path):
+            if method == 'POST':
+                self.require('ui.execute')
+            self._require_record({'app_package': 'com.kfb.model'})
+            return
         if method == 'POST' and path == '/api/mobile-tracking':
             return  # handler enforces app scope and run ownership
         if _mcp_route(method, path) or is_knowledge_read_route(method, path):
@@ -355,6 +369,9 @@ class MainAccess:
             return 'ui.execute'
         if _mcp_route(method, path) or is_knowledge_read_route(method, path):
             return "ui.view"
+        schedule_permission = _schedule_permission(method, path)
+        if schedule_permission:
+            return schedule_permission
         draft_permission = self._draft_permission(method, path)
         if draft_permission:
             return draft_permission
@@ -402,6 +419,8 @@ class MainAccess:
     def filter(self, path, payload):
         if not isinstance(payload, dict):
             return payload
+        if _schedule_permission('GET', path):
+            return payload  # The schedule service authorizes the fixed app before reading cases.
         if path == "/api/platform/mcp/runs":
             return payload  # Service already filtered the history by owner and current scope.
         result = dict(payload)

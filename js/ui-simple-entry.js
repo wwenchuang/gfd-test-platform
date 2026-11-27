@@ -4,6 +4,7 @@ let uiSimpleEvidenceAvailable=false;
 let uiSimpleEpoch=0;
 let uiCaseCreationEpoch=0;
 let uiCaseDraftHandle=null;
+let uiSchedulePage=null;
 let uiSimpleStartSelection=null;
 let uiStartCreationIntent=null;
 const uiSimplePictures=new Map();
@@ -14,14 +15,16 @@ const uiSimpleDownloads=new Set();
 let uiCatalogCleanup=null;
 let uiRequirementCleanup=null;
 let uiPracticeResultCleanup=null;
-function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports'].includes(key);}
+function isUiSimpleWorkflow(key){return ['ui_start','ui_library','ui_reports','ui_schedules'].includes(key);}
 function isUiSimpleAvailable(key){return key==='ui_reports'?uiSimpleEvidenceAvailable:uiSimpleEnabled;}
 function uiSimpleIdentity(){return String(currentAccessProfile?.user_id||'');}
 function confirmUiCaseDraftLeave(){
+  if(uiSchedulePage)return uiSchedulePage.confirmLeave();
   if(!uiCaseDraftHandle?.hasUnsavedChanges?.())return true;
   return window.confirm('当前用例有未保存的修改，离开后这些修改可能丢失。确认离开吗？');
 }
 function leaveUiSimpleWorkflow({discardReportIntent=false}={}){
+  uiSchedulePage?.dispose();uiSchedulePage=null;
   uiCatalogCleanup?.();uiCatalogCleanup=null;
   uiRequirementCleanup?.();uiRequirementCleanup=null;
   uiPracticeResultCleanup?.();uiPracticeResultCleanup=null;
@@ -123,6 +126,12 @@ function showUiSimpleWorkflow(){
   document.getElementById('app')?.classList.add('ui-simple-active');
   const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
   const page=document.createElement('div');page.className='ui-simple-page';area.append(page);toggleLibrary(false);
+  if(activeWorkflow==='ui_schedules'){
+    if(!canAccessWorkflow('ui_schedules'))return false;
+    uiSchedulePage=window.UiSchedules.mount(page,{request:apiRequest,identity:uiSimpleIdentity,
+      canEdit:()=>hasPermission('ui.edit')&&hasPermission('ui.execute')});
+    return true;
+  }
   const reportIntent=activeWorkflow==='ui_reports'?uiSimpleReportIntent():null,identity=uiSimpleIdentity();
   const entrySelection=activeWorkflow==='ui_start'&&uiSimpleStartSelection?.identity===identity?uiSimpleStartSelection.selection:null;
   uiSimpleStartSelection=null;

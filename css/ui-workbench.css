@@ -328,3 +328,31 @@
 .ui-device-snapshot-dialog header strong{min-width:0;overflow-wrap:anywhere;color:#acf1de}
 .ui-device-snapshot-dialog header button{flex:none}
 .ui-device-snapshot-dialog img{display:block;margin:auto;width:auto;height:auto;max-width:100%;max-height:calc(94dvh - 72px);object-fit:contain}
+
+.ui-nav-section-label{display:none;color:var(--text-muted,#91a2b0);font-size:11px;letter-spacing:.08em;padding:10px 12px 2px}
+.ui-nav-section-label:has(~[data-workflow="ui_schedules"]:not([hidden])){display:block}
+.ui-schedules [hidden]{display:none!important}
+.ui-schedules [data-message]{position:sticky;top:0;z-index:1;margin:8px 0;padding:8px 12px;border-radius:6px;background:#20323b;color:#a9e2d2}
+.ui-schedules [data-message]:empty{display:none}
+.ui-schedules [data-message].schedule-error{color:#ffc59b}
+.schedule-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,265px),1fr));gap:12px}
+.schedule-cards article,.schedule-editor{padding:18px;border:1px solid #354751;border-radius:10px;background:#19262e}
+.schedule-cards h2,.schedule-editor h2{margin:0 0 8px;font-size:18px}
+.schedule-cards strong{font-size:27px;font-variant-numeric:tabular-nums}
+.schedule-cards p{color:#afc2cc;margin:6px 0;font-size:13px;overflow-wrap:anywhere}
+.schedule-cards button{margin-top:6px}
+.schedule-editor{margin-top:16px}
+.schedule-editor .ui-simple-filters{display:grid;grid-template-columns:minmax(150px,.7fr) minmax(230px,2fr);margin:12px 0}
+.schedule-baselines,.schedule-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.schedule-editor h3{font-size:15px;margin:8px 0}
+.schedule-baselines span,.schedule-editor ul{color:#b5c8d2;font-size:13px}
+.schedule-search{margin-left:auto;font-size:13px;color:#b5c8d2}
+.schedule-search input{margin-left:7px;padding:7px;background:#142028;border:1px solid #3a4c58;color:#edf3f6;border-radius:6px}
+.schedule-cases{max-height:330px;overflow:auto;margin:10px 0;border-block:1px solid #354751}
+.schedule-cases label{display:flex;gap:10px;align-items:center;padding:8px 4px;color:#d9e6ed;overflow-wrap:anywhere}
+.schedule-cases label+label{border-top:1px solid #2a3941}
+.schedule-cases input{flex:none;width:18px;height:18px}
+.schedule-actions{justify-content:flex-end}
+.schedule-editor .btn-primary{background:#83ebcb;color:#102e28;border:0;border-radius:8px;padding:9px 18px}
+.schedule-editor .btn-primary:disabled{opacity:.5}
+@media(max-width:760px){.schedule-editor .ui-simple-filters{grid-template-columns:minmax(0,1fr)}.schedule-search{width:100%;margin:0}}

@@ -140,6 +140,10 @@ if [ -d "${SCRIPT_DIR}/load-agent" ]; then
   find "${APP_DIR}/deploy/load-agent" -type f ! -name "*.sh" -exec chmod 0644 {} \;
   chown -R "${USER_NAME}:${GROUP_NAME}" "${APP_DIR}/deploy/load-agent"
 fi
+# Running timers reference these release files; selections live in /var/lib.
+for script in 3d-daily/run.py 3d-ios-nightly/nightly.py ui-schedules/dispatch.py ui-schedules/seed.py ui-schedules/install.sh; do
+  install -D -m 0755 "${SCRIPT_DIR}/${script}" "${APP_DIR}/deploy/${script}"
+done
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/midscene-upload.py" "${APP_DIR}/midscene-upload.py"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/midscene_upload_compat.py" "${APP_DIR}/midscene_upload_compat.py"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/task-manager.html" "${APP_DIR}/task-manager.html"

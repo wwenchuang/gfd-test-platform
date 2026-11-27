@@ -25,7 +25,38 @@ MANIFEST = Path(__file__).with_name('baselines.json')
 STATE = Path('/var/lib/midscene-3d-daily')
 
 
-def plan(rows):
+def schedule_snapshot(platform):
+    path = os.environ.get('MIDSCENE_UI_SCHEDULE_SNAPSHOT')
+    if path is None:
+        return None
+    config = json.loads(Path(path).read_text(encoding='utf-8'))
+    target = config['target']
+    if (config['platform'] != platform or set(target) != {'platform', 'device_id', 'runner_id'}
+            or target['platform'] != platform or not all(isinstance(v, str) and v.strip() for v in target.values())
+            or not config['version'] or not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', config['time'])
+            or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', config['scheduled_date'])):
+        raise ValueError('invalid_schedule_snapshot')
+    start = datetime.fromisoformat(config['scheduled_date'] + 'T' + config['time']).replace(tzinfo=LOCAL)
+    manual = {}
+    if 'manual_run_id' in config:
+        if not re.fullmatch(r'manual-[a-f0-9]{32}', config['manual_run_id']):
+            raise ValueError('invalid_manual_run_id')
+        start = datetime.fromisoformat(config['started_at']).astimezone(LOCAL)
+        manual = {key: config[key] for key in ('manual_run_id', 'requested_by')}
+    rows = [dict(row, sha256=row.get('revision') or row['sha256'],
+                 name=row.get('task_name') or row.get('name') or Path(row['filename']).stem)
+            for row in config['cases']]
+    if not rows or not any(not row.get('deferred') for row in rows):
+        raise ValueError('empty_schedule_selection')
+    digest = hashlib.sha256(json.dumps(config, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    metadata = {'target': target, 'schedule_version': config['version'],
+                'schedule_digest': digest, 'operate_at': start.isoformat(), **manual}
+    if config.get('selection_error'):
+        metadata['selection_error'] = config['selection_error']
+    return start, rows, metadata
+
+
+def plan(rows, selected=False):
     if not isinstance(rows, list):
         raise ValueError('invalid_baseline_manifest')
     by_file = {}
@@ -38,17 +69,24 @@ def plan(rows):
             raise ValueError('invalid_baseline_manifest')
         by_file[row['filename']] = row
         ids.add(row['case_id'])
-    if not {DRAGON, *SMOKE} <= by_file.keys():
+    if not selected and not {DRAGON, *SMOKE} <= by_file.keys():
         raise ValueError('missing_required_baselines')
     remaining = [row for row in rows if row['filename'] not in (*SMOKE, *MODEL_FUNCTIONS, DRAGON)]
-    phases = [('smoke', [by_file[name] for name in SMOKE])]
+    previews = [by_file[name] for name in MODEL_FUNCTIONS if name in by_file]
+    smoke = [by_file[name] for name in SMOKE if name in by_file]
+    if not smoke:
+        # Keep the physical print in its own guarded final stage.
+        smoke = (remaining + previews)[:3]
+        remaining = [row for row in remaining if row not in smoke]
+        previews = [row for row in previews if row not in smoke]
+    phases = [('smoke', smoke)] if smoke else []
     for start in range(0, len(remaining), MAX_BATCH_CASES):
         name = 'remaining' if start == 0 else f'remaining_{start // MAX_BATCH_CASES + 1}'
         phases.append((name, remaining[start:start + MAX_BATCH_CASES]))
-    previews = [by_file[name] for name in MODEL_FUNCTIONS if name in by_file]
     if previews:
         phases.append(('previews', previews))
-    phases.append(('dragon', [by_file[DRAGON]]))
+    if DRAGON in by_file:
+        phases.append(('dragon', [by_file[DRAGON]]))
     return phases
 
 
@@ -170,33 +208,21 @@ def trusted_actor():
     return actor
 
 
-def phone_target():
-    from task_server.services import job_service, sonic_service
+def phone_target(expected=None):
+    from task_server.services import sonic_service
     from task_server.services.ui_execution_catalog import get_ui_devices
-    from task_server.services.ui_execution_store import UiExecutionStore
-    devices = [d for d in get_ui_devices(None, APP)['devices'] if d['target']['device_id'] == PHONE
+    from task_server.services.ui_schedule_service import schedule_device_busy
+    phone = expected['device_id'] if expected else PHONE
+    devices = [d for d in get_ui_devices(None, APP)['devices'] if d['target']['device_id'] == phone
                and d['target']['platform'] == 'android' and d['connection_status'] != 'offline']
-    if len(devices) != 1 or devices[0]['connection_status'] != 'ready':
+    if (len(devices) != 1 or devices[0]['connection_status'] != 'ready'
+            or (expected and devices[0]['target'] != expected)):
         return None
     status = sonic_service.sonic_list_device_statuses(force=True)
-    if not status.get('__source__', {}).get('available') or status.get(PHONE, {}).get('usage_status') != 'idle':
+    if not status.get('__source__', {}).get('available') or status.get(phone, {}).get('usage_status') != 'idle':
         return None
-    store = UiExecutionStore()
-    if store.device_reserved(PHONE):
+    if schedule_device_busy(phone):
         return None
-    # Pending UI work can exist before the first device lease is acquired.
-    db = store._connect()
-    try:
-        if db.execute("""SELECT 1 FROM case_attempts a JOIN batches b USING(ui_batch_id)
-                WHERE a.device_id=? AND b.execution_settled=0 LIMIT 1""", (PHONE,)).fetchone():
-            return None
-    finally:
-        db.close()
-    for job in job_service._read_jobs_raw(use_cache=False):
-        device_id = job.get('device_id') or job.get('deviceId')
-        status = job_service.normalize_job_status(job.get('status') or job.get('state'))
-        if device_id == PHONE and status in {'pending', 'dispatched', 'running'}:
-            return None
     return devices[0]['target']
 
 
@@ -251,26 +277,39 @@ def watch(batch_id, deadline, dragon=False):
         time.sleep(5 if dragon and not attempts[0]['started_ns'] else 15)
 
 
+def batch_request(target, rows):
+    return {'app_id': APP, 'targets': [target],
+            'cases': [{'case_id': row['case_id'], 'revision': row['sha256']} for row in rows],
+            'release_report': {'enabled': True}, 'notifications': {'enabled': False}}
+
+
+def resume_batch(previous, record, rows):
+    if record.get('schedule_digest'):
+        from task_server.services.ui_execution_service import _normalize_request, _request_hash
+        request = batch_request(record['target'], rows)
+        if previous['request_hash'] != _request_hash(_normalize_request(request)):
+            raise ValueError('scheduled_batch_conflict')
+    return previous['ui_batch_id']
+
+
 def run_stages(record, path, phases, deadline):
     from task_server.services.ui_execution_service import create_ui_batch, preflight_ui_batch
     from task_server.services.ui_execution_store import UiExecutionStore
     for name, group in phases:
-        key = 'daily-3d-' + record['date'] + '-' + name
+        key = 'daily-3d-' + record.get('manual_run_id', record['date']) + '-' + name
         previous = UiExecutionStore().find_idempotent(record['owner_id'], key)
         if previous:
-            batch_id = previous['ui_batch_id']
+            batch_id = resume_batch(previous, record, group)
         else:
             if now() >= deadline:
                 return 'dispatch_window_ended'
-            target = phone_target()
+            target = phone_target(record['target']) if record.get('schedule_digest') else phone_target()
             if not target:
                 return 'skipped_phone_busy_or_unavailable_' + name
             if record.get('target') and target != record['target']:
                 return 'runner_changed'
             record['target'] = target
-            request = {'app_id': APP, 'targets': [target],
-                       'cases': [{'case_id': r['case_id'], 'revision': r['sha256']} for r in group],
-                       'release_report': {'enabled': True}, 'notifications': {'enabled': False}}
+            request = batch_request(target, group)
             preflight = preflight_ui_batch(None, request)
             if not preflight['ready']:
                 record['blockers'] = sorted({b['code'] for b in preflight['blockers']})
@@ -309,7 +348,7 @@ def daily_card(record, rows, base):
     for batch in record.get('outcomes', {}).values():
         outcomes.update(batch)
     passed = sum(outcomes.get(r['case_id']) == 'passed' for r in rows)
-    failures = [Path(r['filename']).stem for r in rows if outcomes.get(r['case_id']) == 'failed']
+    failures = [r.get('name') or Path(r['filename']).stem for r in rows if outcomes.get(r['case_id']) == 'failed']
     status = record['status']
     reasons = {
         'passed': '全部通过', 'finished_with_failures': '存在失败用例',
@@ -320,12 +359,17 @@ def daily_card(record, rows, base):
         'stopped_smoke': '冒烟阶段未满足继续执行条件', 'error': '调度中断，需查看工作台记录',
     }
     reason = reasons.get(status, '回归提前结束')
+    if status == 'selection_blocked':
+        reason = record['selection_error']
     if status.startswith('skipped_phone_busy_or_unavailable_'):
         reason = '测试手机忙或离线'
     if status.startswith('preflight_blocked_'):
         reason = '工作台执行前检查未通过'
     text = (f"计划 {len(rows)} 条　通过 {passed}　失败 {len(failures)}　未完成 {len(rows)-passed-len(failures)}"
             + ('\n失败用例：' + '、'.join(failures) if failures else ''))
+    if record.get('schedule_version'):
+        target = record['target']
+        text += f"\n北京时间 {record['operate_at'][11:16]} · Android · {target['runner_id']} / {target['device_id']}"
     elements = [{'tag': 'div', 'text': {'tag': 'plain_text', 'content': text}}]
     batches = record.get('batches', {})
     labels = {'smoke': '冒烟', 'remaining': '基础功能', 'previews': '建模与导入', 'dragon': '关节龙实打'}
@@ -337,7 +381,8 @@ def daily_card(record, rows, base):
             elements.append({'tag': 'markdown', 'content': ' · '.join(links)})
     if batches and len(elements) == 1:
         elements.append({'tag': 'div', 'text': {'tag': 'plain_text', 'content': '查看详情：测试工作台 → UI 测试报告'}})
-    title = f"{record['date']} 智小白 3D 每日 UI 回归｜{reason}"
+    kind = '手动 UI 回归' if record.get('manual_run_id') else '每日 UI 回归'
+    title = f"{record['date']} 智小白 3D {kind}｜{reason}"
     return {'msg_type': 'interactive', 'card': {'header': {'template': 'green' if status == 'passed' else 'orange',
             'title': {'tag': 'plain_text', 'content': title}}, 'elements': elements}}
 
@@ -401,8 +446,9 @@ def main():
     from task_server.services.ui_execution_contract import require_ui_actor
     from task_server.services.ui_execution_service import _require_ui_admission
 
-    rows = json.loads(MANIFEST.read_text(encoding='utf-8'))
-    phases = plan(rows)
+    snapshot = schedule_snapshot('android')
+    rows = snapshot[1] if snapshot else json.loads(MANIFEST.read_text(encoding='utf-8'))
+    phases = plan(rows, selected=bool(snapshot))
     actor = trusted_actor()
     with actor_context(actor):
         require_ui_actor(permission='ui.view', app_id=APP)
@@ -432,8 +478,10 @@ def main():
             print(f'validated {len(rows)} published revisions, UI admission and schedule owner')
             return
         clock = now()
-        start = clock.replace(hour=5, minute=0, second=0, microsecond=0)
-        path = STATE / (clock.date().isoformat() + '.json')
+        start = snapshot[0] if snapshot else clock.replace(hour=5, minute=0, second=0, microsecond=0)
+        metadata = snapshot[2] if snapshot else {}
+        deadline = start + timedelta(hours=19)
+        path = STATE / (metadata.get('manual_run_id', start.date().isoformat()) + '.json')
         with (STATE / 'schedule.lock').open('a') as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -441,25 +489,28 @@ def main():
                 return
             if path.exists():
                 record = json.loads(path.read_text(encoding='utf-8'))
-                if record['owner_id'] != actor['user_id']:
+                if record['owner_id'] != actor['user_id'] or record.get('schedule_digest') != metadata.get('schedule_digest'):
                     return
                 if record.get('final'):
                     if record.get('notify_daily'):
                         deliver_daily(record, path, rows)
                     return
             else:
-                if not start <= clock < start + timedelta(minutes=2):
+                if not start <= clock < (deadline if snapshot else start + timedelta(minutes=2)):
                     raise ValueError('outside_daily_start_window')
-                record = {'date': str(clock.date()), 'owner_id': actor['user_id'], 'created_at': clock.isoformat(),
-                          'operate_at': start.isoformat(), 'status': 'scheduled', 'batches': {}, 'notify_daily': True}
+                record = {'date': str(start.date()), 'owner_id': actor['user_id'], 'created_at': clock.isoformat(),
+                          'operate_at': start.isoformat(), 'status': 'scheduled', 'batches': {}, 'notify_daily': True, **metadata}
                 write_record(path, record)
             delay = (datetime.fromisoformat(record['operate_at']) - now()).total_seconds()
             if delay > 0:
                 time.sleep(delay)
             try:
                 _require_ui_admission()
-                validate_published(rows)
-                result = run_stages(record, path, phases, (start + timedelta(days=1)).replace(hour=0, minute=0))
+                if record.get('selection_error'):
+                    result = 'selection_blocked'
+                else:
+                    validate_published(rows)
+                    result = run_stages(record, path, phases, deadline)
             except Exception as error:
                 # Preserve last known batch IDs if a submission or read is
                 # interrupted. Stable date/phase keys recover the same receipts.

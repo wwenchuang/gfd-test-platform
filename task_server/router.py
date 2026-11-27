@@ -6611,6 +6611,50 @@ def _ui_batch_error(handler, error):
         handler._json({"ok": False, "code": "batch_store_unavailable", "error": "执行批次暂时不可用"}, 503)
 
 
+def _schedule_response(handler, fn):
+    from .services.ui_execution_contract import AccessDenied
+    from .services.ui_schedule_service import ScheduleError
+    if not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    try:
+        result = fn()
+    except AccessDenied as error:
+        handler._json({"ok": False, "code": error.code, "error": "没有此定时任务的操作权限。"}, 403)
+    except ScheduleError as error:
+        handler._json({"ok": False, "code": error.code, "error": error.message}, error.status)
+    except (OSError, sqlite3.Error, ValueError):
+        handler._json({"ok": False, "code": "schedule_unavailable", "error": "定时任务或用例目录暂时不可用。"}, 503)
+    else:
+        handler._json({"ok": True, **result})
+
+
+@route_get("/api/ui-schedules")
+def _get_ui_schedules(handler, qs):
+    from .services.ui_schedule_service import list_schedules
+    _schedule_response(handler, lambda: {"schedules": list_schedules()})
+
+
+@route_get_regex(r"^/api/ui-schedules/(android|ios)/options$")
+def _get_ui_schedule_options(handler, qs, match):
+    from .services.ui_schedule_service import schedule_options
+    platform = match.group(1)
+    target = {"platform": platform, "runner_id": qs.get("runner_id"), "device_id": qs.get("device_id")}
+    _schedule_response(handler, lambda: schedule_options(platform, target))
+
+
+@route_post_regex(r"^/api/ui-schedules/(android|ios)$")
+def _post_ui_schedule(handler, qs, match):
+    from .services.ui_schedule_service import save_schedule
+    _schedule_response(handler, lambda: {"schedule": save_schedule(match.group(1), handler._body())})
+
+
+@route_post_regex(r"^/api/ui-schedules/(android|ios)/run$")
+def _run_ui_schedule(handler, qs, match):
+    from .services.ui_schedule_service import run_schedule
+    _schedule_response(handler, lambda: run_schedule(match.group(1), handler._body()))
+
+
 @route_post("/api/ui-executions")
 def _post_ui_execution_batch(handler, qs):
     if not _ui_batch_enabled():
