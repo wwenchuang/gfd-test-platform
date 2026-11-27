@@ -35,6 +35,10 @@ def compare(current, previous):
 
 
 def _grounded_text(analysis, field):
+    # Platform-wide findings and model text derived from them are private to admins.
+    from task_server.services.server_log_monitor_status import has_monitor_evidence
+    if has_monitor_evidence(analysis):
+        return ''
     evidence_ids = {item['id'] for item in analysis.get('evidence', []) if item.get('id')}
     for item in (analysis.get('result') or {}).get(field, []):
         refs = item.get('evidence_ids') or []

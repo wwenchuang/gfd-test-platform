@@ -247,8 +247,8 @@ test('restored practice workflow renders the independent guide',async t=>{
  w.eval(shell.slice(shell.indexOf('function renderActiveWorkflowPage('),shell.indexOf('\nfunction updateWorkbenchPanelMode(',shell.indexOf('function renderActiveWorkflowPage('))));
  assert.equal(w.renderActiveWorkflowPage(),true);assert.ok(w.document.querySelector('[data-ui-week-one]'));
 });
-test('feature on exposes simple home while feature off preserves advanced navigation',async t=>{
- const {w,calls}=fixture(t);await w.initUiSimpleAvailability();assert.equal(w.isUiSimpleAvailable(),true);assert.ok(calls.includes('ui_start'));assert.equal(w.document.querySelector('details').open,false);
+test('availability checks preserve the open Agent page and restore the advanced navigation when disabled',async t=>{
+ const {w,calls}=fixture(t);await w.initUiSimpleAvailability();assert.equal(w.isUiSimpleAvailable(),true);assert.equal(calls.includes('ui_start'),false);assert.equal(w.activeWorkflow,'dashboard');assert.equal(w.document.querySelector('details').open,false);
  w.resetUiSimpleWorkflow();w.apiRequest=async()=>({ok:true,enabled:false});await w.initUiSimpleAvailability();assert.equal(w.isUiSimpleAvailable(),false);assert.equal(w.document.querySelector('details').open,true);
 });
 test('availability response from previous account cannot expose new workflow',async t=>{

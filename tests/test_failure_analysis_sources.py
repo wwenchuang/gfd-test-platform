@@ -392,3 +392,62 @@ def test_reprint_report_and_restricted_agent_use_same_version_evidence(api, monk
     assert '业务码 1001' in hints[case]
     assert hints[case] == evidence['evidence'][0]['data']['reprint_hint']
     assert 'private' not in json.dumps(evidence)
+
+
+def test_workbench_log_evidence_requires_privilege_and_overlapping_complete_window(api, monkeypatch, tmp_path):
+    from task_server.services import server_log_monitor_status as view
+    path = tmp_path / 'monitor.json'
+    monkeypatch.setattr(view, 'STATE_PATH', path)
+    end = int(datetime.now(timezone.utc).timestamp()) // 300 * 300 - 86400
+    instant = datetime.fromtimestamp(end - 300, timezone.utc)
+    rid, _ = api.add(run_changes={'started_at':instant, 'finished_at':instant})
+    record = dict(window_end=end, coverage='complete', matches={'traceback': 2}, last_alert='PRIVATE')
+    path.write_text(json.dumps({view.UNITS[0]:record}))
+    with actor_context(api.actor):
+        source = adapter()(api.actor, 'api', rid, session_factory=api.factory)
+        assert '无权' in str(source.get_workbench_log_window()['missing'])
+        api.profile['permissions'].append('platform.configure')
+        api.profile['scope']['ui_apps'] = '*'
+        result = source.get_workbench_log_window()
+        assert len(result['evidence']) == 1
+        assert result['evidence'][0]['data']['matches'] == {'traceback':2}
+        assert 'PRIVATE' not in str(result)
+        assert '业务' in str(result['missing'])
+        from task_server.services.failure_analysis_agent import investigate
+        from tests.test_failure_analysis_agent import Script, answer, call, response
+        model = Script(response(calls=[call('get_workbench_log_window')]),
+                       response(answer('误以为服务日志证明本次请求触发错误。', [result['evidence'][0]['id']])))
+        out = investigate(source, model_call=model)
+        assert out['status'] == 'completed' and out['trace'][1]['name'] == 'get_workbench_log_window'
+        from task_server.api_testing.services.patrol_summary import _grounded_text
+        assert _grounded_text(out, 'facts') == ''
+        assert '误以为' not in str(out['result']['facts']) and '2 行' in str(out['result']['facts'])
+        record['window_end'] -= 300
+        path.write_text(json.dumps({view.UNITS[0]:record}))
+        assert source.get_workbench_log_window()['evidence'] == []
+        record['window_end'] += 300
+        record['coverage'] = 'partial'
+        path.write_text(json.dumps({view.UNITS[0]:record}))
+        assert source.get_workbench_log_window()['evidence'] == []
+
+
+
+def test_agent_window_source_finds_yesterday_after_dashboard_advanced(api, tmp_path, monkeypatch):
+    from test_server_log_monitor import monitor
+    from task_server.services import server_log_monitor_status as view
+    root = tmp_path / 'state'
+    monkeypatch.setattr(view, 'STATE_PATH', root / 'state.json')
+    now = int(datetime.now(timezone.utc).timestamp()) // 300 * 300
+    yesterday = now - 86400
+    instant = datetime.fromtimestamp(yesterday - 1, timezone.utc)
+    rid, _ = api.add(run_changes={'started_at':instant, 'finished_at':instant})
+    for end in (yesterday, yesterday, now):
+        monitor.scan([view.UNITS[0]], root, end,
+                     observe_unit=lambda *_: {'coverage':'complete', 'matches': {'error':1}},
+                     deliver=lambda _: 'disabled')
+    api.profile['permissions'].append('platform.configure')
+    api.profile['scope']['ui_apps'] = '*'
+    with actor_context(api.actor):
+        result = adapter()(api.actor, 'api', rid, session_factory=api.factory).get_workbench_log_window()
+    assert view.read_status()['sources'][0]['window_end'] == now
+    assert [item['data']['window_end'] for item in result['evidence']] == [yesterday]

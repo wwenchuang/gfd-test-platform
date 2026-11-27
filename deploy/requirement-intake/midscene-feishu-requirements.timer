@@ -1,0 +1,9 @@
+[Unit]
+Description=Poll test-ready Feishu Project requirements
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=5min
+
+[Install]
+WantedBy=timers.target

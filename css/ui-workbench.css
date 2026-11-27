@@ -394,3 +394,19 @@
 .ui-monkey [data-schedules] article{border-top:1px solid var(--wb-border);padding:12px 0;overflow-wrap:anywhere}
 .ui-monkey [data-schedules] article p{margin:6px 0;color:var(--wb-muted)}.ui-monkey [data-schedules] button+button{margin-left:8px}
 .ui-monkey [data-schedule-notice]:empty{display:none}
+
+.workbench-investigation .nav-group-title{color:var(--text-muted,#9badb5);padding:.7rem .8rem .25rem;font-size:.8rem}
+.ui-practice-page .workbench-project{max-width:1100px;margin:1.2rem auto;padding:1.2rem;border:1px solid var(--border,#344c4b);border-radius:12px;background:var(--panel,#17252b)}
+.workbench-project h2{margin:0 0 .45rem;font-size:1.15rem}.workbench-project p{margin:.4rem 0 .7rem}
+.workbench-project summary{cursor:pointer;font-weight:650;padding:.65rem 0}
+.workbench-project form{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:.8rem;margin:.8rem 0}
+.workbench-project label{display:grid;gap:.35rem}
+.workbench-project :is(input,textarea,select){min-width:0;background:#102026;color:#e3f3ee;border:1px solid #456069;border-radius:6px;padding:.55rem;font:inherit}
+.workbench-project .wide-field{grid-column:1/-1}.workbench-project button{justify-self:start;cursor:pointer;font:inherit;border:1px solid #518276;border-radius:7px;padding:.5rem .8rem;background:#19352f;color:#a6ecd8}
+.workbench-project a{color:#9be5ce}.workbench-project output{display:block;overflow-wrap:anywhere}
+.workbench-receipt{border-bottom:1px solid var(--border,#344c4b);padding:.45rem 0}
+.workbench-receipt a{display:inline-block;margin:0 1rem .4rem 0}
+.workbench-investigation>.nav-group-title::before{content:none}
+.ui-practice-page [aria-label="最近的回归报告"] a,.ui-practice-page [aria-label="最近的回归报告"] button{display:inline-block;padding:.55rem .75rem;border:1px solid #3c5656;border-radius:7px;background:#17292d;color:#b4eddf;font:inherit;text-decoration:none;cursor:pointer}
+.workbench-recent-runs,.ui-practice-page [aria-label="最近的回归报告"] .ui-design-actions{display:flex;flex-wrap:wrap;gap:.5rem}
+.ui-practice-page [aria-label="最近的回归报告"] summary{padding:.55rem 0;color:#adbec4;cursor:pointer}

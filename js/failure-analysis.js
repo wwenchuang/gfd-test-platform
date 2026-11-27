@@ -2,7 +2,7 @@
 (() => {
   const activeStatuses = new Set(['queued', 'running']);
   const statusLabels = { queued: '等待调查', running: '正在调查', completed: '调查完成', limited: '调查受限', failed: '调查失败', cancelled: '已停止', interrupted: '调查已中断' };
-  const toolLabels = { get_failed_steps: '读取失败步骤', get_request_trace: '核对请求与回执', compare_last_pass: '对照同条件成功记录' };
+  const toolLabels = { get_failed_steps: '读取失败步骤', get_request_trace: '核对请求与回执', get_device_logs: '核对设备日志', get_workbench_log_window: '核对工作台日志窗口', compare_last_pass: '对照同条件成功记录' };
   const missingLabels = {
     evidence_output_truncated: '证据量超过本次读取上限，仅保留了部分记录。',
     secret_context_incomplete: '缺少完整的脱敏上下文，相关证据暂未展示。',

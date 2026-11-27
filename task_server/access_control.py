@@ -4,6 +4,7 @@ import re
 from urllib.parse import unquote
 
 from task_server.practice_knowledge_http import is_read_route as is_knowledge_read_route
+from task_server.requirement_intake_http import PATH as REQUIREMENT_INTAKE
 
 
 def _mcp_route(method, path):
@@ -253,6 +254,9 @@ class MainAccess:
                 self.require('ui.execute')
             self._require_record({'app_package': 'com.kfb.model'})
             return
+        if (path == REQUIREMENT_INTAKE and method in {'GET', 'HEAD', 'POST'} or
+                path == REQUIREMENT_INTAKE + '/recent' and method in {'GET', 'HEAD'}):
+            return  # Receipt service checks actor, current app scope, ownership and execution permission.
         if method == 'POST' and path == '/api/mobile-tracking':
             return  # handler enforces app scope and run ownership
         if _mcp_route(method, path) or is_knowledge_read_route(method, path):
@@ -378,6 +382,9 @@ class MainAccess:
 
     def permission_for(self, method, path, qs, body):
         from task_server.config import safe_bool
+        if (path == REQUIREMENT_INTAKE and method in {'GET', 'HEAD', 'POST'} or
+                path == REQUIREMENT_INTAKE + '/recent' and method in {'GET', 'HEAD'}):
+            return 'ui.execute' if method == 'POST' else 'ui.view'
         if method == 'POST' and path == '/api/platform/mcp/diagnose':
             return 'ui.execute'
         if method == 'POST' and path == '/api/mobile-tracking':

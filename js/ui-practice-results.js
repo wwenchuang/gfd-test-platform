@@ -894,7 +894,9 @@ window.UiPracticeResults = (() => {
       recent.setAttribute('aria-label','最近的回归报告');
       page.querySelector('.ui-practice-tasks').after(recent);
       add(recent,'h2','最近的回归报告');
-      const links=add(recent,'div');links.className='ui-design-actions';
+      window.WorkbenchProject?.attachLatest(recent,()=>permitted()&&hasPermission('ui.view'));
+      const archive=add(recent,'details');add(archive,'summary','查看专题报告');
+      const links=add(archive,'div');links.className='ui-design-actions';
       async function loadRecent() {
         links.replaceChildren();
         const notice=add(links,'span','正在读取报告…');notice.setAttribute('role','status');

@@ -283,8 +283,8 @@ def main():
     require("assets/brand/kongfudou-icon.png" in html and "brand-mark-img" in html, "Kongfudou brand image must be used instead of a text placeholder")
     require("Qwen · Midscene · Sonic" in html, "Header subtitle must show core platform integrations")
     require("用例资产" in html, "Sidebar must include 用例资产 entry")
-    require(html.count('class="nav-group"') == 5, "Sidebar must include five nav groups (Agent/用例/执行/报告/配置)")
-    require('data-nav-group="agent"' in html and 'data-nav-group="cases"' in html and 'data-nav-group="run"' in html and 'data-nav-group="report"' in html and 'data-nav-group="settings"' in html, "Sidebar nav groups must include agent/cases/run/report/settings")
+    require(html.count('class="nav-group"') == 4 and 'class="nav-group workbench-investigation"' in html, "Sidebar must include five nav groups (Agent/用例/执行/报告/配置)")
+    require('workbench-investigation' in html and 'data-nav-group="cases"' in html and 'data-nav-group="run"' in html and 'data-nav-group="report"' in html and 'data-nav-group="settings"' in html, "Sidebar nav groups must include agent/cases/run/report/settings")
     require('data-nav-group="api-testing"' not in html, "API testing navigation must be removed")
     require('js/api.js' not in html, "API frontend client script must not be loaded")
     require('js/api-testing.js' not in html, "API testing script must not be loaded")
@@ -301,7 +301,7 @@ def main():
     require("Agent 工作台" in html, "Dashboard must serve as the Agent workbench entry")
     require('data-workflow="repair"' not in html, "Sidebar must not duplicate failure handling across execution and report groups")
     require('data-workflow="failure_analysis"' in html and "失败处理" in html, "Sidebar must expose one clear failure handling entry")
-    require('data-nav-group="agent" open' in html, "First visit must expand the active Agent navigation group")
+    require(html.index('class="nav-group workbench-investigation"') < html.index('<details data-ui-advanced'), "Failure investigation must be directly visible in the sidebar")
     for collapsed_group in ("cases", "run", "report", "settings"):
         require(
             f'data-nav-group="{collapsed_group}" open' not in html,

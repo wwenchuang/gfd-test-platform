@@ -1308,7 +1308,7 @@ async function anyVisible(locator) {
     if (!/1 执行中/.test(aggregateChecks.runningRerunText) || !/1 排队中/.test(aggregateChecks.runningRerunText) || !/原脚本证据重试/.test(aggregateChecks.runningRerunText)) throw new Error('A running RERUN step must render causal task progress before toolCalls finish');
     if (!/部分通过/.test(aggregateChecks.summaryText) || !/编排阻断/.test(aggregateChecks.summaryText) || !/Runner 通过\s*2/.test(aggregateChecks.summaryText) || !/脚本 \/ 环境 \/ 待归因\s*1/.test(aggregateChecks.summaryText)) throw new Error('Final summary must preserve successful smoke outcomes and keep unclassified test failures separate from product failures');
     await page.setViewportSize({width: 1440, height: 900});
-    await page.locator('details[data-nav-group="agent"]').evaluate(el => { el.open = true; });
+    await page.locator('.workbench-investigation').waitFor();
     await page.click('.workflow-step[data-workflow="agent_history"]');
     await page.waitForSelector('input[placeholder="搜索任务、应用或结果"]');
     if (!await page.locator('.agent-history-pager, .management-filter-bar').first().isVisible()) throw new Error('Agent history management controls are not visible');

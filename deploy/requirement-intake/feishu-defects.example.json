@@ -1,0 +1,19 @@
+{
+  "apps": {
+    "your.test.application": {
+      "project_key": "replace_with_project_key",
+      "work_item_type_key": "replace_with_defect_type_key",
+      "evidence_field": "replace_with_plain_text_field_key",
+      "rules": [
+        {
+          "case_id": "replace_with_published_case_id",
+          "case_revision": "0000000000000000000000000000000000000000000000000000000000000000",
+          "step_id": "step_000000000000000000000000",
+          "diagnostic": "AssertionError: order.total expected 10 actual 0",
+          "title": "订单金额与明细合计不一致",
+          "expected": "测试订单中两件单价 5 元的商品，合计应为 10 元。"
+        }
+      ]
+    }
+  }
+}

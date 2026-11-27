@@ -2820,6 +2820,15 @@ def _get_platform_status(handler, qs):
     handler._json(status)
 
 
+@route_get("/api/platform/log-monitor/status")
+def _get_server_log_monitor_status(handler, qs):
+    from task_server.services.server_log_monitor_status import read_status
+    if qs:
+        handler._json({"ok": False, "error": "日志巡检状态不接受查询参数"}, 400)
+        return
+    handler._json(read_status())
+
+
 def _week1_probe_owner(handler):
     from task_server.services.operation_attribution import current_actor
     actor = current_actor()

@@ -1,0 +1,23 @@
+[Unit]
+Description=Check workbench service journals for errors and coverage gaps
+After=systemd-journald.service
+
+[Service]
+Type=oneshot
+SuccessExitStatus=2
+User=midscene
+Group=midscene
+SupplementaryGroups=systemd-journal
+WorkingDirectory=/opt/midscene-task-platform
+Environment=PYTHONPATH=/opt/midscene-task-platform
+Environment=MIDSCENE_ENV_FILE=/opt/midscene.env
+EnvironmentFile=-/etc/midscene-log-monitor.env
+ExecStart=/opt/midscene-task-platform/.venv/bin/python /opt/midscene-task-platform/deploy/log-monitor/monitor.py --run
+StateDirectory=midscene-log-monitor
+StateDirectoryMode=0700
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+TimeoutStartSec=220

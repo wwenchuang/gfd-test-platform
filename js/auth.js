@@ -168,9 +168,8 @@ async function showAuthedApp() {
   if (typeof restoreWorkflowPreference === 'function') restoreWorkflowPreference();
   if (typeof preferUiSimpleReport === 'function') preferUiSimpleReport();
   if (new URLSearchParams(location.search).get('view')==='tracking' && canAccessWorkflow('mobile_tracking')) activeWorkflow='mobile_tracking';
-  if (typeof isUiSimpleAvailable === 'function' && isUiSimpleAvailable() && activeWorkflow==='dashboard') activeWorkflow='ui_start';
   if (!canAccessWorkflow(activeWorkflow)) {
-    activeWorkflow = ['dashboard', 'assets', 'identity', 'config', 'feishu_config', 'ai_practice'].find(canAccessWorkflow) || 'account';
+    activeWorkflow = ['ai_practice', 'dashboard', 'assets', 'identity', 'config', 'feishu_config'].find(canAccessWorkflow) || 'account';
   }
   if (typeof updateWorkbenchPanelMode === 'function') updateWorkbenchPanelMode();
   document.getElementById('toolbar-help').textContent = WORKFLOW_SECTIONS[activeWorkflow]?.help || '';

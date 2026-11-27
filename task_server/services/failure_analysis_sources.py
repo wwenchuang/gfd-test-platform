@@ -9,7 +9,7 @@ import re
 import subprocess
 import uuid
 from collections.abc import Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
 
 from sqlalchemy import func, select, text
@@ -357,6 +357,43 @@ class EvidenceSource:
         return self._finish({'evidence': [self._evidence('device_logs', case_id,
             '打印任务设备日志', records, secrets=secrets)],
             'missing': ['仅显示最早的25条设备事件，后续状态待核对。'] if len(rows) > 25 else []})
+
+    def get_workbench_log_window(self):
+        from . import server_log_monitor_status as monitor
+        run = self.authorize()
+        result = {'evidence': [], 'missing': ['智小白业务服务日志尚未接入。']}
+        try:
+            monitor.require_investigation_access(self.actor)
+        except PermissionError:
+            result['missing'].append('当前账号无权读取工作台服务日志摘要。')
+            return self._finish(result)
+        if self.source == 'ui':
+            times = [run.get(key) for key in ('started_ns', 'finished_ns')]
+            times = [value / 10**9 if type(value) is int and value > 0 else None for value in times]
+        else:
+            times = [run.get(key) for key in ('started_at', 'finished_at')]
+            # The API store records UTC. SQLite can return naive datetimes for those columns.
+            times = [(value if value.tzinfo else value.replace(tzinfo=timezone.utc)).timestamp()
+                     if isinstance(value, datetime) else None for value in times]
+        start, finish = times
+        if start is None or finish is None or finish < start:
+            result['missing'].append('缺少可核对的执行起止时间。')
+            return self._finish(result)
+        rows, observed, expected = monitor.overlapping_windows(start, finish)
+        if observed < expected:
+            result['missing'].append(f'重叠的 {expected} 个服务窗口中有 {expected - observed} 个缺少完整采集。')
+        if len(rows) < observed:
+            result['missing'].append(f'共 {observed} 个完整服务窗口，只展示其中 {len(rows)} 个，优先有错误行的窗口。')
+        for row in rows:
+            end = row['window_end']
+            data = {'unit': row['unit'], 'window_start': end - 300,
+                    'window_end': end, 'matches': row['matches'], 'scope': '工作台服务的整窗统计，仅时间重叠。'}
+            result['evidence'].append(self._evidence('workbench_log_window', f"{row['unit']}-{end}",
+                '与执行时间重叠的工作台日志窗口', data))
+        if not result['evidence']:
+            result['missing'].append('未取得与本次执行重叠且采集完整的工作台日志窗口。')
+        monitor.require_investigation_access(self.actor)
+        return self._finish(result)
 
     def get_failed_steps(self):
         run = self.authorize()

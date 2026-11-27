@@ -65,7 +65,7 @@ async function initUiSimpleAvailability({navigate=true}={}){
     // Never take the user away from a page they opened while the feature check was in flight.
     if(navigate&&uiSimpleEnabled&&activeWorkflow===initialWorkflow&&!currentFile){
       const saved=sessionStorage.getItem('midscene_active_workflow');
-      if(isUiSimpleWorkflow(saved)||activeWorkflow==='dashboard')await activateWorkflow(isUiSimpleWorkflow(saved)?saved:'ui_start');
+      if(isUiSimpleWorkflow(saved))await activateWorkflow(saved);
     }
   }catch(_){/* Feature discovery can fail without breaking the existing workspace. */}
 }
@@ -177,7 +177,7 @@ function showAiPractice(){
   document.getElementById('app')?.classList.add('ui-simple-active');
   const area=document.getElementById('editor-area');area.classList.remove('editor-open');area.replaceChildren();
   const page=document.createElement('div');page.className='ui-simple-page ui-practice-page';page.dataset.practiceWorkbench='';
-  page.innerHTML='<div class="ui-simple-heading"><div><div class="workflow-kicker">测试工作台</div><h1>从这里开始测试</h1><p>选择测试方式，查看已有结果与证据。</p></div></div>';
+  page.innerHTML='<div class="ui-simple-heading"><div><div class="workflow-kicker">测试工作台</div><h1>从这里开始测试</h1><p>从需求选择回归范围，查看真机和接口结果，跟进失败原因与缺陷。</p></div></div>';
   area.append(page);toggleLibrary(false);attachTaskWorkbench(page);return true;
 }
 function attachTaskWorkbench(page){
@@ -186,7 +186,13 @@ function attachTaskWorkbench(page){
   const canOpen=key=>typeof canAccessWorkflow==='function'&&canAccessWorkflow(key);
   const cards=document.createElement('section');cards.className='ui-practice-tasks';cards.setAttribute('aria-label','选择测试任务');
   cards.innerHTML='<article><h2>开始 UI 测试</h2><p>选择应用、用例和手机，可用于发版回归。</p><button type="button" data-practice-workflow="ui_start">选择用例和手机</button></article><article><h2>API 测试</h2><p>管理接口资产、用例、执行结果和基线。</p><span data-practice-api-slot></span></article><article><h2>我的测试</h2><p>查看自己发起的测试结果、步骤、截图和报告。</p><button type="button" data-practice-workflow="ui_reports">查看测试结果</button></article>';
+  if (canOpen('failure_analysis')) {
+    const investigation = document.createElement('article');
+    investigation.innerHTML = '<h2>调查失败</h2><p>查看失败步骤、原始证据和缺陷草稿。</p><button type="button" data-practice-workflow="failure_analysis">查看失败原因</button>';
+    cards.append(investigation);
+  }
   page.append(cards);
+  window.WorkbenchProject?.attach(page, current);
   for(const button of cards.querySelectorAll('[data-practice-workflow]')){const key=button.dataset.practiceWorkflow;button.disabled=!canOpen(key);if(button.disabled)button.title='当前账号无权使用或服务暂不可用';button.onclick=()=>{if(current()&&canOpen(key))activateWorkflow(key);};}
   const apiSlot=cards.querySelector('[data-practice-api-slot]');
   if(hasPermission('api.view')){const link=document.createElement('a');link.dataset.practiceApi='';link.href='/api-test/';link.textContent='打开 API 测试';link.onclick=event=>{if(!current()||!hasPermission('api.view'))event.preventDefault();};apiSlot.append(link);}
@@ -926,6 +932,11 @@ function attachRequirementDesign(page,current){
     opened=panel.open;
     if(opened){void load(selected);return;}
     interrupt();clearSource();clearEvaluation();clearCollection();collection.open=false;assessment.open=false;select.replaceChildren();notice.textContent='';busy=false;controls();
+  });
+  panel.addEventListener('use-intake-source',event=>{
+    if(!hash(event.detail)||!current()||!authorized()||owner!==profile())return;
+    selected=event.detail;
+    if(panel.open)void load(selected);else panel.open=true;
   });
   select.onchange=()=>{if(hash(select.value))void load(select.value);};
   refresh.onclick=()=>void load(selected);

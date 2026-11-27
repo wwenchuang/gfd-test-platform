@@ -48,7 +48,9 @@ test('suite regression shows source, linked checks, outstanding items and verifi
   });
   await page.goto('http://127.0.0.1/');
   const title=page.getByText('套件专区需求回归',{exact:true});
-  await page.getByRole('region',{name:'最近的回归报告'}).getByRole('button',{name:'套件专区回归报告 · 11月11日'}).click();
+  const recent = page.getByRole('region',{name:'最近的回归报告'});
+  await recent.getByText('查看专题报告',{exact:true}).click();
+  await recent.getByRole('button',{name:'套件专区回归报告 · 11月11日'}).click();
   const panel=page.locator('details').filter({has:title}).first();
   await panel.getByText('暂不能确认可以发版',{exact:true}).waitFor();
   assert.equal(await panel.getByText(report.requirement,{exact:true}).isVisible(),false);

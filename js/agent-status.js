@@ -2392,7 +2392,7 @@ function resetWorkflowScrollPosition() {
 
 function restoreWorkflowPreference() {
   const saved = normalizeWorkflowKey(sessionStorage.getItem('midscene_active_workflow') || '');
-  activeWorkflow = WORKFLOW_SECTIONS[saved] ? saved : 'dashboard';
+  activeWorkflow = WORKFLOW_SECTIONS[saved] ? saved : 'ai_practice';
   return activeWorkflow;
 }
 

@@ -215,8 +215,9 @@ function renderWorkflowNav() {
     btn.classList.toggle('active', btn.dataset.workflow === activeWorkflow);
   });
   const activeButton = document.querySelector(`.workflow-step[data-workflow="${activeWorkflow}"]`);
-  const activeGroup = activeButton?.closest('.nav-group');
-  if (activeGroup) activeGroup.open = true;
+  for (let parent = activeButton?.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === 'DETAILS') parent.open = true;
+  }
   updateWorkflowActionGroups();
   if (typeof updateNavigationBadges === 'function') updateNavigationBadges();
 }

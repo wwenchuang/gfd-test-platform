@@ -150,3 +150,15 @@ def test_actual_shared_dispatcher_reaches_terminal_state(setup, monkeypatch):
         assert task['result']['summary'] == '真实队列已执行'
     finally:
         dispatcher.stop()
+
+
+def test_stored_platform_log_evidence_requires_current_management_permission(setup):
+    tasks, actor, _, _, _ = setup
+    task = start(tasks, actor)
+    with tasks._db() as db:
+        db.execute("UPDATE tasks SET payload=? WHERE id=?",
+                   (json.dumps({'evidence':[{'kind':'workbench_log_window'}]}), task['id']))
+    with pytest.raises(PermissionError):
+        tasks.read(actor, task['id'])
+    with pytest.raises(PermissionError):
+        tasks.latest(actor, 'ui', 'run-one')

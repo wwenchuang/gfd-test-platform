@@ -69,6 +69,8 @@ def _catalog_rows():
             row['app_id'] = str(asset['app_package'])
             platforms, original = platform_binding(asset)
             row['platforms'] = list(platforms)
+            if len(platforms) == 1:
+                row['platform'] = platforms[0]
             row['_original'] = original
             row['feature'] = _FEATURES.get(row['app_id'], {}).get(original) or row['module'] or '未分组'
             row['release_core'] = (row['app_id'] == _CORE_APP and original in core_ids

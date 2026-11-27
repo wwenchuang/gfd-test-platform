@@ -459,6 +459,9 @@ def test_selected_phone_filters_before_paging_and_core_selection(data, monkeypat
     monkeypatch.setattr(catalog.case_service, 'task_case_yaml', lambda _: SOURCE.replace(APP,app))
     target = {'runner_id':'mac','device_id':'phone','platform':'ios'}
     page = catalog.get_ui_catalog(app_id=app,target=target,limit=1)
+    all_cases = catalog.get_ui_catalog(app_id=app, limit=50)['items']
+    variant_row = next(item for item in all_cases if item['case_id'] == variant)
+    assert variant_row['platform'] == 'ios' and variant_row['platforms'] == ['ios']
     assert set(page['compatible_cases']) == {variant, shared}
     assert page['total'] == 2 and page['items'][0]['release_core']
     assert variant in {r['case_id'] for r in page['release_core']['cases']}

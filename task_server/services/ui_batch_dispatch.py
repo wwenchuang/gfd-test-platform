@@ -362,6 +362,8 @@ def start_ui_batch_reconciler():
                 reconcile_ui_batches()
                 from .ui_batch_report_service import tick_ui_report_worker
                 tick_ui_report_worker()
+                from .feishu_project_defects import tick_defect_worker
+                tick_defect_worker()
                 from .ui_batch_notification_service import notifications_enabled, tick_batch_notification_worker
                 if notifications_enabled():
                     tick_batch_notification_worker()

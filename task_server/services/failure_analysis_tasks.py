@@ -110,7 +110,10 @@ def _recover(db):
 
 
 def _public(row):
+    from .server_log_monitor_status import has_monitor_evidence, require_investigation_access
     result = json.loads(row['payload'])
+    if has_monitor_evidence(result):
+        require_investigation_access(current_actor())
     result.update({k: row[k] for k in ('id', 'source', 'run_id', 'status', 'created_at', 'updated_at', 'error')})
     result['limits'] = {'rounds': 6, 'tool_calls': 12, 'seconds': 180, 'tokens': 18000}
     return result
