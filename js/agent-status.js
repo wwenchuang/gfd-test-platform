@@ -2487,6 +2487,7 @@ const CONTEXT_TOOLBAR_MAP = {
   mobile_tracking: { module:'ui', icon:'', title:'埋点测试', refreshLabel:'刷新报告与设备', refreshFn:'void 0' },
   ai_practice: { module: 'settings', icon: '', title: 'AI 测试实战', refreshLabel: '在页面内刷新探针', refreshFn: 'void 0' },
   ui_start: { module: 'ui', icon: '', title: '开始测试', refreshLabel: '刷新状态', refreshFn: 'refreshUiSimpleWorkflow()' },
+  ui_monkey: { module: 'ui', icon: '', title: 'Monkey 稳定性测试', refreshLabel: '刷新任务', refreshFn: 'uiMonkeyPage?.refresh()' },
   ui_schedules: { module: 'ui', icon: '', title: '定时任务', refreshLabel: '刷新定时任务', refreshFn: 'uiSchedulePage?.refresh()' },
   ui_library: { module: 'ui', icon: '', title: '用例库', refreshLabel: '刷新状态', refreshFn: 'refreshUiSimpleWorkflow()' },
   ui_reports: { module: 'ui', icon: '', title: '我的报告', refreshLabel: '刷新状态', refreshFn: 'refreshUiSimpleWorkflow()' },

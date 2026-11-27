@@ -264,6 +264,7 @@ def get_ui_devices(actor, app_id):
             if state == 'ready' and installed.get('installed') is False:
                 state = 'app_not_installed'
             row = {'app_id':app_id, 'app_name':app.get('name') or app_id, 'target':{'runner_id':runner_id,'device_id':device_id,'platform':platform},
+                   'monkey_supported':capabilities.get('ui_monkey_v1') is True and installed.get('installed') is True,
                    'name':device.get('label') or device.get('model') or device_id,
                    'os_version':device.get('ios_version' if platform=='ios' else 'android_version') or '',
                    'resolution':device.get('resolution') or '', 'connection_status':state,

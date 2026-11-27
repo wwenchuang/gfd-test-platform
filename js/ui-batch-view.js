@@ -23,7 +23,7 @@
   }
   function init(node,batchId) {
     node.replaceChildren();node.classList.add('ui-batch-view');
-    node.innerHTML='<div class="ui-batch-layout"><div class="ui-batch-overview"><header class="ui-batch-head"><div><p class="ui-eyebrow">执行结果</p><h2 data-batch-title></h2><div class="ui-batch-meta"><span data-batch-app></span><span data-batch-owner></span></div></div><strong data-batch-state></strong></header><div class="ui-batch-totals"><span data-batch-count></span><span data-batch-results></span></div><progress data-batch-progress aria-label="已结束的用例执行"></progress><p data-batch-hint role="status"></p><div class="ui-batch-actions"></div></div><div class="ui-batch-detail"><h3 class="ui-batch-detail-title">用例结果</h3><p data-batch-action-error role="alert" hidden></p><div class="ui-batch-attempts"></div></div></div><footer class="ui-batch-foot"><span data-batch-report></span><span data-batch-delivery></span><details class="ui-batch-identifier"><summary>执行编号</summary><small data-batch-id></small></details></footer>';
+    node.innerHTML='<div class="ui-batch-layout"><div class="ui-batch-overview"><header class="ui-batch-head"><div><p class="ui-eyebrow">执行结果</p><h2 data-batch-title></h2><div class="ui-batch-meta"><span data-batch-app></span><span data-batch-owner></span></div></div><strong data-batch-state></strong></header><div class="ui-batch-totals"><span data-batch-count></span><span data-batch-results></span></div><progress data-batch-progress aria-label="已结束的用例执行"></progress><div class="ui-batch-phases" aria-hidden="true"><i data-phase="ended"></i><i data-phase="active"></i><i data-phase="waiting"></i></div><p class="ui-phase-counts" data-phase-counts></p><p class="ui-activity-line" data-batch-live hidden role="status"></p><p data-batch-hint role="status"></p><div class="ui-batch-actions"></div></div><div class="ui-batch-detail"><h3 class="ui-batch-detail-title">用例结果</h3><p data-batch-action-error role="alert" hidden></p><div class="ui-batch-attempts"></div></div></div><footer class="ui-batch-foot"><span data-batch-report></span><span data-batch-delivery></span><details class="ui-batch-identifier"><summary>执行编号</summary><small data-batch-id></small></details></footer>';
     const state={batchId,rows:new Map(),actions:{},busy:new Set(),batch:null};views.set(node,state);
     for (const [key,title] of [['cancel','取消本次测试'],['rerun','重跑未通过项'],['replay','查看执行回放'],['report','查看本次报告'],['copy','复制测试摘要']]) {
       const button=make('button','btn-sm',title);button.type='button';button.dataset.batchAction=key;
@@ -134,6 +134,23 @@
     text(node,'[data-batch-delivery]',deliveryLabels[batch.delivery_status] || '通知状态待确认');
     text(node,'[data-batch-id]',batch.ui_batch_id);
     const titles=new Map((batch.snapshots||[]).map(s=>[s.case_id,s.metadata?.task_name || s.case_id]));
+    const running = attempts.filter(a=>a.status==='running');
+    const active = attempts.filter(a=>!settled(a) && ['running','preparing','cancelling'].includes(a.status)).length;
+    const counts = {ended:done,active,waiting:attempts.length-done-active};
+    for (const [key,n] of Object.entries(counts)) {
+      node.querySelector('[data-phase="'+key+'"]').style.width=(attempts.length?100*n/attempts.length:0)+'%';
+    }
+    text(node,'[data-phase-counts]', '已结束 '+done+' · 处理中 '+active+' · 等待或阻塞 '+counts.waiting);
+    const live = node.querySelector('[data-batch-live]');
+    live.hidden = settled(batch) || batch.status !== 'running' || !running.length;
+    if (!live.hidden) {
+      const first = running[0];
+      const step = first.step_progress_known && first.steps?.find(s=>s.status==='running');
+      const steps = first.step_progress_known && !first.step_progress_truncated && Array.isArray(first.steps) && first.steps.length
+        ? '步骤已结束 '+first.steps.filter(s=>terminal.has(s.status)).length+' / '+first.steps.length : '';
+      const detail = [titles.get(first.case_id) || first.case_id, step?.label, steps].filter(Boolean).join(' · ');
+      live.textContent = (running.length>1 ? running.length+' 项执行中 · ' : '正在执行 · ') + detail;
+    }
     const rank=s=>s==='running'?0:['preparing','cancelling'].includes(s)?1:['queued','pending','blocked'].includes(s)?2:3;
     const list=node.querySelector('.ui-batch-attempts'), ids=new Set();
     const focused=node.ownerDocument.activeElement;

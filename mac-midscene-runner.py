@@ -505,6 +505,12 @@ def ui_callback_payload(job_id, payload, result=False):
 
 
 def post_job_result(job_id, payload):
+    if payload.get("monkey_claim_token"):
+        from runner_monkey_job import acknowledged
+        response = http_json_retry("POST", f"/api/runner/jobs/{job_id}/result", payload, timeout=15,
+                                   attempts=2, label="稳定性结果回传")
+        acknowledged(WORKSPACE, job_id)
+        return response
     ui_callback_payload(job_id, payload, result=True)
     try:
         return http_json_retry("POST", f"/api/runner/jobs/{job_id}/result", payload, timeout=120, attempts=3, label="结果回传")
@@ -553,6 +559,9 @@ def _callback_outbox_path(job_id):
 
 
 def queue_failed_result_callback(job_id, payload, pending_report_path="", pending_report_name=""):
+    if payload.get("monkey_claim_token"):
+        # durable_execute already persisted the terminal payload before the POST.
+        return
     CALLBACK_OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
     record = {
         "job_id": job_id,
@@ -569,6 +578,9 @@ def queue_failed_result_callback(job_id, payload, pending_report_path="", pendin
 
 
 def replay_pending_result_callbacks():
+    if (WORKSPACE / "monkey-outbox").is_dir():
+        from runner_monkey_job import recover
+        recover(WORKSPACE, post_job_result)
     if not CALLBACK_OUTBOX_DIR.exists():
         return 0
     replayed = 0
@@ -1959,6 +1971,12 @@ def tracking_receipts_available():
 
 
 def heartbeat(devices):
+    try:
+        from runner_monkey_job import available
+        monkey_ready = available(RUNNER_PLATFORM, Path(__file__).with_name("mobile_monkey_runner.py"),
+                                 _ADB_BIN_CACHE or ADB_BIN, IOS_EXECUTION_ENABLED)
+    except ImportError:
+        monkey_ready = False
     model = {} if RUNNER_PLATFORM == "ios" else _HEARTBEAT_MODEL
     ios_tracking = ios_tracking_states(devices) if RUNNER_PLATFORM == "ios" else {}
     ios_ready = any(s["ready"] for s in ios_tracking.values())
@@ -1971,6 +1989,7 @@ def heartbeat(devices):
         "version": RUNNER_VERSION,
         "capabilities": {
             **RUNNER_CAPABILITIES,
+            "ui_monkey_v1": monkey_ready,
             "tracking_ios_devices": ios_tracking,
             "tracking_ios_probe_devices": ios_probe_states(devices) if RUNNER_PLATFORM=="ios" else {},
             "tracking_http_receipts": ios_ready or RUNNER_PLATFORM == "android" and tracking_receipts_available(),
@@ -3288,6 +3307,10 @@ def reset_ios_foreground_app(port, bundle_id, allowed_bundle_id=None):
 
 
 def run_job(job):
+    if job.get("job_type") == "ui_monkey":
+        from runner_monkey_job import durable_execute
+        return durable_execute(job, RUNNER_ID, RUNNER_PLATFORM, Path(__file__).with_name("mobile_monkey_runner.py"),
+                       lambda data: http_json("POST", f"/api/runner/jobs/{job['job_id']}/progress", data, timeout=4), WORKSPACE)
     initialize_ui_delivery(job)
     if RUNNER_PLATFORM != "ios":
         return run_standard_job(job)
@@ -3615,7 +3638,7 @@ def _run_main():
 
             print(f"Running {job['job_id']} {job.get('module')}/{job.get('file')}")
             stopped = threading.Event()
-            if RUNNER_PLATFORM == "ios" or job.get("ui_batch_id"):
+            if RUNNER_PLATFORM == "ios" or job.get("ui_batch_id") or job.get("job_type") == "ui_monkey":
                 threading.Thread(target=keep_job_alive, args=(stopped, job["job_id"], devices),
                                  daemon=True).start()
             try:

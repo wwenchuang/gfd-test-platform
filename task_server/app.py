@@ -409,6 +409,8 @@ def start_background_jobs():
     start_runtime_memory_monitor()
     from .services.ui_batch_dispatch import start_ui_batch_reconciler
     start_ui_batch_reconciler()
+    from .services.ui_monkey_schedule import start_scheduler
+    start_scheduler()
 
 
 # ── 主入口 ──────────────────────────────────────────────────────────

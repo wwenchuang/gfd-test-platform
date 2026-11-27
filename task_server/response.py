@@ -109,7 +109,7 @@ class ResponseMixin:
         self.send_header("Content-Type", "application/json; charset=utf-8")
         # Authentication failures may precede access-control initialization.
         path = getattr(self, "_access_path", "") or urllib.parse.urlsplit(getattr(self, "path", "")).path
-        if (path.startswith(("/api/ui-executions", "/api/platform/requirement-design", "/api/platform/mcp/", "/api/failure-analysis/")) or path in (
+        if (path.startswith(("/api/ui-executions", "/api/ui-monkey/", "/api/platform/requirement-design", "/api/platform/mcp/", "/api/failure-analysis/")) or path in (
                     "/api/platform/practice-cleanup-evidence", "/api/platform/week2-real",
                     "/api/platform/practice-legacy-evidence")):
             self.send_header("Cache-Control", "private, no-store")

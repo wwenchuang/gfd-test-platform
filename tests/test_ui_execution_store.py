@@ -46,9 +46,9 @@ def test_create_freezes_snapshots_and_intents_atomically(tmp_path):
     assert os.stat(path.parent).st_mode & 0o777 == 0o700
     assert os.stat(path).st_mode & 0o777 == 0o600
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"batches", "case_attempts", "snapshots", "device_leases", "delivery_outbox"} <= tables
+        assert {"batches", "case_attempts", "snapshots", "device_leases", "delivery_outbox", "ui_monkey_runs"} <= tables
         indexes = {row[1] for row in db.execute("PRAGMA index_list(batches)")}
         assert "batches_actor_app_time" in indexes
 

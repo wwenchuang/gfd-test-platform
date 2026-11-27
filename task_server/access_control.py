@@ -11,6 +11,17 @@ def _mcp_route(method, path):
             (method in {'GET','HEAD'} and path in {'/api/platform/mcp/runs','/api/platform/mcp/acceptance','/api/platform/mcp/junit','/api/platform/mcp/recovery-drill','/api/platform/mcp/report','/api/platform/mcp/diagnosis'}))
 
 
+def _monkey_permission(method, path):
+    if path == '/api/ui-monkey/schedules':
+        return 'ui.view' if method in {'GET','HEAD'} else 'ui.edit' if method == 'POST' else None
+    base = r'/api/ui-monkey/runs'
+    if method in {'GET', 'HEAD'} and re.fullmatch(base + r'(?:/mon_[0-9a-f]{32})?', path):
+        return 'ui.view'
+    if method == 'POST' and re.fullmatch(base + r'(?:/mon_[0-9a-f]{32}/(?:analysis|stop))?', path):
+        return 'ui.execute'
+    return None
+
+
 def _schedule_permission(method, path):
     if method in {'GET', 'HEAD'} and (path == '/api/ui-schedules' or
             re.fullmatch(r'/api/ui-schedules/(android|ios)/options', path)):
@@ -235,6 +246,8 @@ class MainAccess:
         method = method.upper()
         permission = self.permission_for(method, path, qs, body)
         self.require(permission)
+        if _monkey_permission(method, path):
+            return  # The service enforces current app scope and persisted ownership.
         if _schedule_permission(method, path):
             if method == 'POST':
                 self.require('ui.execute')
@@ -369,6 +382,8 @@ class MainAccess:
             return 'ui.execute'
         if _mcp_route(method, path) or is_knowledge_read_route(method, path):
             return "ui.view"
+        if permission := _monkey_permission(method, path):
+            return permission
         schedule_permission = _schedule_permission(method, path)
         if schedule_permission:
             return schedule_permission
@@ -419,6 +434,8 @@ class MainAccess:
     def filter(self, path, payload):
         if not isinstance(payload, dict):
             return payload
+        if _monkey_permission('GET', path):
+            return payload  # The service limits history to the authenticated user and selected app.
         if _schedule_permission('GET', path):
             return payload  # The schedule service authorizes the fixed app before reading cases.
         if path == "/api/platform/mcp/runs":

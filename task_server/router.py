@@ -2366,7 +2366,8 @@ def _get_runner_jobs_next(handler, qs):
             })
 
     if not selected:
-        handler._json({"ok": True, "job": None})
+        from .services.ui_monkey_service import claim as claim_monkey
+        handler._json({"ok": True, "job": claim_monkey(runner_id, runner_device_ids_qs)})
         return
     selected_is_yaml_dry_run = str(selected.get("job_type") or selected.get("type") or "").strip().lower() == "yaml_dry_run"
 
@@ -5214,6 +5215,12 @@ def _post_runner_jobs_action(handler, qs, path):
     parts = [part for part in tail.split("/") if part]
     job_id = parts[0] if parts else ""
     action = parts[1] if len(parts) > 1 else ""
+    if job_id.startswith('mon_'):
+        if _require_runner_auth(handler):
+            return
+        from .services.ui_monkey_service import callback
+        _ui_monkey_response(handler, lambda: callback(job_id, action, handler._body()), require_enabled=False)
+        return
     if job_id and action == "progress":
         _handle_runner_job_progress(handler, job_id)
         return
@@ -6609,6 +6616,62 @@ def _ui_batch_error(handler, error):
         handler._json({"ok": False, "code": code, "error": "执行批次请求无效"}, 400)
     elif isinstance(error, (sqlite3.Error, OSError)):
         handler._json({"ok": False, "code": "batch_store_unavailable", "error": "执行批次暂时不可用"}, 503)
+
+
+def _ui_monkey_response(handler, fn, require_enabled=True):
+    from .services.ui_execution_contract import AccessDenied
+    from .services.ui_monkey_service import MonkeyError
+    if require_enabled and not _ui_batch_enabled():
+        handler._json({"ok": False, "code": "feature_disabled"}, 404)
+        return
+    try:
+        result = fn()
+    except AccessDenied as error:
+        handler._json({"ok": False, "code": error.code, "error": "没有此任务的操作权限。"}, 403)
+    except MonkeyError as error:
+        handler._json({"ok": False, "code": error.code, "error": error.message}, error.status)
+    except (sqlite3.Error, OSError):
+        handler._json({"ok": False, "code": "store_unavailable", "error": "任务存储暂时不可用。"}, 503)
+    else:
+        handler._json({"ok": True, **result})
+
+
+@route_get("/api/ui-monkey/schedules")
+def _get_monkey_schedules(handler, qs):
+    from .services.ui_monkey_schedule import list_schedules
+    _ui_monkey_response(handler, lambda: {"schedules": list_schedules(qs.get("app_id"))}, require_enabled=False)
+
+
+@route_post("/api/ui-monkey/schedules")
+def _post_monkey_schedule(handler, qs):
+    from .services.ui_monkey_schedule import save_schedule
+    _ui_monkey_response(handler, lambda: {"schedule": save_schedule(handler._body())})
+
+
+@route_get("/api/ui-monkey/runs")
+def _get_monkey_runs(handler, qs):
+    from .services.ui_monkey_service import list_runs
+    _ui_monkey_response(handler, lambda: {"runs": list_runs(qs.get("app_id"))}, require_enabled=False)
+
+
+@route_post("/api/ui-monkey/runs")
+def _post_monkey_run(handler, qs):
+    from .services.ui_monkey_service import create_run
+    _ui_monkey_response(handler, lambda: {"run": create_run(handler._body())})
+
+
+@route_get_regex(r"^/api/ui-monkey/runs/(mon_[0-9a-f]{32})$")
+def _get_monkey_run(handler, qs, match):
+    from .services.ui_monkey_service import get_run
+    _ui_monkey_response(handler, lambda: {"run": get_run(match.group(1))}, require_enabled=False)
+
+
+@route_post_regex(r"^/api/ui-monkey/runs/(mon_[0-9a-f]{32})/(stop|analysis)$")
+def _post_monkey_action(handler, qs, match):
+    from .services.ui_monkey_service import analyze, stop
+    action = match.group(2)
+    run = stop if action == "stop" else analyze
+    _ui_monkey_response(handler, lambda: {"run": run(match.group(1))}, require_enabled=action != "stop")
 
 
 def _schedule_response(handler, fn):

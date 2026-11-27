@@ -120,6 +120,7 @@ const WORKFLOW_SECTIONS = {
   ai_billing: { index: "", title: "Token 用量与费用", help: "查看百炼工作空间最近七天的模型 Token 用量。", cards: [], checklist: [] },
   ai_practice: { index: '', title: 'AI 测试实战', help: '按周练习并查看阶段证据。', cards: [], checklist: [] },
   ui_start: { index: '', title: '开始测试', help: '选择用例和手机，查看本次测试结果。', cards: [], checklist: [] },
+  ui_monkey: { index: '', title: 'Monkey 稳定性测试', help: '在所选手机上执行随机操作并查看运行证据。', cards: [], checklist: [] },
   ui_schedules: { index: '', title: '定时任务', help: '查看和编辑智小白 3D 每日 UI 回归。', cards: [], checklist: [] },
   ui_library: { index: '', title: '用例库', help: '按应用、模块查找可复用用例。', cards: [], checklist: [] },
   ui_reports: { index: '', title: '我的报告', help: '查看你发起的测试及当次结果。', cards: [], checklist: [] },

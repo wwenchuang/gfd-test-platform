@@ -92,6 +92,8 @@ class UiExecutionLifecycle:
             if not row or row['status'] not in ('queued','blocked'):
                 return False
             lease = db.execute('SELECT * FROM device_leases WHERE platform=? AND device_id=?', (row['platform'],row['device_id'])).fetchone()
+            if self.monkey_device_reserved(db, row['device_id']):
+                return False
             if lease and lease['attempt_id'] != attempt_id:
                 return False
             if not lease:
@@ -115,10 +117,15 @@ class UiExecutionLifecycle:
             self._rollup(db, row['ui_batch_id'])
             return token
 
+    @staticmethod
+    def monkey_device_reserved(db, device_id):
+        return bool(db.execute("""SELECT 1 FROM ui_monkey_runs WHERE device_id=?
+            AND status IN ('queued','running','stopping')""", (device_id,)).fetchone())
+
     def device_reserved(self, device_id, except_job_id=''):
         db = self._connect()
         try:
-            return bool(db.execute('SELECT 1 FROM device_leases l JOIN case_attempts a USING(attempt_id) WHERE l.device_id=? AND a.dispatch_key<>?', (device_id,except_job_id)).fetchone())
+            return self.monkey_device_reserved(db, device_id) or bool(db.execute('SELECT 1 FROM device_leases l JOIN case_attempts a USING(attempt_id) WHERE l.device_id=? AND a.dispatch_key<>?', (device_id,except_job_id)).fetchone())
         finally:
             db.close()
 

@@ -182,3 +182,19 @@ test('polling invalidates confirmation without taking focus from another control
 });
 
 test('settled execution exposes replay in either result host without formal report',t=>{const f=fixture(t),b=batch();b.status='passed';b.execution_settled=true;b.report_status='not_requested';f.view.update(f.node,b,{replay:()=>{}});assert.equal(f.node.querySelector('[data-batch-action="replay"]').hidden,false);b.execution_settled=false;f.view.update(f.node,b,{replay:()=>{}});assert.equal(f.node.querySelector('[data-batch-action="replay"]').hidden,true);});
+
+test('running indicator uses the reported case and step and clears when settled',t=>{
+  const f=fixture(t),b=batch();
+  f.view.update(f.node,b);
+  const indicator=f.node.querySelector('[data-batch-live]');
+  assert.equal(indicator.hidden,false);
+  assert.match(indicator.textContent,/点击我的.*步骤已结束 1 \/ 3/);
+  assert.equal(f.node.querySelector('[data-phase=active]').style.width,'100%');
+  assert.match(f.node.querySelector('[data-phase-counts]').textContent,/已结束 0 · 处理中 1/);
+  assert.equal(f.node.querySelector('[data-batch-progress]').value,0);
+  b.case_attempts[0].status='passed';b.execution_settled=true;b.status='passed';
+  f.view.update(f.node,b);
+  assert.ok(indicator.hidden);
+  assert.equal(f.node.querySelector('[data-phase=ended]').style.width,'100%');
+  assert.equal(f.node.querySelector('[data-batch-progress]').value,1);
+});

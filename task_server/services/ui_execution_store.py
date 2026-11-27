@@ -63,7 +63,7 @@ class UiExecutionStore(UiExecutionLifecycle):
         db.execute("PRAGMA busy_timeout=10000")
         db.execute("PRAGMA foreign_keys=ON")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4, 5):
+        if version not in (0, 1, 2, 3, 4, 5, 6):
             db.close()
             raise RuntimeError("Unsupported UI execution schema version")
         if version == 0:
@@ -210,6 +210,39 @@ class UiExecutionStore(UiExecutionLifecycle):
                 db.execute("ROLLBACK")
                 db.close()
                 raise
+        if version < 6:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS ui_monkey_runs (
+                    run_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, owner_json TEXT NOT NULL,
+                    app_id TEXT NOT NULL, platform TEXT NOT NULL, runner_id TEXT NOT NULL,
+                    device_id TEXT NOT NULL, target_package TEXT NOT NULL, version_json TEXT NOT NULL,
+                    request_id TEXT NOT NULL, event_count INTEGER, duration_seconds INTEGER, seed INTEGER NOT NULL,
+                    mode TEXT NOT NULL, status TEXT NOT NULL, created_ns INTEGER NOT NULL,
+                    updated_ns INTEGER NOT NULL, started_ns INTEGER, executed INTEGER NOT NULL DEFAULT 0,
+                    elapsed_seconds INTEGER NOT NULL DEFAULT 0,
+                    claim_hash TEXT NOT NULL DEFAULT '', log TEXT NOT NULL DEFAULT '',
+                    message TEXT NOT NULL DEFAULT '', crash_log TEXT NOT NULL DEFAULT '',
+                    analysis TEXT, UNIQUE(owner_id, request_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS ui_monkey_device ON ui_monkey_runs(device_id)
+                    WHERE status IN ('queued','running','stopping');
+                CREATE INDEX IF NOT EXISTS ui_monkey_history ON ui_monkey_runs(owner_id,app_id,created_ns DESC);
+                CREATE INDEX IF NOT EXISTS ui_monkey_queue ON ui_monkey_runs(runner_id,created_ns) WHERE status='queued';
+                CREATE TABLE IF NOT EXISTS ui_monkey_schedules (
+                    schedule_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, owner_json TEXT NOT NULL,
+                    app_id TEXT NOT NULL, runner_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                    config_json TEXT NOT NULL, due_at INTEGER, UNIQUE(app_id,runner_id,device_id)
+                );
+                CREATE INDEX IF NOT EXISTS ui_monkey_schedule_due ON ui_monkey_schedules(due_at);
+                CREATE TABLE IF NOT EXISTS ui_monkey_schedule_days (
+                    schedule_id TEXT NOT NULL REFERENCES ui_monkey_schedules(schedule_id),
+                    day TEXT NOT NULL, request_id TEXT NOT NULL UNIQUE, owner_json TEXT NOT NULL,
+                    config_json TEXT NOT NULL, run_id TEXT, PRIMARY KEY(schedule_id,day)
+                );
+                PRAGMA user_version=6;
+                COMMIT;
+            """)
         return db
 
     def create_batch(self, prepared):
