@@ -29,3 +29,41 @@ def test_report_ignores_javascript_containing_fake_dump(tmp_path,monkeypatch):
     (tmp_path/'own.html').write_text("""<script>let template='<script type="midscene_web_dump"'+n+'>';</script>"""
             +'<script type="midscene_web_dump" data-group-id="a">'+json.dumps(dump)+'</script>')
     assert visual.report_steps({'report_url':'/reports/own.html'})==[{'id':'sample','label':'首页可见'}]
+
+
+def test_launch_identifies_edition_across_steps(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setattr(visual.config, 'REPORT_DIR', str(tmp_path))
+    def action(action_type, param, sid):
+        return {'subType': action_type, 'param': param, 'uiContext': {'screenshot': {'id': sid}}}
+    dump = {'executions': [
+        {'tasks': [action('Launch', {'uri': 'com.kfb.model'}, 'launch')]},
+        {'tasks': [action('Assert', {'prompt': '拼图'}, 'phone'),
+                   action('Launch', {'uri': 'com.kfb.model.hd'}, 'hd-launch'),
+                   action('Assert', {}, 'hd'), action('Launch', {'uri': 'other.app'}, 'other')]}]}
+    (tmp_path / 'editions.html').write_text('<script type="midscene_web_dump">' + json.dumps(dump) + '</script>')
+    rows = visual.report_steps({'report_url': '/reports/editions.html'})
+    assert [row.get('app_edition') for row in rows] == ['手机版','手机版','HD 平板版','HD 平板版', None]
+
+
+def test_mismatched_figma_is_rejected_before_export():
+    hd = visual.design_edition('mTqhy1AQBFFZiELl01ww8b')
+    phone = visual.design_edition('2jTQVOVDORiU3yQlQQBsoJ')
+    assert hd == 'HD 平板版' and phone == '手机版'
+    for design, app in [(hd, phone), (phone, hd)]:
+        with pytest.raises(ValueError, match='请选择同一端'):
+            visual.check_editions(design, app)
+    visual.check_editions(phone, phone)
+    assert visual.design_edition('unregistered') is None
+
+
+def test_compare_rejects_hd_file_for_phone_job_before_model(monkeypatch):
+    from contextlib import nullcontext
+    monkeypatch.setattr(visual.design, '_db', lambda: nullcontext(None))
+    monkeypatch.setattr(visual.design, '_source', lambda *args: (None, {'title':'拼图'}))
+    monkeypatch.setattr(visual, 'job_record', lambda *args: {})
+    monkeypatch.setattr(visual, 'report_steps', lambda *args: ({'app_edition':'手机版'}, b'screenshot'))
+    monkeypatch.setattr(visual, 'boards', lambda *args: pytest.fail('should stop before exporting a board'))
+    with pytest.raises(ValueError, match='设计稿为HD 平板版，此步骤执行的是手机版'):
+        visual.compare('owner', 'user', {'source':'s','environment':'正式','job':'j','step':'s',
+                                        'link':'https://www.figma.com/design/mTqhy1AQBFFZiELl01ww8b/'})

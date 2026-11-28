@@ -28,6 +28,23 @@ def target(link):
     return key,node
 
 
+# These Figma libraries belong to separate builds of 智小白 3D.
+FIGMA_EDITIONS = {
+    'mTqhy1AQBFFZiELl01ww8b': 'HD 平板版',
+    '2jTQVOVDORiU3yQlQQBsoJ': '手机版',
+}
+APP_EDITIONS = {'com.kfb.model': '手机版', 'com.kfb.model.hd': 'HD 平板版'}
+
+
+def design_edition(file_key):
+    return FIGMA_EDITIONS.get(file_key)
+
+
+def check_editions(design, app):
+    if design and app and design != app:
+        raise ValueError(f'设计稿为{design}，此步骤执行的是{app}。请选择同一端的画板和执行记录。')
+
+
 def frame_choices(root):
     rows=[]
     def walk(n):
@@ -58,7 +75,7 @@ def boards(link,version=''):
     except (ValueError,OSError) as exc:
         raise ValueError('Figma 文件读取失败，请核对服务端凭证、文件分享权限和链接') from exc
     if not root or not data.get('version'):raise ValueError('该版本中没有找到设计节点')
-    return dict(file=key,file_name=data.get('name',''),version=data['version'],boards=frame_choices(root))
+    return dict(file=key,file_name=data.get('name',''),design_edition=design_edition(key),version=data['version'],boards=frame_choices(root))
 
 
 def image_data(blob):
@@ -121,14 +138,22 @@ def report_steps(job,selected=None):
     try:records=[run for dump in parser.dumps for run in json.loads(dump)['executions']]
     except (ValueError,KeyError,TypeError) as exc:raise ValueError('报告中的步骤记录不可读取') from exc
     rows=[];seen=set()
+    edition = None
     for ex in records:
         for action in ex.get('tasks',[]):
+            params = action.get('param')
+            if action.get('subType') == 'Launch':
+                uri = params.get('uri') if isinstance(params, dict) else None
+                edition = APP_EDITIONS.get(uri) if isinstance(uri, str) else None
             sid=((action.get('uiContext') or {}).get('screenshot') or {}).get('id')
             if not isinstance(sid,str) or not re.fullmatch(r'[\w-]{1,100}',sid) or sid in seen:continue
             seen.add(sid)
             params=action.get('param') or {}
             label=next((params.get(k) for k in ('dataDemand','prompt','uri') if isinstance(params.get(k),str)),action.get('subType','截图')) if isinstance(params,dict) else '截图'
-            rows.append(dict(id=sid,label=str(label)[:180]))
+            row = dict(id=sid, label=str(label)[:180])
+            if edition:
+                row['app_edition'] = edition
+            rows.append(row)
     if selected is None:return rows
     row=next((r for r in rows if r['id']==selected),None)
     if not row:raise ValueError('截图不属于所选运行')
@@ -160,7 +185,17 @@ def result(owner,key,images=False):
         row=conn.execute('SELECT '+('meta,board,shot' if images else 'meta')+' FROM comparisons WHERE owner=? AND id=?',(owner,key)).fetchone()
     if row is None:raise design.Missing()
     out=dict(json.loads(row[0]),id=key)
-    if images:out.update(board_image=data_url(row[1]),device_image=data_url(row[2]))
+    out['design_edition'] = design_edition(out.get('file'))
+    if images:
+        out.update(board_image=data_url(row[1]),device_image=data_url(row[2]))
+        # Historical pairs predate edition tracking. Recover it from the original launch.
+        if 'app_edition' not in out.get('step', {}) and out.get('step') and out.get('report'):
+            try:
+                steps = report_steps({'report_url': out['report']})
+                original = next((s for s in steps if s['id'] == out['step']['id']), {})
+                out['step']['app_edition'] = original.get('app_edition')
+            except (ValueError, OSError):
+                pass
     return out
 
 
@@ -176,6 +211,8 @@ def compare(owner,username,body):
     if body['environment'] not in ('测试','正式'):raise ValueError('请选择真机实际使用的环境')
     job=job_record(username,body['job'])
     step,shot=report_steps(job,body['step'])
+    file_key, _ = target(body['link'])
+    check_editions(design_edition(file_key), step.get('app_edition'))
     catalog=boards(body['link'],body['version'])
     board=next((r for r in catalog['boards'] if r['id']==body['board']),None)
     if not board or catalog['version']!=body['version']:raise ValueError('未找到所选版本的画板，请重新读取设计')

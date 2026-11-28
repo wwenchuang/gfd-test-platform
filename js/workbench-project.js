@@ -223,7 +223,7 @@ window.WorkbenchProject = (() => {
     body.hidden=true;box.append(body);
     const base='/platform/requirement-design/visual';
     let sourceSequence=0,boardSequence=0,stepSequence=0,viewSequence=0, version='', loaded=false;
-    let busy=false;
+    let busy=false, designEdition='';
     const deviceNames=new Map();
     const live=()=>current() && box.isConnected;
     function field(name,tag){
@@ -246,13 +246,27 @@ window.WorkbenchProject = (() => {
       select.replaceChildren(new Option(label,''));
       for(const [value,name] of entries)select.add(new Option(name,value));
     }
-    function ready(){run.disabled=busy || !(source.value && version && board.value && job.value && step.value && env.value);}
+    const editionHint=line(body,'','p');editionHint.setAttribute('role','status');run.before(editionHint);
+    function ready(){
+      const appEdition=step.selectedOptions[0]?.dataset.edition;
+      const mismatch=designEdition && appEdition && designEdition!==appEdition;
+      editionHint.textContent=version ? '设计稿：'+(designEdition||'端别待确认')+
+        (step.value?' · 执行应用：'+(appEdition||'端别待确认'):'')+
+        (mismatch?'。请选择同一端的画板和执行记录。':'') : '';
+      run.disabled=busy || !!mismatch || !(source.value && version && board.value && job.value && step.value && env.value);
+    }
     function fail(err){if(live())status.textContent=err.message||'读取失败，请重试';}
     async function show(id){
       const seq=++viewSequence;
       const r=await apiRequest(base+'/result?id='+encodeURIComponent(id));
       if(!live()||seq!==viewSequence)return;
       result.replaceChildren();line(result,r.title+' · '+r.environment+'环境','h3');
+      const appEdition=r.step.app_edition, edition=r.design_edition;
+      if(edition && appEdition && edition!==appEdition){
+        line(result,'跨端历史对照 · '+edition+'设计稿 / '+appEdition+'执行 · 此报告仅供参考，不计入同端 UI 验收','strong');
+      }else{
+        line(result,'设计稿：'+(edition||'端别待确认')+' · 执行应用：'+(appEdition||'端别待确认'));
+      }
       line(result,r.file_name+' / '+r.board.name+' · Figma 版本 '+r.version);
       const href='https://www.figma.com/design/'+encodeURIComponent(r.file)+'/?node-id='+encodeURIComponent(r.board.id.replace(':','-'));
       const designLink=line(result,'打开 Figma 原画板','a');designLink.href=href;designLink.target='_blank';designLink.rel='noopener';
@@ -275,7 +289,7 @@ window.WorkbenchProject = (() => {
       const btn=line(history,label,'button');btn.onclick=()=>show(id).catch(fail);
     }
     async function changeSource(){
-      const seq=++sourceSequence;++boardSequence;++stepSequence;++viewSequence;
+      const seq=++sourceSequence, initialBoardSequence=++boardSequence;++stepSequence;++viewSequence;
       result.replaceChildren();history.replaceChildren();link.value='';version='';env.value='';
       options(board,'先读取画板');options(job,'选择执行记录');options(step,'选择执行记录后可查看截图');status.textContent='';ready();
       if(!source.value)return;
@@ -283,17 +297,18 @@ window.WorkbenchProject = (() => {
       if(!live()||seq!==sourceSequence)return;
       const prior=r.history?.[0];
       const ref=r.refs?.[0] || (prior && {file_key:prior.file,node_id:prior.board.id});
-      if(ref)link.value='https://www.figma.com/design/'+ref.file_key+'/?node-id='+ref.node_id.replace(':','-');
+      const prefill=ref && initialBoardSequence===boardSequence;
+      if(prefill)link.value='https://www.figma.com/design/'+ref.file_key+'/?node-id='+ref.node_id.replace(':','-');
       options(job,'选择执行记录',r.jobs.map(j=>[j.id,[j.name,j.time,deviceNames.get(j.device)||j.device].filter(Boolean).join(' · ')]));
       for(const item of r.history)addHistory(item.id,'查看已存对照 · '+item.board.name+' · '+item.environment+' · '+item.executed);
-      if(ref)await readBoards();
+      if(prefill)await readBoards();
     }
     async function readBoards(){
       const seq=++boardSequence;version='';options(board,'正在读取…');ready();
       try{
         const r=await apiRequest(base+'/boards',{method:'POST',body:{link:link.value.trim()}});
         if(!live()||seq!==boardSequence)return;
-        version=r.version;options(board,'选择画板',r.boards.map(b=>[b.id,b.name+' · '+b.width+' × '+b.height+' · '+b.id]));
+        version=r.version;designEdition=r.design_edition||'';options(board,'选择画板',r.boards.map(b=>[b.id,b.name+' · '+b.width+' × '+b.height+' · '+b.id]));
         if(r.boards.length===1)board.selectedIndex=1;
         status.textContent=r.file_name+' · '+r.boards.length+' 个画板';ready();
       }catch(e){if(seq===boardSequence){options(board,'读取失败');fail(e);}}
@@ -304,7 +319,10 @@ window.WorkbenchProject = (() => {
       const seq=++stepSequence;options(step,'选择截图步骤');ready();
       if(!job.value)return;
       try{const r=await apiRequest(base+'/steps?job='+encodeURIComponent(job.value));
-        if(live()&&seq===stepSequence)options(step,'选择截图步骤',r.steps.map((s,i)=>[s.id,(i+1)+'. '+s.label]));
+        if(live()&&seq===stepSequence){
+          options(step,'选择截图步骤',r.steps.map((s,i)=>[s.id,(i+1)+'. '+s.label]));
+          r.steps.forEach((s,i)=>{step.options[i+1].dataset.edition=s.app_edition||'';});
+        }
       }catch(e){if(seq===stepSequence)fail(e);}
     };
     board.onchange=step.onchange=env.onchange=ready;
