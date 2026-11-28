@@ -108,6 +108,16 @@ def register_routes(route_get,route_post):
             return visual.result(owner,qs['id'],images=True)
         _serve(handler,read)
 
+    @route_post(visual_path + '/investigate')
+    def visual_investigate(handler, qs):
+        def read(owner, username):
+            body=handler._body()
+            _params(body, ('id',))
+            if not isinstance(body['id'],str) or len(body['id'])!=64:
+                raise ValueError('对照报告编号无效')
+            return visual.puzzle_investigation.investigate(owner,username,body['id'])
+        _serve(handler,read)
+
     @route_post(visual_path + '/compare')
     def visual_compare(handler, qs):
         def create(owner,username):

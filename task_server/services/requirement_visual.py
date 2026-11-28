@@ -16,6 +16,7 @@ from PIL import Image
 from task_server import config
 from . import job_service, knowledge_service as figma, requirement_design as design
 from . import requirement_design_model as model
+from . import puzzle_investigation
 
 
 def target(link):
@@ -169,6 +170,7 @@ def db():
     os.close(os.open(path,os.O_CREAT|os.O_WRONLY|os.O_NOFOLLOW,0o600))
     with closing(sqlite3.connect(path,timeout=10)) as conn,conn:
         conn.execute('CREATE TABLE IF NOT EXISTS comparisons(owner TEXT,id TEXT,scope TEXT,updated REAL,meta TEXT,board BLOB,shot BLOB,PRIMARY KEY(owner,id))')
+        conn.execute("CREATE TABLE IF NOT EXISTS puzzle_investigations(owner TEXT,id TEXT,confirmed INTEGER,receipt TEXT,PRIMARY KEY(owner,id))")
         yield conn
 
 
@@ -196,6 +198,10 @@ def result(owner,key,images=False):
                 out['step']['app_edition'] = original.get('app_edition')
             except (ValueError, OSError):
                 pass
+        out['api_investigation_supported'] = puzzle_investigation.supports(out)
+        with db() as conn:
+            saved=conn.execute('SELECT receipt FROM puzzle_investigations WHERE owner=? AND id=?',(owner,key)).fetchone()
+        out['api_investigation'] = json.loads(saved[0]) if saved else None
     return out
 
 
@@ -235,4 +241,11 @@ def compare(owner,username,body):
     if not any(findings[k] for k in ('matches','differences','unverified')):raise ValueError('模型未给出可核对的观察')
     _,size=image_data(shot)
     meta=dict(scope=sid,title=source['title'],environment=body['environment'],board=board,file=catalog['file'],file_name=catalog['file_name'],version=catalog['version'],job=job['job_id'],device=job.get('device_id'),executed=job.get('started_at'),step=step,size=size,report=urlsplit(job['report_url']).path,findings={k:findings[k] for k in ('matches','differences','unverified')},model=receipt.get('model') or requested,model_request=request_id,usage=receipt.get('usage',{}))
-    return dict(id=save(owner,meta,png,shot))
+    key=save(owner,meta,png,shot)
+    if puzzle_investigation.supports(meta):
+        try:
+            puzzle_investigation.investigate(owner,username,key)
+        except (ValueError,OSError,RuntimeError,design.Busy):
+            # The original visual report stays available for retry from the report page.
+            pass
+    return dict(id=key)

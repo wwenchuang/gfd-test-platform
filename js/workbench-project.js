@@ -212,6 +212,86 @@ window.WorkbenchProject = (() => {
     box.addEventListener('toggle',() => {if (box.open) refresh();});
     box.querySelector('button').onclick = refresh;
   }
+  function showApiEvidence(parent, source, id) {
+    const label='接口请求与响应证据';
+    const figure=line(parent,'','figure');
+    figure.style.margin='12px 0';
+    line(figure,label,'figcaption');
+    const thumbnail=document.createElement('img');
+    thumbnail.src=source;thumbnail.alt=label;
+    thumbnail.style.cssText='display:block;max-width:100%;width:480px;height:auto;margin:8px 0';
+    figure.append(thumbnail);
+    const zoom=line(figure,'放大证据图','button');
+    zoom.type='button';
+    zoom.onclick=()=>{
+      const dialog=line(figure,'','dialog');
+      dialog.className='ui-evidence-dialog';
+      dialog.setAttribute('aria-label',label);
+      const header=line(dialog,'','header');
+      line(header,label,'strong');
+      const close=line(header,'关闭预览','button');
+      const viewport=line(dialog,'','div');
+      viewport.dataset.evidenceViewport='';
+      viewport.classList.add('is-zoomed');
+      const img=document.createElement('img');img.src=source;img.alt=label;viewport.append(img);
+      close.type='button';close.onclick=()=>dialog.close();
+      dialog.onclick=event=>{if(event.target===dialog)dialog.close();};
+      dialog.onclose=()=>{dialog.remove();zoom.focus();};
+      dialog.showModal();
+    };
+    const download=line(figure,'下载证据 PNG','a');
+    download.style.marginInlineStart='12px';download.href=source;download.download='接口核对-'+id+'.png';
+  }
+  function attachApiInvestigation(parent, report, base, live) {
+    if (!report.api_investigation_supported && !report.api_investigation) return;
+    line(parent,'接口核对','h4');
+    const result=line(parent,'','div');
+    const feedback=line(parent,'','p');
+    feedback.setAttribute('role','status');
+    function render(data) {
+      result.replaceChildren();
+      line(result,data.status==='confirmed'?'已核实':'待核实','strong');
+      if(data.conclusion)line(result,data.conclusion);
+      const names=[['设计稿',data.design_name],['真机',data.device_name],['接口',data.api_name]]
+        .filter(([,name])=>name).map(([label,name])=>label+'「'+name+'」');
+      if(names.length)line(result,names.join(' · '));
+      const req=data.request||{};
+      if(req.queried_at)line(result,'核对时间　'+req.queried_at);
+      if(req.url)line(result,[req.method,req.url].filter(Boolean).join(' '));
+      const receipt=[['HTTP',req.http],['业务码',req.business_code],['返回条数',req.count],['请求 ID',req.request_id],['响应请求 ID',req.response_request_id]]
+        .filter(([,value])=>value!=null && value!=='').map(([label,value])=>label+' '+value);
+      if(receipt.length)line(result,receipt.join(' · '));
+      if(data.image_match){
+        const labels={matched:'已匹配',no_match:'未匹配',ambiguous:'匹配到多处',invalid_image:'图片不可读',insufficient_detail:'图片细节不足'};
+        const parts=[['设计稿',data.image_match.board],['真机',data.image_match.shot]]
+          .map(([label,image])=>label+(labels[image?.status]||'待核实'));
+        line(result,'接口预设图　'+parts.join(' · '));
+      }
+      if(typeof data.evidence_image==='string' && data.evidence_image.startsWith('data:image/png;base64,'))
+        showApiEvidence(result,data.evidence_image,report.id);
+      if(/^https:\/\/project\.feishu\.cn\//i.test(data.issue_url||'')){
+        const issue=line(result,'查看已有飞书缺陷','a');
+        issue.href=data.issue_url;issue.rel='noopener noreferrer';issue.target='_blank';
+      }
+    }
+    if(report.api_investigation)render(report.api_investigation);
+    if(!report.api_investigation_supported)return;
+    const button=line(parent,report.api_investigation?'重新核对接口':'一键核对接口','button');
+    button.type='button';
+    result.before(button);
+    button.onclick=async()=>{
+      if(!live() || !button.isConnected || button.disabled)return;
+      button.disabled=true;feedback.textContent='正在请求接口并核对证据…';
+      try{
+        const {investigation}=await apiRequest(base+'/investigate',{method:'POST',body:{id:report.id}});
+        if(!live() || !button.isConnected)return;
+        if(!investigation)throw Error('未收到核对结果，请重试。');
+        render(investigation);button.textContent='重新核对接口';feedback.textContent='';
+      }catch(error){
+        if(live() && button.isConnected)feedback.textContent=error.message||'接口核对失败，请重试。';
+      }finally{button.disabled=false;}
+    };
+  }
   function attachVisual(panel,current) {
     if (!hasPermission('platform.configure') || !hasPermission('ui.view') ||
         !(currentAccessProfile?.is_superuser || currentAccessProfile?.scope?.ui_apps==='*')) return;
@@ -284,6 +364,7 @@ window.WorkbenchProject = (() => {
         line(result,title,'strong');const list=document.createElement('ul');result.append(list);
         for(const item of r.findings[key])line(list,item,'li');
       }
+      attachApiInvestigation(result,r,base,live);
     }
     function addHistory(id,label){
       const btn=line(history,label,'button');btn.onclick=()=>show(id).catch(fail);
