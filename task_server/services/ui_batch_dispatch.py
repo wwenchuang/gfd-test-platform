@@ -46,11 +46,16 @@ def _target_check(batch, attempt, occupancy=None, fresh=False):
     code = _unsupported_selection(batch['selection'])
     if code:
         return code
-    metadata = next(s['metadata'] for s in batch['snapshots'] if s['snapshot_id'] == attempt['snapshot_id'])
+    snapshot = next(s for s in batch['snapshots'] if s['snapshot_id'] == attempt['snapshot_id'])
+    metadata = snapshot['metadata']
     if metadata.get('trial_contract'):
         from .ui_case_draft_execution import validate_trial_snapshot
         if not validate_trial_snapshot(batch, attempt):
             return 'draft_trial_gate_invalid'
+    elif metadata.get('generated_plan'):
+        from .requirement_scripts import validate_snapshot
+        if not validate_snapshot(batch, attempt, snapshot):
+            return 'generated_case_gate_required'
     elif metadata.get('status') not in {'active','baseline'}:
         # Generated drafts must go through Agent static/scoring/smoke gates first.
         return 'generated_case_gate_required'

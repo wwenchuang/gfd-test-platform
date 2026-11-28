@@ -16,7 +16,7 @@ KEY = re.compile(r'[A-Za-z0-9_-]{1,80}')
 
 def _config(cfg):
     required = {'project_key','work_item_type_key','app_id','username','user_id','acceptance_field','search_group'}
-    optional = {'scenario_field','revision_field','mode','figma_field','figma_files','build_field','qa_packages','build_source'}
+    optional = {'scenario_field','revision_field','mode','figma_field','figma_files','build_field','qa_packages','build_source','generated_targets'}
     if not isinstance(cfg, dict) or not required <= set(cfg) <= required | optional:
         raise ValueError('invalid_config')
     for name in ('project_key','work_item_type_key','acceptance_field','scenario_field','revision_field'):
@@ -26,6 +26,14 @@ def _config(cfg):
         raise ValueError('invalid_mode')
     if cfg.get('mode') == 'qa_build_smoke':
         packages = cfg.get('qa_packages')
+        targets = cfg.get('generated_targets',{})
+        if not isinstance(targets,dict) or not isinstance(packages,dict) or set(targets)-set(packages):
+            raise ValueError('invalid_qa_target')
+        for target in targets.values():
+            if not isinstance(target,dict) or set(target)!={'runner_id','device_id'}:
+                raise ValueError('invalid_qa_target')
+            for value in target.values():
+                requirement_intake._identifier(value)
         source = cfg.get('build_source','project_field')
         if source not in ('packaging_hook','project_field') or (source=='packaging_hook' and 'build_field' in cfg):
             raise ValueError('invalid_build_source')
@@ -33,7 +41,7 @@ def _config(cfg):
                 or not isinstance(packages,dict) or not packages or set(packages)-{'android','ios'}
                 or not all(isinstance(v,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,128}',v) for v in packages.values())):
             raise ValueError('qa_build_scope_required')
-    elif {'build_field','qa_packages','build_source'} & cfg.keys():
+    elif {'build_field','qa_packages','build_source','generated_targets'} & cfg.keys():
         raise ValueError('invalid_mode')
     if 'figma_field' in cfg or 'figma_files' in cfg:
         files = cfg.get('figma_files')

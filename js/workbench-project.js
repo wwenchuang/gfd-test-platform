@@ -1,10 +1,10 @@
 // Start a mapped smoke run from a requirement, or inspect the evidence without starting a run.
 window.WorkbenchProject = (() => {
   const intakePath = '/platform/requirement-design/intake';
-  const statuses = {build_unavailable:'构建回执待核对 · 暂缓执行',source_unavailable:'需求或设计材料读取异常 · 暂缓测试',smoke_running:'冒烟执行中 · 后续回归等待结果',smoke_blocked:'冒烟未达继续条件 · 后续回归已暂停',design_completed:'测试设计已生成', design_failed:'测试设计生成失败',
+  const statuses = {awaiting_qa_target:'QA 包已到 · 等待配置该端的 QA 执行设备',no_admitted_scripts:'QA 包已到 · 本端尚无通过校验的需求脚本',build_unavailable:'构建回执待核对 · 暂缓执行',source_unavailable:'需求或设计材料读取异常 · 暂缓测试',smoke_running:'冒烟执行中 · 后续回归等待结果',smoke_blocked:'冒烟未达继续条件 · 后续回归已暂停',design_completed:'测试设计已生成', design_failed:'测试设计生成失败',
     design_running:'正在设计测试用例',design_busy:'测试设计等待模型资源',
     awaiting_qa_build:'已转测 · 等待 QA 构建', design_changed_since_build:'已转测 · 构建对应的设计已变更',
-    awaiting_design:'已转测 · 等待当前版本测试设计',awaiting_reviewed_baselines:'已转测 · 待绑定已发布基线',awaiting_mapping:'已接收，等待配置对应基线', blocked:'执行受阻', partial:'部分平台已提交', submitted:'已提交回归'};
+    awaiting_design:'已转测 · 等待当前版本测试设计',awaiting_reviewed_baselines:'已转测 · 待绑定已发布基线',awaiting_mapping:'需求已登记 · 可以从验收条件生成脚本', blocked:'执行受阻', partial:'部分平台已提交', submitted:'已提交回归'};
   function line(parent, text, tag='p') {
     const node = document.createElement(tag);
     node.textContent = text;
@@ -24,6 +24,10 @@ window.WorkbenchProject = (() => {
     const build=receipt.build_context;
     if(build) line(output,[build.phase==='smoke'?'冒烟':'功能回归','QA',build.platform==='ios'?'iOS':'Android',
       build.version_name+' ('+build.version_code+')','构建 '+build.build_id].join(' · '));
+    if(build?.script_origin==='requirement'){
+      line(output,'本版需求生成 '+build.generated_count+' 条可执行脚本，另有 '+build.deferred.length+' 条未纳入本端执行。');
+      for(const item of build.deferred) line(output,item.title+' · '+item.reason);
+    }
     line(output, (receipt.origin === 'integration' ? '飞书项目' : '工作台登记') + ' · ' + receipt.requirement_id + (/^[a-f0-9]{64}$/.test(build?.requirement_revision||receipt.revision)?'':' · '+(build?.requirement_revision||receipt.revision)));
     const designer = () => current() && hasPermission('platform.configure') && hasPermission('ui.view')
       && (currentAccessProfile?.is_superuser === true || currentAccessProfile?.scope?.ui_apps === '*');
@@ -36,6 +40,14 @@ window.WorkbenchProject = (() => {
         const steps=line(details,'','ol');
         for(const step of c.steps || []) line(steps,step,'li');
         line(details,'预期结果　'+c.expected);
+        for(const [platform,script] of Object.entries(c.scripts || {})){
+          line(details,(platform==='ios'?'iOS':'Android')+' · '+(script.ready?'脚本已就绪 · 可执行性 '+script.score+' 分':script.reason));
+          if(script.ready) {
+            const preview=line(details,'','details');
+            line(preview,'查看生成的脚本','summary');
+            line(preview,script.yaml_content,'pre');
+          }
+        }
         if(c.plan?.evidence) line(details,'验收证据　'+c.plan.evidence);
       }
     }
@@ -50,6 +62,10 @@ window.WorkbenchProject = (() => {
       };
     }
     if (receipt.status === 'awaiting_mapping' && designer()) {
+      const uploadLabel=line(output,'需求附图（可选 PNG）','label');
+      const image=document.createElement('input');
+      image.type='file';image.accept='image/png';
+      uploadLabel.appendChild(image);
       const button = line(output,'用验收条件准备测试设计','button');
       button.type = 'button';
       button.onclick = async () => {
@@ -57,7 +73,16 @@ window.WorkbenchProject = (() => {
         button.disabled = true;
         try {
           const {source,event_id,app_id} = receipt;
-          const result = await apiRequest(intakePath + '/design-source',{method:'POST',body:{source,event_id,app_id}});
+          const body={source,event_id,app_id};
+          if(image.files?.length){
+            const file=image.files[0];
+            if(file.size>2*1024*1024){line(output,'原型图需要小于等于 2 MB。');return;}
+            body.image_base64=await new Promise((resolve,reject)=>{
+              const reader=new FileReader();
+              reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=reject;reader.readAsDataURL(file);
+            });
+          }
+          const result = await apiRequest(intakePath + '/design-source',{method:'POST',body});
           const panel = output.closest('[data-practice-workbench]')?.querySelector('[data-requirement-design]');
           if (!designer() || !output.isConnected) return;
           if (!panel || !/^[a-f0-9]{64}$/.test(result.source_id)) throw Error();

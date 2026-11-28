@@ -165,18 +165,23 @@ def _prepare_ui_batch(actor, normalized, profile, key, request_hash):
     selected = {case["case_id"]: case for case in normalized["cases"]}
     catalog = {row.get("case_id"): row for row in case_service.list_task_case_assets()
                if row.get("case_id") in selected and not row.get("error")}
+    from .requirement_scripts import active_assets
+    generated = active_assets.get() or {}
+    catalog.update(generated)
     snapshots, attempts = [], []
     for case in normalized["cases"]:
         asset = catalog.get(case["case_id"])
         if not asset or asset.get("app_package") != normalized["app_id"]:
             raise BatchValidationError("case_unavailable")
         try:
-            source = case_service.task_case_yaml(asset)
+            source = asset['yaml_content'] if case['case_id'] in generated else case_service.task_case_yaml(asset)
         except (OSError, ValueError) as error:
             raise BatchValidationError("case_unavailable") from error
         if not isinstance(source, str) or hashlib.sha256(source.encode("utf-8")).hexdigest() != case["revision"]:
             raise BatchValidationError("case_revision_changed")
         metadata = {key: asset.get(key) for key in ("module", "file", "task_name", "app_package", "app_name", "platform", "business", "status", "goal", "expected")}
+        if case['case_id'] in generated:
+            metadata.update({k:asset[k] for k in ('generated_plan','source_id','design_case')})
         metadata['app_name'] = application.get('name') or asset.get('app_name') or '应用'
         snapshots.append({"case_id": case["case_id"], "case_revision": case["revision"],
                           "source_yaml": source, "source_hash": case["revision"], "metadata": metadata})

@@ -256,7 +256,7 @@ def recent(limit=10):
                 row=last_design(db,stage['owner'],stage['design_source'])
                 if row and row['result']:
                     result=json.loads(row['result'])
-                    item['design_cases']=[{k:c[k] for k in ('title','precondition','steps','expected','point_ids','plan') if k in c}
+                    item['design_cases']=[{k:c[k] for k in ('title','precondition','steps','expected','point_ids','plan','scripts') if k in c}
                                           for c in result.get('cases',[])]
             if stage['owner']==actor['user_id']:
                 item['design_source']=stage['design_source']
@@ -283,6 +283,18 @@ def _receipt(db, row, actor, event_id, *, private):
         blockers.append({'platform':run['platform'], **({'code':run['blocker'] or 'handoff_pending'} if private else {})})
     if not runs:
         status = 'awaiting_mapping'
+        if private and row['origin']=='workbench':
+            designed = db.execute("""SELECT s.id, d.result FROM sources s JOIN designs d
+                ON d.source=s.id AND d.owner=s.owner WHERE s.owner=? AND d.status='completed'
+                AND json_extract(s.meta,'$.requirement_ref.source')=?
+                AND json_extract(s.meta,'$.requirement_ref.app_id')=?
+                AND json_extract(s.meta,'$.requirement_ref.requirement_id')=?
+                AND json_extract(s.meta,'$.requirement_ref.revision')=? ORDER BY d.finished DESC LIMIT 1""",
+                (actor['user_id'],event['source'],event['app_id'],event['requirement_id'],event['revision'])).fetchone()
+            if designed:
+                event['design_source']=designed['id']
+                event['design_cases']=json.loads(designed['result']).get('cases',[])
+                status='design_completed'
     elif not blockers:
         status = 'submitted'
     else:
@@ -294,7 +306,7 @@ def _receipt(db, row, actor, event_id, *, private):
     return {**event, 'origin':row['origin'], 'created_at':row['created'], 'event_id':event_id, 'status':status, 'batches':batches, 'blockers':blockers}
 
 
-def design_source(source, event_id, app_id):
+def design_source(source, event_id, app_id, image_base64=None):
     """Save the accessible intake's original clauses in the designer's private source library."""
     actor = current_actor()
     require_ui_actor(actor, permission='ui.view', app_id=_identifier(app_id))
@@ -316,7 +328,13 @@ def design_source(source, event_id, app_id):
                 prd_file_sha256=hashlib.sha256('\n'.join(clauses).encode()).hexdigest(),
                 clauses=[{'id':'P' + str(i), 'text':clause} for i, clause in enumerate(clauses, 1)],
                 prototypes=[], requirement_ref={k: material[k] for k in IDS})
-    return requirement_design._store(owner, meta, {})
+    images = {}
+    if image_base64 is not None:
+        png = requirement_design.clean_prototype_png(image_base64)
+        meta['prototypes'] = [dict(id='V1',file='prototype.png',caption='需求随附的原型图',
+                                   sha256=hashlib.sha256(png).hexdigest())]
+        images['V1'] = png
+    return requirement_design._store(owner, meta, images)
 
 
 def requirement_for_batch(batch):

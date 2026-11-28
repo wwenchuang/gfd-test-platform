@@ -286,7 +286,7 @@ def test_qa_build_dispatch_checks_material_and_installed_build(inputs,monkeypatc
         with pytest.raises(ValueError,match='build_scope_mismatch'):
             builds.submit_build(cfg,material,None,{**receipt,'environment':'production'})
         assert builds.submit_build(cfg,material,None,{**receipt,'source_id':'stale'})['status']=='design_changed_since_build'
-        assert builds.submit_build(cfg,material,None,receipt)['status']=='awaiting_reviewed_baselines'
+        assert builds.submit_build(cfg,material,None,receipt)['status']=='awaiting_qa_target'
         mapping=json.loads(path.read_text())[0]
         mapping.update(source=material['source'],requirement_id='19',revision=sid)
         path.write_text(json.dumps([mapping]))
@@ -420,7 +420,8 @@ def test_generation_outage_backoff_preserves_failed_run(inputs,monkeypatch):
     assert second['design_id']!=first['design_id']
 
 
-def test_transfer_gate_reconciles_frozen_remaining_after_runner_receipt(inputs,monkeypatch):
+@pytest.mark.parametrize('generated,smoke_result', [(False,'passed'),(True,'passed'),(True,'failed')])
+def test_transfer_gate_reconciles_frozen_remaining_after_runner_receipt(inputs,monkeypatch,generated,smoke_result):
     from task_server.services import case_service, feishu_requirement_sync as sync, feishu_build_plan as plans
     from task_server.services import job_service, requirement_design_model, ui_batch_dispatch as dispatch
     from task_server.services import ui_execution_service
@@ -428,16 +429,29 @@ def test_transfer_gate_reconciles_frozen_remaining_after_runner_receipt(inputs,m
     base=case_service.list_task_case_assets()[0]
     monkeypatch.setattr(case_service,'list_task_case_assets',lambda:[base,{**base,'case_id':'case-2'}])
     monkeypatch.setattr(requirement_design,'authorized',lambda *_:True)
-    monkeypatch.setattr(requirement_design_model,'generate',lambda *_:{'cases':[{'id':'C1'}]})
+    from test_requirement_scripts import example
+    from task_server.services import requirement_scripts
+    def generate(*args):
+        cases = []
+        for i,title in enumerate(('查看活动规则','打开活动积分')):
+            case = dict(example(),id=f'C{i+1}',title=title)
+            case['navigation']['ios'] = case['navigation']['android']
+            case['scripts'] = {'ios':requirement_scripts.prepare(case,APP,'ios')}
+            cases.append(case)
+        return {'cases':cases}
+    monkeypatch.setattr(requirement_design_model,'generate',generate)
     cfg=dict(user_id='u-a',username='a',project_key='P',app_id=APP,acceptance_field='ac',
              work_item_type_key='story',search_group={'search_params':[{'param_key':'status','value':'test'}]},
              mode='qa_build_smoke',qa_packages={'ios':'com.kfb.3d'},build_source='packaging_hook')
+    if generated:
+        cfg['generated_targets']={'ios':{k:TARGET[k] for k in ('device_id','runner_id')}}
     row=dict(project_key='P',work_item_type_key='story',id=19,name='套件',fields=[dict(field_key='ac',field_value='打开套件')])
     def poll():
         return sync.sync(cfg,post=lambda *args:{'data':[row]})['counts']
     dev={**cfg,'mode':'development_design'}
     dev.pop('build_source')
     dev.pop('qa_packages')
+    dev.pop('generated_targets',None)
     assert sync.sync(dev,post=lambda *args:{'data':[row]})['counts']=={'design_completed':1}
     context=plans.build_context(cfg,'19')
     plans.record_build(cfg,dict(context,environment='qa',platform='ios',package='com.kfb.3d',
@@ -448,17 +462,22 @@ def test_transfer_gate_reconciles_frozen_remaining_after_runner_receipt(inputs,m
     binding=json.loads(path.read_text())[0]
     binding.update(source='feishu-project:P',requirement_id='19',revision=context['source_id'])
     binding['runs'][0]['remaining_cases']=[{'case_id':'case-2','revision':REVISION}]
-    path.write_text(json.dumps([binding]))
-    assert poll()=={'smoke_running':1}
+    path.write_text(json.dumps([] if generated else [binding]))
+    assert poll()==poll()=={'smoke_running':1}
     with actor_context(ACTORS['a']):
         smoke=ui_execution_service.list_ui_batches(ACTORS['a'])['items'][0]
     attempt=dispatch.dispatch_ui_batch(smoke['ui_batch_id'])['case_attempts'][0]
     job=job_service.get_job(attempt['job_id'])
     claim=dispatch.claim_ui_job(job)
-    receipt=dict(type='result',status='passed',execution_stopped=True,runner_id='mac',device_id='iphone',
+    receipt=dict(type='result',status=smoke_result,execution_stopped=True,runner_id='mac',device_id='iphone',
                  ui_claim_token=claim['ui_claim_token'],execution_progress={'version':1,'tasks':[
                      dict(status='passed',current_step=2,total_steps=3,steps=[])]})
-    assert dispatch.record_ui_attempt_event(job['job_id'],1,receipt)['status']=='passed'
+    assert dispatch.record_ui_attempt_event(job['job_id'],1,receipt)['status']==smoke_result
+    if smoke_result=='failed':
+        assert poll()==poll()=={'smoke_blocked':1}
+        with actor_context(ACTORS['a']):
+            assert len(ui_execution_service.list_ui_batches(ACTORS['a'])['items'])==1
+        return
     path.write_text('[]')
     assert poll()==poll()=={'submitted':1}
     with actor_context(ACTORS['a']):
@@ -466,4 +485,29 @@ def test_transfer_gate_reconciles_frozen_remaining_after_runner_receipt(inputs,m
         assert len(items)==2
         main=next(b for b in items if b['ui_batch_id']!=smoke['ui_batch_id'])
         saved=ui_execution_service.get_ui_batch(ACTORS['a'],main['ui_batch_id'])
-        assert saved['case_attempts'][0]['case_id']=='case-2'
+        assert saved['case_attempts'][0]['case_id'].endswith('-C2-ios' if generated else 'case-2')
+
+
+def test_installed_qa_uses_configured_device_and_requires_exact_version(inputs,monkeypatch):
+    from task_server.services import requirement_scripts as scripts, requirement_intake as intake
+    from task_server.services import requirement_design_model as model
+    from test_requirement_scripts import example
+    monkeypatch.setattr(requirement_design,'authorized',lambda *_:True)
+    case=example()
+    case['navigation']['ios']=case['navigation']['android']
+    case['scripts']={'ios':scripts.prepare(case,APP,'ios')}
+    monkeypatch.setattr(model,'generate',lambda *_:{'cases':[case]})
+    e=event(source='workbench')
+    with actor_context(ACTORS['a']):
+        intake.submit(e)
+        sid=intake.design_source(e['source'],e['event_id'],APP)
+        rid=requirement_design.start('u-a','a',sid,'e'*32,wait=True)['id']
+        with pytest.raises(ValueError,match='尚未登记'):
+            scripts.installed_qa('u-a','a',sid,rid,'ios','1 (2)')
+        (requirement_design._root()/'requirement-qa-targets.json').write_text(json.dumps({APP:{'ios':{k:TARGET[k] for k in ('runner_id','device_id')}}}))
+        with pytest.raises(ValueError,match='版本已经变化'):
+            scripts.installed_qa('u-a','a',sid,rid,'ios','old')
+        first=scripts.installed_qa('u-a','a',sid,rid,'ios','1 (2)')
+        again=scripts.installed_qa('u-a','a',sid,rid,'ios','1 (2)')
+        assert first['batches'][0]['ui_batch_id']==again['batches'][0]['ui_batch_id']
+        assert first['origin']=='workbench' and first['build_context']['build_id']=='installed-2'

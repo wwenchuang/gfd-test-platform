@@ -580,7 +580,7 @@ function attachRequirementDesign(page,current){
       if(body){options.method='POST';options.body=JSON.stringify(body);}
       const response=await nativeFetch(url,options);
       if(!response.ok){
-        if(url===path+'/collection'&&[400,409].includes(response.status)){
+        if((url===path+'/collection'||url===path+'/installed-qa')&&[400,409].includes(response.status)){
           const issue=await response.json().catch(()=>({}));
           if(typeof issue.error==='string')throw Object.assign(Error(issue.error.slice(0,250)),{status:response.status,userMessage:true});
         }
@@ -853,7 +853,7 @@ function attachRequirementDesign(page,current){
     lastRuns=snapshot;runsBox.replaceChildren();
     if(!runs.length){write(runsBox,'p','此需求还没有生成记录。');return;}
     for(const [index,run] of runs.entries()){
-      const state=({completed:run.result?.checks?.partial?'草稿不完整 · 待人工复核':'已生成 · 待人工复核',running:'生成中',failed:'生成失败'})[run.status]||'状态待核验';
+      const state=({completed:run.result?.cases?.some(c=>Object.values(c.scripts||{}).some(s=>s.ready))?'已生成可执行脚本':run.result?.checks?.partial?'草稿不完整 · 待人工复核':'已生成 · 待人工复核',running:'生成中',failed:'生成失败'})[run.status]||'状态待核验';
       const row=details(runsBox,state+' · '+uiPracticeTime(run.created*1000));
       row.open=index===0;
       write(row,'p','生成编号 '+run.id);
@@ -869,6 +869,13 @@ function attachRequirementDesign(page,current){
         const cases=details(row,'测试用例（'+result.cases.length+'）');
         for(const item of result.cases){
           write(cases,'h4',item.id+' · '+item.title);write(cases,'p','关联测试点　'+item.point_ids.join('、'));
+          for(const [platform,script] of Object.entries(item.scripts || {})){
+            const label=platform==='ios'?'iOS':'Android';
+            if(script.ready){
+              const preview=details(cases,label+' 可执行脚本 · '+script.score+' 分');
+              write(preview,'pre',script.yaml_content);
+            }else write(cases,'p',label+' 暂缓执行 · '+script.reason);
+          }
           if(item.plan){
             const kinds={ui:'界面回归',api:'接口校验',manual:'人工核对'};
             const platforms={android:'Android',ios:'iOS',web:'网页',service:'服务端',unknown:'适用端待确认'};
@@ -900,6 +907,40 @@ function attachRequirementDesign(page,current){
       const button=write(row,'button','下载证据 JSON');button.type='button';button.dataset.designExport='';
       const material=source;
       if(run.status==='completed'&&result?.cases?.length)standardExport(row,run,material);
+      if(material?.requirement_ref?.source==='workbench' && result?.cases?.some(c=>Object.values(c.scripts||{}).some(s=>s.ready))){
+        const trial=details(row,'用已安装的 QA 包验证脚本');
+        const platform=document.createElement('select');
+        platform.setAttribute('aria-label','测试平台');
+        for(const os of ['android','ios'].filter(os=>result.cases.some(c=>c.scripts?.[os]?.ready))){
+          const option=write(platform,'option',os==='ios'?'iOS':'Android');option.value=os;
+        }
+        trial.appendChild(platform);
+        const label=write(trial,'label','测试机应用版本（含版本号）');
+        const version=document.createElement('input');version.placeholder='例如 2.0.3 (57)';label.appendChild(version);
+        const start=write(trial,'button','在已登记的 QA 机上跑冒烟');start.type='button';
+        const message=write(trial,'p','');message.setAttribute('role','status');
+        start.onclick=async()=>{
+          if(start.disabled || !live(serial) || source!==material)return;
+          const expected=version.value.trim();
+          if(!expected){message.textContent='请填写测试机上的应用版本。';return;}
+          start.disabled=true;
+          try{
+            while(row.isConnected && live(serial) && source===material){
+              const {intake}=await request(path+'/installed-qa',{source_id:material.id,design_id:run.id,platform:platform.value,expected_version:expected});
+              if(!row.isConnected || source!==material)return;
+              const status={smoke_running:'冒烟执行中，等待真机回执',smoke_blocked:'冒烟未通过，后续已暂停',submitted:'执行已提交',blocked:'执行受阻',no_admitted_scripts:'本端暂无通过校验的脚本'};
+              message.textContent=status[intake.status] || intake.status;
+              for(const b of intake.batches||[]){
+                if(!/^uib_[0-9a-f]{32}$/.test(b.ui_batch_id))continue;
+                const link=write(message,'a',' 查看本次运行');link.href='?ui_batch='+b.ui_batch_id;
+              }
+              if(intake.status!=='smoke_running')break;
+              await new Promise(resolve=>setTimeout(resolve,8000));
+            }
+          }catch(error){if(row.isConnected)message.textContent=error.message || '执行失败，请查看需求回执。';}
+          finally{start.disabled=false;}
+        };
+      }
       button.onclick=()=>{
         if(!live(serial)||!row.isConnected||material!==source)return;
         downloadDesignJson({source:material,run},'需求测试设计-'+run.id+'.json');

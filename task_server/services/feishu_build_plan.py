@@ -3,7 +3,7 @@ import hashlib
 import json
 
 from . import feishu_development_design as development
-from . import requirement_design, requirement_intake as intake
+from . import requirement_scripts, requirement_design, requirement_intake as intake
 
 
 BUILD_FIELDS = {'project_key','requirement_id','revision','source_id','platform','environment',
@@ -80,7 +80,7 @@ def current_builds(cfg,event):
     return list(found.values())
 
 
-def _frozen_plan(cfg,event,sid,platform,revision):
+def _frozen_plan(cfg,event,sid,platform,revision,design,build,*,use_bindings=True):
     scope=(cfg['user_id'],cfg['app_id'],revision)
     with requirement_design._db() as db:
         db.execute('BEGIN IMMEDIATE')
@@ -93,11 +93,15 @@ def _frozen_plan(cfg,event,sid,platform,revision):
         coverage={'title':source['title'], 'clauses':[c['text'] for c in source['clauses']],
                   'frames':[{'file_key':r['file_key'],'node_id':r['node_id'],'sha256':p['sha256']}
                             for r,p in zip(source.get('figma_refs',[]),source['prototypes'])]}
-        mapped=dict(intake._binding({**event,'revision':sid},None,release_plan=True,coverage=coverage))
-        if platform not in mapped:
-            return None
-        smoke,remaining=mapped[platform]
-        plan={'smoke':smoke,'remaining':remaining}
+        mapped=dict(intake._binding({**event,'revision':sid},None,release_plan=True,coverage=coverage)) if use_bindings else {}
+        if platform in mapped:
+            smoke,remaining=mapped[platform]
+            plan={'smoke':smoke,'remaining':remaining}
+        else:
+            plan = requirement_scripts.build_plan(cfg, design, sid, platform, revision)
+            if 'status' in plan:
+                return plan
+            plan['build'] = build
         db.execute('INSERT INTO feishu_qa_plans VALUES (?,?,?,?)',(*scope,intake._json(plan)))
         return plan
 
@@ -136,21 +140,31 @@ def submit_build(cfg, event, link, value, *, current_source=None):
         design = development.last_design(db,cfg['user_id'],sid)
     if not design or design['status'] != 'completed' or not json.loads(design['result']).get('cases'):
         return {'status':'awaiting_design'}
+    return submit_design(cfg,event,sid,platform,value,json.loads(design['result']),origin='integration')
+
+
+def submit_design(cfg,event,sid,platform,value,design,*,origin):
     # Pin reviewed cases to this exact design, never to a broad scenario fallback.
     revision = hashlib.sha256(intake._json(value).encode()).hexdigest()
-    plan = _frozen_plan(cfg,event,sid,platform,revision)
-    if plan is None:
-        return {'status':'awaiting_reviewed_baselines'}
     build = {k:value[k] for k in ('package','version_name','version_code','environment','build_id')}
+    plan = _frozen_plan(cfg,event,sid,platform,revision,design,build,use_bindings=origin=='integration')
+    if 'status' in plan:
+        return {**plan,'source_id':sid}
     request = {**plan['smoke'], 'expected_build':build}
     def submit_phase(phase,cases):
         run_revision = hashlib.sha256(f'{revision}/{phase}'.encode()).hexdigest()
         context=dict(requirement_revision=event['revision'],source_id=sid,phase=phase,platform=platform,**build)
+        if plan.get('assets'):
+            context.update(script_origin='requirement',generated_count=len(plan['assets']),deferred=plan['deferred'])
         with intake._db() as db:
             db.execute('INSERT OR IGNORE INTO requirement_build_context VALUES (?,?,?,?)',
                        (cfg['user_id'],cfg['app_id'],run_revision,intake._json(context)))
         material = {**event,'event_id':event['requirement_id']+'.'+run_revision,'revision':run_revision}
-        return intake.submit(material,origin='integration',build_plan=[(platform,{**request,'cases':cases})])
+        token = requirement_scripts.active_assets.set(plan.get('assets'))
+        try:
+            return intake.submit(material,origin=origin,build_plan=[(platform,{**request,'cases':cases})])
+        finally:
+            requirement_scripts.active_assets.reset(token)
     smoke = submit_phase('smoke',request['cases'])
     if not plan['remaining'] or smoke['status']!='submitted':
         return smoke

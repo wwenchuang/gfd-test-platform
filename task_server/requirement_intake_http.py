@@ -40,7 +40,7 @@ def register_routes(route_get, route_post):
     def design_source(handler, qs):
         def save():
             body = handler._body()
-            if qs or not isinstance(body, dict) or set(body) != {'source', 'event_id', 'app_id'}:
+            if qs or not isinstance(body, dict) or set(body) not in ({'source','event_id','app_id'}, {'source','event_id','app_id','image_base64'}):
                 raise ValueError('请选择目标应用内的需求事件')
             return intake.design_source(**body)
         _serve(handler, save, key='source_id')

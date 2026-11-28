@@ -5816,12 +5816,16 @@ def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", 
                 and text_has(action_text, "长按输入", "录音", "麦克风", "权限", "直接说", "点击语音")
             ):
                 issues.append(prefix + "语音录音链路依赖权限/麦克风/长按状态，默认不直接 Runner 执行")
+        # A terminal assertion may quote a gallery button without operating the picker.
+        upload_steps = re.sub(r"\s+", "", "".join(
+            value for action,value in action_rows if action not in ("aiWaitFor","aiAssert","logScreenshot")
+        )).lower()
         unstable_upload = (
-            text_has(compact, "上传图片", "选择图片", "图片上传", "图片选择", "照片选择", "从相册选择", "图库选择", "系统相册选择")
-            or (text_has(compact, "相机拍照") and text_has(compact, "拍照上传", "点击拍照", "确认使用照片", "使用照片"))
+            text_has(upload_steps, "上传图片", "选择图片", "图片上传", "图片选择", "照片选择", "从相册选择", "图库选择", "系统相册选择")
+            or (text_has(upload_steps, "相机拍照") and text_has(upload_steps, "拍照上传", "点击拍照", "确认使用照片", "使用照片"))
             or (
-                text_has(compact, "相册")
-                and text_has(compact, "上传图片", "选择图片", "图片上传", "图片选择", "照片选择", "从相册选择")
+                text_has(upload_steps, "相册")
+                and text_has(upload_steps, "上传图片", "选择图片", "图片上传", "图片选择", "照片选择", "从相册选择")
             )
         )
         if unstable_upload and not text_has(compact, "已准备测试图片", "固定测试图片", "测试图片已准备"):

@@ -32,7 +32,7 @@ def request_body_limit(path):
     upload limit. JSON and base64 chunk endpoints stay on the normal limit.
     """
     if path == "/api/platform/requirement-design/intake/design-source":
-        return 2048
+        return 3 * 1024 * 1024
     if path == "/api/platform/requirement-design/intake":
         return 128 * 1024
     if path == "/api/platform/requirement-design/knowledge/search":

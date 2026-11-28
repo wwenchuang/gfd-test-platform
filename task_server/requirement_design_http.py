@@ -152,6 +152,18 @@ def register_routes(route_get,route_post):
             return design.prototype(owner,qs['source_id'],qs['id'])
         _serve(handler,read,image=True)
 
+    @route_post(BASE+'/installed-qa')
+    def installed_qa(handler,qs):
+        from .services.requirement_scripts import installed_qa as submit_trial
+        def run(owner,username):
+            _params(qs,())
+            body=handler._body()
+            _params(body,('source_id','design_id','platform','expected_version'))
+            if (not all(isinstance(v,str) for v in body.values()) or body['platform'] not in ('android','ios')):
+                raise ValueError('请选择需求设计及 QA 目标平台')
+            return {'intake':submit_trial(owner,username,body['source_id'],body['design_id'],body['platform'],body['expected_version'])}
+        _serve(handler,run)
+
     @route_post(BASE+'/source')
     def material(handler,qs):
         def upload(owner,username):
