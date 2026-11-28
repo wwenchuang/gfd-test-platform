@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the ZXB environment token expiry every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=midscene-zxb-environment-renew.service
+
+[Install]
+WantedBy=timers.target

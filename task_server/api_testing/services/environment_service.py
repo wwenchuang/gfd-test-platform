@@ -486,7 +486,7 @@ class EnvironmentService:
         repository.flush()
         return self._view(repository, environment, revision)
 
-    def create_revision(self, environment_id, payload, secret_updates, actor_id):
+    def create_revision(self, environment_id, payload, secret_updates, actor_id, *, expected_revision_id=None):
         access.require_permission(actor_id, "api.environment")
         changes = _mapping(payload, "environment revision")
         unknown = set(changes) - {
@@ -508,6 +508,8 @@ class EnvironmentService:
             if environment is None:
                 raise EnvironmentNotFoundError("API environment was not found")
             access.require_environment_configuration(session, environment, actor, name=str(changes.get("name") or ""))
+            if expected_revision_id is not None and str(environment.active_revision_id) != str(expected_revision_id):
+                raise EnvironmentInputError("environment revision changed during credential renewal")
             previous = repository.get_revision(environment.active_revision_id)
             if previous is None:
                 raise EnvironmentNotFoundError("API environment active revision was not found")

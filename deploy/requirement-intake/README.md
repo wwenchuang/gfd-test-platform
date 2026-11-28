@@ -137,3 +137,11 @@ build 对象在 build-context 返回的四个字段外，需要 platform、envir
 个人账号可授权需求同步器读取指定 PRD。服务器使用官方飞书 CLI 的用户身份，凭据保存在服务用户专用的 `/var/lib/midscene-feishu-docs`（权限 0700）。安装时核对官方发布包校验和，将可执行文件放入 `/opt/midscene-feishu-docs/lark-cli`。使用与轮询器相同的系统用户及该专用 HOME，通过官方页面完成配置和个人只读授权。运行 `auth status --json --verify` 检查用户授权，并通过工作项里的真实链接读取节点和正文验收。持续同步需要可续期的用户授权。
 
 在轮询器环境中设置 `MIDSCENE_FEISHU_DOCS_IDENTITY=user`，并将授权读取的文档标识以空格分隔配置在 `MIDSCENE_FEISHU_DOCS_USER_DOCUMENTS`，例如 `wiki/<节点标识>`。链接须同时匹配原有企业域名。撤销个人授权后同步器会记录读取错误。请勿将个人密码、浏览器 Cookie 或用户令牌填入项目配置。
+
+### Android 打包群与蒲公英网页安装
+
+在设备所在的 Mac 上运行 `python3 scripts/feishu_android_build.py PROFILE --mode upgrade`。默认 lookup 只查询。new 要求设备未安装应用，upgrade 保留数据，reinstall 要求设备已安装、Android SDK 的 aapt 和 apksigner 可用，并显式传 --confirm-clear-data。脚本仅处理 Android 单 APK。Mac 需要可用的 Chrome、Node.js、Playwright 和原有 Python Runner 运行环境。
+
+PROFILE 为管理员在 Runner 本机保存的 JSON，包含 environment（qa 或 production）、title（通知标题）、chat_id、sender_id、version、package、device、smoke_yaml（当前环境已验证的脚本）、runner_script 和 reports_dir。可用 runner_env_file 加载 Runner 配置，node_modules 指定 Playwright 的模块目录。飞书凭据由服务环境 FEISHU_BUILD_APP_ID 和 FEISHU_BUILD_APP_SECRET 提供。脚本只查询该群及指定发送者；QA 包通知须明确标记 QA 或测试环境。群通知和详情页的构建、版本须一致，网页直接下载无需蒲公英 API Key。正式版手动联调可传 --page、--build 和 --code。
+
+服务器凭证任务使用本目录的 midscene-zxb-environment-renew.service 和 .timer。在已部署 scripts/renew_zxb_environment.py 及对应 EnvironmentService 条件更新后，通过 systemctl enable --now midscene-zxb-environment-renew.timer 启用。service 使用原有服务器授权配置。令牌无效时终止该环境更新，可从日志核对环境和业务码。

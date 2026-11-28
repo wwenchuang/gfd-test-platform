@@ -1,0 +1,12 @@
+[Unit]
+Description=Renew the saved ZXB QA and production API credentials
+
+[Service]
+Type=oneshot
+User=midscene
+Group=midscene
+WorkingDirectory=/opt/midscene-task-platform
+EnvironmentFile=/etc/midscene-feishu-requirements.env
+Environment=MIDSCENE_ENV_FILE=/opt/midscene.env
+Environment=PYTHONPATH=/opt/midscene-task-platform
+ExecStart=/opt/midscene-task-platform/.venv/bin/python scripts/renew_zxb_environment.py --actor admin 测试 正式
