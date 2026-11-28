@@ -115,6 +115,9 @@ function clearUiSimpleReportIntent(expected){
   window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);
 }
 function preferUiSimpleReport(){
+  if(/^[a-f0-9]{64}$/.test(new URLSearchParams(location.search).get('visual_compare')||'')&&canUseTaskWorkbench()){
+    activeWorkflow='ai_practice';return true;
+  }
   if(!isUiSimpleAvailable('ui_reports')||!hasPermission('ui.view')||!uiSimpleReportIntent())return false;
   activeWorkflow='ui_reports';return true;
 }

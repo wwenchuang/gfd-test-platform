@@ -212,6 +212,128 @@ window.WorkbenchProject = (() => {
     box.addEventListener('toggle',() => {if (box.open) refresh();});
     box.querySelector('button').onclick = refresh;
   }
+  function attachVisual(panel,current) {
+    if (!hasPermission('platform.configure') || !hasPermission('ui.view') ||
+        !(currentAccessProfile?.is_superuser || currentAccessProfile?.scope?.ui_apps==='*')) return;
+    const box=document.createElement('article');
+    box.className='workbench-receipt';
+    panel.append(box);
+    const open=line(box,'设计稿与真机对照','button');
+    const body=document.createElement('div');
+    body.hidden=true;box.append(body);
+    const base='/platform/requirement-design/visual';
+    let sourceSequence=0,boardSequence=0,stepSequence=0,viewSequence=0, version='', loaded=false;
+    let busy=false;
+    const deviceNames=new Map();
+    const live=()=>current() && box.isConnected;
+    function field(name,tag){
+      const label=line(body,name,'label');
+      label.style.display='block';
+      const input=document.createElement(tag);label.append(input);
+      input.style.cssText='display:block;max-width:100%;width:100%;margin:4px 0 12px';
+      return input;
+    }
+    const source=field('需求材料','select'), link=field('飞书需求关联的 Figma 文件或画板','input');
+    link.type='url';link.placeholder='粘贴「查看设计稿」的链接';
+    const fetchBoards=line(body,'读取 Figma 画板','button'),board=field('设计画板','select');
+    const job=field('我的真机执行记录','select'),step=field('实测截图所在步骤','select');
+    const env=field('本次真机的实际环境','select');
+    env.add(new Option('请选择环境',''));for(const s of ['测试','正式'])env.add(new Option(s,s));
+    const run=line(body,'对照两张图并保存分析','button');
+    const status=line(body,'','p');status.setAttribute('role','status');
+    const history=document.createElement('div'),result=document.createElement('div');body.append(history,result);
+    function options(select,label,entries=[]){
+      select.replaceChildren(new Option(label,''));
+      for(const [value,name] of entries)select.add(new Option(name,value));
+    }
+    function ready(){run.disabled=busy || !(source.value && version && board.value && job.value && step.value && env.value);}
+    function fail(err){if(live())status.textContent=err.message||'读取失败，请重试';}
+    async function show(id){
+      const seq=++viewSequence;
+      const r=await apiRequest(base+'/result?id='+encodeURIComponent(id));
+      if(!live()||seq!==viewSequence)return;
+      result.replaceChildren();line(result,r.title+' · '+r.environment+'环境','h3');
+      line(result,r.file_name+' / '+r.board.name+' · Figma 版本 '+r.version);
+      const href='https://www.figma.com/design/'+encodeURIComponent(r.file)+'/?node-id='+encodeURIComponent(r.board.id.replace(':','-'));
+      const designLink=line(result,'打开 Figma 原画板','a');designLink.href=href;designLink.target='_blank';designLink.rel='noopener';
+      const pair=document.createElement('div');pair.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:16px';result.append(pair);
+      for(const [label,src] of [['Figma 原画板 · '+r.board.width+' × '+r.board.height,r.board_image],['真机步骤 · '+r.size.join(' × '),r.device_image]]){
+        const figure=document.createElement('figure');figure.style.margin='8px 0';pair.append(figure);
+        line(figure,label,'figcaption');const img=document.createElement('img');img.alt=label;img.src=src;img.style.cssText='width:100%;height:360px;object-fit:contain';figure.append(img);
+      }
+      line(result,'执行设备 '+(deviceNames.get(r.device)||r.device)+' · '+r.executed+' · '+r.step.label);
+      const direct=line(result,'打开本次对照记录','a');direct.href='?visual_compare='+r.id;
+      const report=line(result,'查看原始执行报告','a');report.href=r.report;report.target='_blank';report.rel='noopener';
+      line(result,'AI 对照意见 · '+r.model,'h4');
+      for(const [key,title] of [['matches','两边一致'],['differences','可见差异'],['unverified','待核验']]){
+        if(!r.findings[key]?.length)continue;
+        line(result,title,'strong');const list=document.createElement('ul');result.append(list);
+        for(const item of r.findings[key])line(list,item,'li');
+      }
+    }
+    function addHistory(id,label){
+      const btn=line(history,label,'button');btn.onclick=()=>show(id).catch(fail);
+    }
+    async function changeSource(){
+      const seq=++sourceSequence;++boardSequence;++stepSequence;++viewSequence;
+      result.replaceChildren();history.replaceChildren();link.value='';version='';env.value='';
+      options(board,'先读取画板');options(job,'选择执行记录');options(step,'选择执行记录后可查看截图');status.textContent='';ready();
+      if(!source.value)return;
+      const r=await apiRequest(base+'/context?source='+encodeURIComponent(source.value));
+      if(!live()||seq!==sourceSequence)return;
+      const prior=r.history?.[0];
+      const ref=r.refs?.[0] || (prior && {file_key:prior.file,node_id:prior.board.id});
+      if(ref)link.value='https://www.figma.com/design/'+ref.file_key+'/?node-id='+ref.node_id.replace(':','-');
+      options(job,'选择执行记录',r.jobs.map(j=>[j.id,[j.name,j.time,deviceNames.get(j.device)||j.device].filter(Boolean).join(' · ')]));
+      for(const item of r.history)addHistory(item.id,'查看已存对照 · '+item.board.name+' · '+item.environment+' · '+item.executed);
+      if(ref)await readBoards();
+    }
+    async function readBoards(){
+      const seq=++boardSequence;version='';options(board,'正在读取…');ready();
+      try{
+        const r=await apiRequest(base+'/boards',{method:'POST',body:{link:link.value.trim()}});
+        if(!live()||seq!==boardSequence)return;
+        version=r.version;options(board,'选择画板',r.boards.map(b=>[b.id,b.name+' · '+b.width+' × '+b.height+' · '+b.id]));
+        if(r.boards.length===1)board.selectedIndex=1;
+        status.textContent=r.file_name+' · '+r.boards.length+' 个画板';ready();
+      }catch(e){if(seq===boardSequence){options(board,'读取失败');fail(e);}}
+    }
+    source.onchange=()=>changeSource().catch(fail);fetchBoards.onclick=readBoards;
+    link.oninput=()=>{++boardSequence;version='';options(board,'重新读取画板');ready();};
+    job.onchange=async()=>{
+      const seq=++stepSequence;options(step,'选择截图步骤');ready();
+      if(!job.value)return;
+      try{const r=await apiRequest(base+'/steps?job='+encodeURIComponent(job.value));
+        if(live()&&seq===stepSequence)options(step,'选择截图步骤',r.steps.map((s,i)=>[s.id,(i+1)+'. '+s.label]));
+      }catch(e){if(seq===stepSequence)fail(e);}
+    };
+    board.onchange=step.onchange=env.onchange=ready;
+    run.onclick=async()=>{
+      if(run.disabled)return;
+      const seq=sourceSequence;const payload={source:source.value,link:link.value.trim(),version,board:board.value,job:job.value,step:step.value,environment:env.value};
+      busy=true;ready();status.textContent='正在导出指定版本的画板并分析两张图…';
+      try{
+        const r=await apiRequest(base+'/compare',{method:'POST',body:payload});
+        if(!live()||seq!==sourceSequence)return;
+        await show(r.id);addHistory(r.id,'查看本次已存对照');status.textContent='已保存，可重新打开查看。';
+      }catch(e){if(seq===sourceSequence)fail(e);}finally{busy=false;ready();}
+    };
+    open.onclick=async()=>{
+      body.hidden=!body.hidden;
+      if(body.hidden||loaded)return;
+      try{const r=await apiRequest('/platform/requirement-design');if(!live())return;
+        options(source,'选择需求材料',r.sources.map(s=>[s.id,s.title+' · '+s.version]));loaded=true;
+        const devices=await apiRequest('/ui-executions/devices').catch(()=>({}));
+        for(const d of devices.devices||[])if(d.target?.device_id&&d.name)deviceNames.set(d.target.device_id,d.name);
+      }catch(e){fail(e);}
+    };
+    const wanted=new URLSearchParams(location.search).get('visual_compare');
+    if(/^[a-f0-9]{64}$/.test(wanted||'')){
+      open.click();
+      show(wanted).then(()=>{if(live())result.scrollIntoView({block:'start'});}).catch(fail);
+    }
+    ready();
+  }
   function attachLatest(section,allowed) {
     const list = document.createElement('div');
     list.className = 'workbench-recent-runs';
@@ -262,6 +384,7 @@ window.WorkbenchProject = (() => {
       };
       page.querySelector('.ui-practice-tasks')?.prepend(card);
     }
+    attachVisual(panel,current);
     const refresh = attachRecent(panel,current);
     attachIntake(panel,current,refresh);
     attachLogs(panel,current);
