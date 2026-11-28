@@ -76,6 +76,15 @@ sudo systemctl enable --now midscene-feishu-requirements.timer
 
 上述空间中，Android 开发、iOS 开发、Server 开发的节点 ID 依次为 `waiting_for_android_development`、`state_75`、`waiting_for_ios_development`，公共测试冒烟和 QA 验证为 `state_65` 和 `state_51`。首次试运行时，按业务确认的共同转测节点配置。需求 7082224050 在 2026-11-28 回读为生产验收 `state_62`，在上述两组节点之外，对应单次日志为两个 `outside_current_node`。实际工作项 ID 命中、节点外跳过及设计完成在日志中分别核对。手机版 Figma 链接字段是 `field_4`，文件范围为 `2jTQVOVDORiU3yQlQQBsoJ`。需求文档字段是 `wiki`。专用 QA 包、服务账户与手机 Runner 使用部署时已核实的登记值。尚无可核实的专用 QA 包时，转测项可设置 `"build_source":"packaging_hook","qa_packages":{},"generated_targets":{}`。开发照常同步，命中转测节点时工作台显示等待专用 QA 包，CI 发来的构建被拒绝。
 
+飞书设计字段指向整张 Figma 画布时，可在精确需求的配置中增加 `figma_canvas_frame`。原字段仍提供文件和画布。每轮通过 Figma 文件接口读取指定图层及其祖先，核对文件、画布、画板、图层 ID、图层名和可见性，再按本次文件版本导出画板。图层移到其他画板、隐藏或改名时，工作台暂缓生成并撤销该需求旧的打包上下文。相同正文与画板图复用已有的设计及模型回执。
+
+例如「APP+Pad 全局加载优化」7169491764 的验收文字取自 `description`，手机画布来自 `field_1e9d17`。在独立的 `development_design` 配置中，使用该工作项 ID 的等值范围和实测开发节点，设置 `figma_files` 为单个手机文件，再加入下列绑定。可为现有五分钟轮询的 oneshot 服务追加 `ExecStart=/usr/bin/env MIDSCENE_FEISHU_REQUIREMENT_CONFIG=/etc/midscene-feishu-project/global-loading.json /opt/midscene-task-platform/.venv/bin/python -m task_server.services.feishu_requirement_sync`，沿用服务身份和环境。
+
+```json
+{"figma_canvas_frame":{"file_key":"2jTQVOVDORiU3yQlQQBsoJ","canvas_id":"9232:7925","frame_id":"10051:21131","layer_id":"10108:21997","layer_name":"全局加载"}}
+```
+
+
 开发负责人使用飞书角色字段时，缺陷配置的 `developer_assignment` 可填 `{"requirement_type":"story","developer_field":"role_owners","developer_role":"Server","assignee_field":"<缺陷模板的可写单人字段>"}`。按实际责任角色填写 `developer_role`，仅当该角色唯一且含一名成员时指派。目标字段为多人字段时，在 developer_assignment 中增加 `"assignee_field_type":"multi_user"`，写入单一负责人的数组。本空间实测缺陷处理人为 `issue_operator`，应用级 `"requirement_link_field":"_field_linked_story"` 则写入同一空间、本次需求的数值 ID。普通单人开发字段继续沿用三项配置。角色值和角色负责人结构见[官方 SDK](https://github.com/larksuite/project-oapi-sdk-golang/blob/f35d9ad3ad7b362722a54b16ea2697bf733ae8ee/model/field_value.go)。
 
 开发与转测同步使用已激活且完成初次改密的平台身份，需为超级管理员，或具有 `platform.configure`、`ui.view` 及全部 UI 应用范围。转测还需目标应用的 `ui.execute`；飞书缺陷登记另需 `platform.notify`。

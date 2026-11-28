@@ -646,3 +646,49 @@ def test_title_scope_uses_detail_before_prd_and_revokes_renamed_story(inputs,mon
     for invalid in ('', '  ', '【APP】\n', ['【APP】']):
         with pytest.raises(ValueError):
             sync._config({**cfg,'title_contains':invalid})
+
+
+@pytest.mark.parametrize('mismatch', [None, 'canvas', 'frame', 'layer', 'name', 'hidden', 'linked_canvas'])
+def test_project_canvas_renders_only_its_verified_frame(monkeypatch, mismatch):
+    from task_server.services import feishu_development_design as design, week1_probe
+    binding = dict(file_key='Mobile', canvas_id='3:1', frame_id='3:2', layer_id='3:3', layer_name='全局加载')
+    layer = dict(id='3:3', name='全局加载', type='RECTANGLE')
+    frame = dict(id='3:2', type='FRAME', children=[layer])
+    canvas = dict(id='3:1', type='CANVAS', children=[frame])
+    if mismatch in ('canvas', 'frame', 'layer'):
+        {'canvas':canvas, 'frame':frame, 'layer':layer}[mismatch]['id'] = '9:9'
+    if mismatch == 'name':
+        layer['name'] = '其他图层'
+    if mismatch == 'hidden':
+        frame['visible'] = False
+    calls = []
+    def api(path, query):
+        calls.append((path, query))
+        if path == '/files/Mobile':
+            return {'version':'v7', 'document':{'type':'DOCUMENT', 'children':[canvas]}}
+        assert path == '/images/Mobile'
+        return {'images':{'3:2':'https://example.com/render.png'}}
+    monkeypatch.setattr(design.knowledge_service, 'figma_api_json', api)
+    monkeypatch.setattr(design.knowledge_service, '_urlopen_bytes', lambda *a, **kw: week1_probe.FIXTURE.read_bytes())
+    cfg = dict(figma_files=['Mobile'], figma_canvas_frame=binding)
+    url = 'https://www.figma.com/design/Mobile/test?node-id=' + ('9-9' if mismatch == 'linked_canvas' else '3-1')
+    if mismatch:
+        with pytest.raises(ValueError, match='figma_canvas_frame_mismatch'):
+            design._prototype(cfg, url)
+        assert not any(path.startswith('/images/') for path, _ in calls)
+        return
+    ref, png = design._prototype(cfg, url)
+    assert png and ref == dict(file_key='Mobile', node_id='3:2', version='v7')
+    assert calls == [('/files/Mobile', {'ids':'3:3'}), ('/images/Mobile', dict(ids='3:2', version='v7', format='png', scale='1'))]
+
+
+def test_canvas_binding_requires_a_scoped_file_and_distinct_nodes():
+    from task_server.services import feishu_requirement_sync as sync
+    binding = dict(file_key='Mobile', canvas_id='3:1', frame_id='3:2', layer_id='3:3', layer_name='全局加载')
+    cfg = dict(project_key='P', work_item_type_key='story', app_id=APP, username='a', user_id='u-a',
+               acceptance_field='description', mode='development_design', figma_field='design', figma_files=['Mobile'],
+               search_group={'search_params':[{'param_key':'work_item_id','value':[19]}]}, figma_canvas_frame=binding)
+    sync._config(cfg)
+    for change in ({'file_key':'HD'}, {'layer_id':'3:2'}, {'frame_id':'wrong'}, {'layer_name':' '}):
+        with pytest.raises(ValueError, match='invalid_figma_canvas_frame'):
+            sync._config(dict(cfg, figma_canvas_frame={**binding, **change}))

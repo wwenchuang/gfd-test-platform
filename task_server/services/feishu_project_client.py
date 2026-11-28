@@ -31,7 +31,24 @@ def _post(path, payload, headers=None):
                            {'Content-Type': 'application/json', **(headers or {})})
         reply = connection.getresponse()
         if not 200 <= reply.status < 300:
-            raise ProjectUnavailable('feishu_http_' + str(reply.status))
+            detail = 'feishu_http_' + str(reply.status)
+            try:
+                error = json.loads(read_response_bytes(reply, 32 * 1024, '飞书项目'))
+            except (ValueError, OSError, http.client.HTTPException, ResponseTooLargeError):
+                error = None
+            code = error.get('err_code') if isinstance(error, dict) else None
+            # Feishu explicitly guarantees no work item was created for missing required fields.
+            if reply.status == 400 and type(code) is int and code == 20038 and path.endswith('/work_item/create'):
+                error_info = error.get('err')
+                msg = error_info.get('msg') if isinstance(error_info, dict) else None
+                field = re.search(r'\(([a-zA-Z_][a-zA-Z0-9_]{0,63})\) required\Z', msg) if isinstance(msg, str) else None
+                detail = 'feishu_business_error_20038'
+                if field:
+                    detail += '_field_' + field.group(1)
+                raise ProjectRejected(detail)
+            if type(code) is int and 0 < abs(code) < 10**10:
+                detail += '_business_' + str(code)
+            raise ProjectUnavailable(detail)
         value = json.loads(read_response_bytes(reply, 4 * 1024 * 1024, '飞书项目'))
         if not isinstance(value, dict):
             raise ProjectUnavailable('feishu_invalid_receipt')

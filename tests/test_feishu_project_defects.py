@@ -325,3 +325,54 @@ def test_configured_destination_without_accepted_failure_signatures_keeps_eviden
     review = tickets.process_ui_batch(ACTOR, BATCH)
     assert review['attempts'][0]['status'] == 'needs_evidence'
     assert not calls
+
+
+def test_unknown_create_records_transport_error_without_reposting(flow, monkeypatch):
+    _, _, calls = flow
+    normal = tickets.project._post
+
+    def fail_create(path, payload, headers=None):
+        if path.endswith('/create'):
+            calls.append((path, payload))
+            raise tickets.project.ProjectUnavailable('feishu_http_504')
+        if path.endswith('/filter'):
+            return {'err_code': 0, 'data': []}
+        return normal(path, payload, headers)
+
+    monkeypatch.setattr(tickets.project, '_post', fail_create)
+    for _ in range(2):
+        receipt = tickets.process_ui_batch(ACTOR, BATCH)['attempts'][0]
+        assert receipt['status'] == 'receipt_unknown'
+        assert receipt['detail'] == 'feishu_http_504'
+    assert sum(path.endswith('/create') for path, _ in calls) == 1
+
+
+@pytest.mark.parametrize('status,code,error,detail', [
+    (403, 12345, tickets.project.ProjectUnavailable, 'feishu_http_403_business_12345'),
+    (400, 20038, tickets.project.ProjectRejected, 'feishu_business_error_20038_field_discovery_version'),
+    (502, 20038, tickets.project.ProjectUnavailable, 'feishu_http_502_business_20038'),
+])
+def test_http_error_preserves_only_feishu_business_code(monkeypatch, status, code, error, detail):
+    class Reply:
+        headers = {}
+
+        def __init__(self):
+            self.status = status
+
+        def read(self, size):
+            return json.dumps({'err_code': code, 'err_msg': 'private upstream message',
+                               'err': {'msg': '发现版本(discovery_version) required'}}).encode()
+
+    class Connection:
+        def request(self, *args):
+            pass
+
+        def getresponse(self):
+            return Reply()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(tickets.project.http.client, 'HTTPSConnection', lambda *a, **kw: Connection())
+    with pytest.raises(error, match='^' + detail + '$'):
+        tickets.project._post('/open_api/project/work_item/create', {})

@@ -16,7 +16,7 @@ KEY = re.compile(r'[A-Za-z0-9_-]{1,80}')
 
 def _config(cfg):
     required = {'project_key','work_item_type_key','app_id','username','user_id','acceptance_field','search_group'}
-    optional = {'scenario_field','revision_field','mode','figma_field','figma_files','build_field','qa_packages','build_source','generated_targets','current_node_ids','title_contains'}
+    optional = {'scenario_field','revision_field','mode','figma_field','figma_files','figma_canvas_frame','build_field','qa_packages','build_source','generated_targets','current_node_ids','title_contains'}
     if not isinstance(cfg, dict) or not required <= set(cfg) <= required | optional:
         raise ValueError('invalid_config')
     for name in ('project_key','work_item_type_key','acceptance_field','scenario_field','revision_field'):
@@ -48,6 +48,16 @@ def _config(cfg):
         if (cfg.get('mode') not in ('development_design','qa_build_smoke') or not isinstance(cfg.get('figma_field'),str) or not KEY.fullmatch(cfg['figma_field'])
                 or not isinstance(files,list) or not files or not all(isinstance(x,str) and KEY.fullmatch(x) for x in files)):
             raise ValueError('invalid_figma_scope')
+    if 'figma_canvas_frame' in cfg:
+        binding = cfg['figma_canvas_frame']
+        node_keys = ('canvas_id','frame_id','layer_id')
+        if (not isinstance(binding,dict) or set(binding) != {'file_key','layer_name',*node_keys}
+                or 'figma_field' not in cfg or binding['file_key'] not in cfg['figma_files']
+                or not all(isinstance(binding[k],str) and re.fullmatch(r'[0-9]+:[0-9]+',binding[k]) for k in node_keys)
+                or len({binding[k] for k in node_keys}) != len(node_keys)
+                or not isinstance(binding['layer_name'],str) or not binding['layer_name'].strip()
+                or len(binding['layer_name']) > 160):
+            raise ValueError('invalid_figma_canvas_frame')
     if 'title_contains' in cfg:
         label = cfg['title_contains']
         if not isinstance(label,str) or not 1 <= len(label) <= 160 or label.strip() != label or not label.isprintable():
@@ -280,7 +290,7 @@ def main():
             for cfg in configs:
                 _config(cfg)
             shared = ('project_key','work_item_type_key','app_id','user_id','username','acceptance_field','revision_field',
-                      'scenario_field','figma_field','figma_files','title_contains')
+                      'scenario_field','figma_field','figma_files','figma_canvas_frame','title_contains')
             nodes = set(dev.get('current_node_ids',[])), set(ready.get('current_node_ids',[]))
             if (any(dev.get(k)!=ready.get(k) for k in shared) or not nodes[0].isdisjoint(nodes[1])
                     or (dev['search_group']==ready['search_group'] and not all(nodes))):

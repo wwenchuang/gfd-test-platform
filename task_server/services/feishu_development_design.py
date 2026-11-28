@@ -8,6 +8,21 @@ from urllib.parse import urlsplit
 from . import knowledge_service, requirement_design, requirement_intake
 
 
+def _canvas_frame(file_key, canvas_id, binding):
+    if (file_key, canvas_id) != (binding['file_key'], binding['canvas_id']):
+        raise ValueError('figma_canvas_frame_mismatch')
+    # The file endpoint returns the selected layer and its ancestors in the same revision.
+    data = knowledge_service.figma_api_json('/files/' + file_key, {'ids':binding['layer_id']})
+    path = knowledge_service.figma_find_node_path(data.get('document'), binding['layer_id'])
+    if (len(path) < 4 or path[1].get('type') != 'CANVAS' or path[1].get('id') != canvas_id
+            or path[-1].get('name') != binding['layer_name']
+            or not all(knowledge_service.figma_node_visible(node) for node in path)
+            or not any(node.get('id') == binding['frame_id'] and node.get('type') == 'FRAME'
+                       for node in path[2:-1])):
+        raise ValueError('figma_canvas_frame_mismatch')
+    return binding['frame_id'], data.get('version')
+
+
 def _prototype(cfg, link):
     if isinstance(link, dict):
         link = link.get('link') or link.get('url')
@@ -16,10 +31,13 @@ def _prototype(cfg, link):
     file_key, node = knowledge_service.parse_figma_url(link)
     if file_key not in cfg['figma_files'] or not re.fullmatch(r'[0-9]+:[0-9]+', node):
         raise ValueError('figma_frame_out_of_scope')
-    data = knowledge_service.figma_api_json('/files/' + file_key + '/nodes', {'ids':node})
-    doc = ((data.get('nodes') or {}).get(node) or {}).get('document') or {}
-    version = data.get('version')
-    if doc.get('id') != node or not isinstance(version,str) or not version:
+    if 'figma_canvas_frame' in cfg:
+        node, version = _canvas_frame(file_key, node, cfg['figma_canvas_frame'])
+    else:
+        data = knowledge_service.figma_api_json('/files/' + file_key + '/nodes', {'ids':node})
+        doc = ((data.get('nodes') or {}).get(node) or {}).get('document') or {}
+        version = data.get('version') if doc.get('id') == node else None
+    if not isinstance(version,str) or not version:
         raise ValueError('figma_frame_unavailable')
     exports = knowledge_service.figma_api_json('/images/' + file_key, {
         'ids':node, 'format':'png', 'version':version, 'scale':'1'})

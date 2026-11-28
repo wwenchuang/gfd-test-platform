@@ -208,10 +208,17 @@ def _deliver(db, target, key, title, description, requirement):
             return receipt()
         if type(item_id) is int and 0 < item_id < 2**63:
             return update('submitted','',item_id)
+        if claimed:
+            return update('receipt_unknown','feishu_missing_issue_id')
         return receipt()
     except project.ProjectRejected as exc:
         return update('rejected',str(exc)) if claimed else receipt()
-    except project.ProjectUnavailable:
+    except project.ProjectUnavailable as exc:
+        if claimed:
+            detail = str(exc)
+            if not re.fullmatch(r'feishu_(?:http_[1-5]\d{2}(?:_business_-?\d{1,10})?|invalid_receipt|response_unavailable)',detail):
+                detail = 'feishu_response_unavailable'
+            return update('receipt_unknown',detail)
         return receipt()
 
 
