@@ -16,7 +16,7 @@ KEY = re.compile(r'[A-Za-z0-9_-]{1,80}')
 
 def _config(cfg):
     required = {'project_key','work_item_type_key','app_id','username','user_id','acceptance_field','search_group'}
-    optional = {'scenario_field','revision_field','mode','figma_field','figma_files','build_field','qa_packages','build_source','generated_targets'}
+    optional = {'scenario_field','revision_field','mode','figma_field','figma_files','build_field','qa_packages','build_source','generated_targets','current_node_ids','title_contains'}
     if not isinstance(cfg, dict) or not required <= set(cfg) <= required | optional:
         raise ValueError('invalid_config')
     for name in ('project_key','work_item_type_key','acceptance_field','scenario_field','revision_field'):
@@ -38,7 +38,7 @@ def _config(cfg):
         if source not in ('packaging_hook','project_field') or (source=='packaging_hook' and 'build_field' in cfg):
             raise ValueError('invalid_build_source')
         if ((source=='project_field' and (not isinstance(cfg.get('build_field'),str) or not KEY.fullmatch(cfg['build_field'])))
-                or not isinstance(packages,dict) or not packages or set(packages)-{'android','ios'}
+                or (not packages and source != 'packaging_hook') or set(packages)-{'android','ios'}
                 or not all(isinstance(v,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,128}',v) for v in packages.values())):
             raise ValueError('qa_build_scope_required')
     elif {'build_field','qa_packages','build_source','generated_targets'} & cfg.keys():
@@ -48,6 +48,15 @@ def _config(cfg):
         if (cfg.get('mode') not in ('development_design','qa_build_smoke') or not isinstance(cfg.get('figma_field'),str) or not KEY.fullmatch(cfg['figma_field'])
                 or not isinstance(files,list) or not files or not all(isinstance(x,str) and KEY.fullmatch(x) for x in files)):
             raise ValueError('invalid_figma_scope')
+    if 'title_contains' in cfg:
+        label = cfg['title_contains']
+        if not isinstance(label,str) or not 1 <= len(label) <= 160 or label.strip() != label or not label.isprintable():
+            raise ValueError('invalid_title_scope')
+    if 'current_node_ids' in cfg:
+        nodes = cfg['current_node_ids']
+        if (not isinstance(nodes,list) or not 1 <= len(nodes) <= 50
+                or not all(isinstance(n,str) and KEY.fullmatch(n) for n in nodes) or len(set(nodes)) != len(nodes)):
+            raise ValueError('invalid_current_node_ids')
     group = cfg['search_group']
     if not isinstance(group, dict) or not (group.get('search_params') or group.get('search_groups')):
         raise ValueError('ready_filter_required')
@@ -56,24 +65,44 @@ def _config(cfg):
             raise ValueError('invalid_config')
 
 
-def _value(fields, key):
-    values = [field['field_value'] for field in fields if isinstance(field, dict)
-              and field.get('field_key') == key and 'field_value' in field]
-    return values[0] if len(values) == 1 else None
+def _value(fields, key, *, rich_text=False):
+    matches = [field for field in fields if isinstance(field, dict) and field.get('field_key') == key]
+    if len(matches) != 1:
+        return None
+    field = matches[0]
+    if rich_text:
+        # SearchByParams and GetWorkItemsByIds expose different SDK names for the same expansion.
+        rendered = field.get('field_value_markdown') or field.get('field_value_mark_down')
+        if isinstance(rendered, dict) and isinstance(rendered.get('markdown'), str):
+            return rendered['markdown']
+    return field.get('field_value')
 
 
-def _item(cfg, row):
-    if not isinstance(row, dict) or (row.get('project_key'),row.get('work_item_type_key')) != (
-            cfg['project_key'],cfg['work_item_type_key']):
+def _scoped_id(cfg, row, *, allow_missing=False):
+    if not isinstance(row,dict) or any(row.get(k) != cfg[k] for k in ('project_key','work_item_type_key')
+                                       if not allow_missing or k in row):
         raise ValueError('item_scope_mismatch')
     item_id = row.get('id')
     if type(item_id) not in (str, int) or not re.fullmatch(r'[1-9][0-9]{0,19}',str(item_id)):
         raise ValueError('invalid_item_id')
+    return str(item_id)
+
+
+def _item(cfg, row, item_id):
     fields = row.get('fields')
     if not isinstance(fields, list):
         raise ValueError('missing_fields')
     raw = _value(fields, cfg['acceptance_field'])
-    clauses = raw.splitlines() if isinstance(raw, str) else raw
+    link = (raw.get('link') or raw.get('url')) if isinstance(raw,dict) else raw
+    if isinstance(link,str) and link.strip().lower().startswith(('https://','http://')):
+        from .feishu_wiki_acceptance import read_wiki_clauses
+        clauses = read_wiki_clauses(link.strip())
+    else:
+        raw = _value(fields, cfg['acceptance_field'], rich_text=True)
+        clauses = raw.splitlines() if isinstance(raw, str) else raw
+        if isinstance(clauses,list) and any(isinstance(c,str) and re.fullmatch(
+                r'(?:https?://\S+|\[[^\]]*\]\(https?://[^)]*\))',c.strip(),re.I) for c in clauses):
+            raise ValueError('acceptance_text_required')
     if not isinstance(clauses, list) or any(not isinstance(s, str) for s in clauses):
         raise ValueError('acceptance_text_required')
     clauses = [s.strip() for s in clauses if s.strip()]
@@ -96,7 +125,35 @@ def _item(cfg, row):
                 requirement_id=str(item_id), revision=revision, title=row.get('name'), acceptance_criteria=clauses), scenario
 
 
-def sync(cfg, *, post=None, page_size=50):
+def _details(cfg, rows, fields, post):
+    """Read scoped details in one call per search page whenever workflow or missing fields require it."""
+    ids = set()
+    for row in rows:
+        try:
+            item_id = _scoped_id(cfg,row,allow_missing=True)
+        except ValueError:
+            continue
+        returned = row.get('fields')
+        available = {f['field_key'] for f in returned or [] if isinstance(f,dict) and isinstance(f.get('field_key'),str)} if isinstance(returned,list) else set()
+        has_scope = 'project_key' in row and 'work_item_type_key' in row
+        if cfg.get('current_node_ids') or cfg.get('title_contains') or not set(fields) <= available or not has_scope:
+            ids.add(int(item_id))
+    if not ids:
+        return {}
+    path = '/open_api/{}/work_item/{}/query'.format(cfg['project_key'],cfg['work_item_type_key'])
+    selected = list(dict.fromkeys(['name','current_nodes',*fields]))
+    result = post(path,dict(work_item_ids=sorted(ids),fields=selected,
+                            expand={'need_workflow':True,'need_rich_text_mark_down':True})).get('data')
+    if not isinstance(result,list):
+        raise ValueError('invalid_project_detail')
+    details = {str(i):[] for i in ids}
+    for row in result:
+        if isinstance(row,dict) and str(row.get('id')) in details:
+            details[str(row['id'])].append(row)
+    return details
+
+
+def sync(cfg, *, post=None, page_size=50, excluded_nodes=()):
     _config(cfg)
     if not 1 <= page_size <= 50:
         raise ValueError('invalid_page_size')
@@ -118,22 +175,59 @@ def sync(cfg, *, post=None, page_size=50):
             post = partial(project_post, headers=project_headers())
         for page in range(1, (5000 // page_size) + 2):
             response = post(path, dict(search_group=cfg['search_group'], fields=['name', *fields],
-                                       page_num=page, page_size=page_size))
+                                       page_num=page, page_size=page_size, expand={'need_rich_text_mark_down':True}))
             rows = response.get('data')
             if not isinstance(rows, list) or len(rows) > page_size:
                 raise ValueError('invalid_project_page')
+            details = _details(cfg,rows,fields,post)
             for row in rows:
+                item_id = None
                 event = None
                 failure_stage = 'development_design'
                 try:
-                    event, scenario = _item(cfg, row)
+                    candidate = _scoped_id(cfg,row,allow_missing=True)
+                    if candidate in details:
+                        item_id = candidate
+                        matches = details[candidate]
+                        if len(matches) != 1:
+                            raise ValueError('project_detail_missing_or_ambiguous')
+                        row = matches[0]
+                    item_id = _scoped_id(cfg,row)
+                    if 'title_contains' in cfg:
+                        title = row.get('name')
+                        if not isinstance(title,str) or not title.strip():
+                            raise ValueError('project_title_unavailable')
+                        if cfg['title_contains'] not in title:
+                            if cfg.get('mode') in ('development_design','qa_build_smoke'):
+                                requirement_intake.invalidate_design(cfg['project_key'],cfg['app_id'],item_id)
+                            counts['outside_title_scope'] += 1
+                            continue
+                    if 'current_node_ids' in cfg:
+                        nodes = row.get('current_nodes')
+                        if not isinstance(nodes,list) or any(not isinstance(n,dict) or not isinstance(n.get('id'),str) or not n['id'] for n in nodes):
+                            raise ValueError('project_current_nodes_unavailable')
+                        active = {node['id'] for node in nodes}
+                        if active.isdisjoint(cfg['current_node_ids']):
+                            counts['outside_current_node'] += 1
+                            continue
+                        if not active.isdisjoint(excluded_nodes):
+                            raise ValueError('project_lifecycle_nodes_ambiguous')
+                    if cfg.get('mode') == 'qa_build_smoke' and not cfg['qa_packages']:
+                        title = requirement_intake.requirement_design._text(row.get('name'),160)
+                        # The environment has no admissible QA package. Record only the observed handoff.
+                        stage_event = dict(source='feishu-project:'+cfg['project_key'],app_id=cfg['app_id'],
+                                           requirement_id=item_id,title=title,revision='')
+                        requirement_intake.record_stage(stage_event,'qa_build_smoke',{'status':'qa_package_scope_required'})
+                        counts['qa_package_scope_required'] += 1
+                        continue
+                    material, scenario = _item(cfg, row, item_id)
+                    event = requirement_intake._event(material)
                     link = _value(row['fields'], cfg['figma_field']) if 'figma_field' in cfg else None
                     if development:
                         from .feishu_development_design import create_design
-                        receipt = create_design(cfg, requirement_intake._event(event), link)
+                        receipt = create_design(cfg, event, link)
                     elif cfg.get('mode') == 'qa_build_smoke':
                         from .feishu_build_plan import current_builds, submit_build
-                        event = requirement_intake._event(event)
                         from .feishu_development_design import create_design
                         updated = create_design(cfg,event,link)
                         requirement_intake.record_stage(event,'development_design',updated)
@@ -152,13 +246,15 @@ def sync(cfg, *, post=None, page_size=50):
                     else:
                         receipt = requirement_intake.submit(event, origin='integration', scenario=scenario)
                 except ValueError as exc:
-                    item_id = str(row.get('id', '')) if isinstance(row, dict) else ''
                     code = str(exc)
                     if event and cfg.get('mode') in ('development_design','qa_build_smoke'):
                         # Revoke a previously ready packaging context if today's material cannot be read.
                         requirement_intake.record_stage(event,failure_stage,{'status':(
                             'source_unavailable' if failure_stage=='development_design' else 'build_unavailable')})
-                    errors.append({'item_id':item_id if item_id.isdecimal() else '',
+                    elif item_id and cfg.get('mode') in ('development_design','qa_build_smoke'):
+                        requirement_intake.invalidate_design(cfg['project_key'],cfg['app_id'],item_id)
+                    raw_id = str(row.get('id', '')) if isinstance(row, dict) else ''
+                    errors.append({'item_id':raw_id if raw_id.isdecimal() else '',
                                    'code':code if re.fullmatch(r'[a-z_]{1,64}',code) else 'requirement_intake_failed'})
                 else:
                     if cfg.get('mode') in ('development_design','qa_build_smoke'):
@@ -184,12 +280,14 @@ def main():
             for cfg in configs:
                 _config(cfg)
             shared = ('project_key','work_item_type_key','app_id','user_id','username','acceptance_field','revision_field',
-                      'scenario_field','figma_field','figma_files')
-            if any(dev.get(k)!=ready.get(k) for k in shared) or dev['search_group']==ready['search_group']:
+                      'scenario_field','figma_field','figma_files','title_contains')
+            nodes = set(dev.get('current_node_ids',[])), set(ready.get('current_node_ids',[]))
+            if (any(dev.get(k)!=ready.get(k) for k in shared) or not nodes[0].isdisjoint(nodes[1])
+                    or (dev['search_group']==ready['search_group'] and not all(nodes))):
                 raise ValueError('inconsistent_lifecycle_scope')
             result = {'counts':{}, 'errors':[]}
-            for cfg in (dev,ready):
-                outcome = sync(cfg)
+            for cfg,excluded in ((dev,nodes[1]),(ready,nodes[0])):
+                outcome = sync(cfg,excluded_nodes=excluded)
                 result['counts'][cfg['mode']] = outcome['counts']
                 result['errors'].extend(outcome['errors'])
         else:

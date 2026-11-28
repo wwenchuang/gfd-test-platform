@@ -205,6 +205,17 @@ def read(source, event_id):
         return _receipt(db, row, actor, event_id, private=True)
 
 
+def invalidate_design(project_key, app_id, item_id):
+    """Revoke the last packaging context if a verified upstream item can no longer be read."""
+    actor = current_actor()
+    require_ui_actor(actor,permission='ui.view',app_id=app_id)
+    with _db() as db:
+        db.execute("""UPDATE requirement_stage_progress SET status='source_unavailable',design_source='',changed=?
+            WHERE owner=? AND source=? AND app_id=? AND requirement_id=? AND stage='development_design'
+            AND status!='source_unavailable'""",
+            (time.time(),actor['user_id'],'feishu-project:'+project_key,app_id,item_id))
+
+
 def record_stage(event, stage, result):
     actor = current_actor()
     require_ui_actor(actor,permission='ui.view',app_id=event['app_id'])

@@ -58,9 +58,31 @@ sudo systemctl enable --now midscene-feishu-requirements.timer
 
 工作台服务与需求同步服务可以共用 root 所有、权限 0600 的 `/etc/midscene-feishu-requirements.env`。样例见 [环境文件](feishu-project.env.example)。使用服务管理器的 `EnvironmentFile` 指向此文件，保留工作台原有环境及批次存储配置。实际配置文件需允许服务用户读取。更新凭据后在空闲窗口重启工作台，先对指定的一条需求运行同步服务并核对结果，再启用定时器。
 
+## 按真实节点试运行
+
+空间 `67a45d4c1b9ba3fa23a3ca0a` 的需求类型为 `story`。试运行在开发和转测两项源配置中共用下列范围，把开发和转测的节点 ID 分别放入各自的 `current_node_ids`。两阶段可配置完全相同的 `"title_contains":"【APP】"`，只接入详情标题含该文字标签的需求。搜索命中但详情标题不符时记录 `outside_title_scope`，跳过读取 PRD、生成与派发；已更名出范围的需求会撤销旧的打包上下文。配置后同步按搜索结果批量读取工作项详情，用 `current_nodes[].id` 核对该条需求在本次同步时的节点。开发和转测使用同一搜索条件时，两组节点必须齐全且没有交集。如果工作项同时命中两阶段，平台记录节点冲突并等待下一次同步。
+
+```json
+{
+  "project_key": "67a45d4c1b9ba3fa23a3ca0a",
+  "work_item_type_key": "story",
+  "search_group": {
+    "conjunction": "AND",
+    "search_params": [{"param_key": "work_item_id", "operator": "HAS ANY OF", "value": [7082224050]}],
+    "search_groups": []
+  }
+}
+```
+
+上述空间中，Android 开发、iOS 开发、Server 开发的节点 ID 依次为 `waiting_for_android_development`、`state_75`、`waiting_for_ios_development`，公共测试冒烟和 QA 验证为 `state_65` 和 `state_51`。首次试运行时，按业务确认的共同转测节点配置。需求 7082224050 在 2026-11-28 回读为生产验收 `state_62`，在上述两组节点之外，对应单次日志为两个 `outside_current_node`。实际工作项 ID 命中、节点外跳过及设计完成在日志中分别核对。手机版 Figma 链接字段是 `field_4`，文件范围为 `2jTQVOVDORiU3yQlQQBsoJ`。需求文档字段是 `wiki`。专用 QA 包、服务账户与手机 Runner 使用部署时已核实的登记值。尚无可核实的专用 QA 包时，转测项可设置 `"build_source":"packaging_hook","qa_packages":{},"generated_targets":{}`。开发照常同步，命中转测节点时工作台显示等待专用 QA 包，CI 发来的构建被拒绝。
+
+开发负责人使用飞书角色字段时，缺陷配置的 `developer_assignment` 可填 `{"requirement_type":"story","developer_field":"role_owners","developer_role":"Server","assignee_field":"<缺陷模板的可写单人字段>"}`。按实际责任角色填写 `developer_role`，仅当该角色唯一且含一名成员时指派。目标字段为多人字段时，在 developer_assignment 中增加 `"assignee_field_type":"multi_user"`，写入单一负责人的数组。本空间实测缺陷处理人为 `issue_operator`，应用级 `"requirement_link_field":"_field_linked_story"` 则写入同一空间、本次需求的数值 ID。普通单人开发字段继续沿用三项配置。角色值和角色负责人结构见[官方 SDK](https://github.com/larksuite/project-oapi-sdk-golang/blob/f35d9ad3ad7b362722a54b16ea2697bf733ae8ee/model/field_value.go)。
+
+开发与转测同步使用已激活且完成初次改密的平台身份，需为超级管理员，或具有 `platform.configure`、`ui.view` 及全部 UI 应用范围。转测还需目标应用的 `ui.execute`；飞书缺陷登记另需 `platform.notify`。
+
 ## 开发出用例，转测后按 QA 包开测
 
-生命周期接入使用同一个同步服务。将源配置写成两项数组，分别设置 mode 为 development_design 和 qa_build_smoke；两项共用工作空间、需求类型、服务用户、应用、验收字段、版本字段及 Figma 配置，search_group 分别选择本空间真正的开发节点和提测节点。原来的单对象配置沿用既有提测冒烟行为。联调先把两个筛选条件都限定到同一条测试需求。
+生命周期接入使用同一个同步服务。将源配置写成两项数组，分别设置 mode 为 development_design 和 qa_build_smoke；两项共用工作空间、需求类型、服务用户、应用、验收字段、版本字段及 Figma 配置，search_group 可分别选择本空间真正的开发节点和提测节点，也可按工作项范围搜索，再用各自的 current_node_ids 限定实际开发与转测节点。原来的单对象配置沿用既有提测冒烟行为。联调先把两个筛选条件都限定到同一条测试需求。
 
 - 开发节点读取验收条款。界面需求配置 figma_field 与 figma_files，前者是需求上保存 Frame 链接的字段，后者是允许读取的文件 key 列表。字段可提供单个链接或最多八个链接。服务需要 FIGMA_TOKEN 或 FIGMA_ACCESS_TOKEN 的目标文件读权限。工作台使用绑定节点的定版 PNG、来源摘要和测试设计模型生成候选。缺少已配置的 Frame 时留下同步错误；只有文字材料时只能验收有文字依据的内容。需求设计库沿用当前单账号 32 份材料额度。
 - 首页需求进度可以展开生成的用例。既有设计、历史已跑批次和原始截图均按当时版本保留。同一份 PRD 和同一组设计图重复送达复用结果。转测后再改设计也会生成新稿，先前包对应的材料失配时暂停开测。模型失败先保留原因；同份材料最多自动补试两次（至少间隔五分钟和三十分钟），历史结果保留。
@@ -98,3 +120,7 @@ build 对象在 build-context 返回的四个字段外，需要 platform、envir
 在「测试工作台 → 需求回归与巡检 → 设计稿与真机对照」选择需求。已绑定设计稿的需求会带出 Figma 链接，也可粘贴飞书需求中「查看设计稿」的目标链接。点击「读取 Figma 画板」，选择画板、本人已有执行报告、对应步骤和手机实际使用的环境，点击「对照两张图并保存分析」。环境由操作人标注。
 
 报告保留当次 Figma 版本、画板、真机步骤截图、原执行报告和视觉模型回执，可以从同一账号重新打开。平板画板和竖屏手机的排版需用相应设备复验。后台复用服务端 Figma 读取凭证和现有视觉模型配置。飞书项目空间授权由租户管理员管理。
+
+### 知识库中的需求正文
+
+当验收字段保存飞书知识库或新版云文档链接时，轮询器从配置的企业域名解析文档，通过飞书开放平台读取当前正文，再按实际内容计算版本。配置 `MIDSCENE_FEISHU_DOCS_HOST`、`FEISHU_DOCS_APP_ID` 和 `FEISHU_DOCS_APP_SECRET`。将目标知识库或单篇文档的阅读权限授予该应用，并开通节点与文档只读权限。文本超过平台设计容量会给出明确错误。拼图需求在工作项的 `wiki` 字段提供知识库链接，`field_4` 对应手机设计。后台定时读取与员工浏览器登录各自鉴权。[飞书知识库授权](https://open.feishu.cn/document/server-docs/docs/wiki-v2/wiki-overview)

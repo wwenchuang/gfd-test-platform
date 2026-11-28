@@ -511,3 +511,138 @@ def test_installed_qa_uses_configured_device_and_requires_exact_version(inputs,m
         again=scripts.installed_qa('u-a','a',sid,rid,'ios','1 (2)')
         assert first['batches'][0]['ui_batch_id']==again['batches'][0]['ui_batch_id']
         assert first['origin']=='workbench' and first['build_context']['build_id']=='installed-2'
+
+
+def test_lifecycle_rich_text_and_revocation_of_unreadable_material(inputs, monkeypatch):
+    from task_server.services import feishu_requirement_sync as sync, feishu_build_plan as plans
+    from task_server.services import requirement_design_model
+    cfg = dict(project_key='P', work_item_type_key='story', app_id=APP, username='a', user_id='u-a',
+               acceptance_field='ac', mode='development_design', search_group={'search_params':[{'param_key':'node'}]})
+    row = dict(project_key='P', work_item_type_key='story', name='拼图', id=19,
+               fields=[dict(field_key='ac',field_value={'doc':'encoded'},
+                            field_value_mark_down={'markdown':'可打开入口\n可上传照片'})])
+    bodies = []
+    def api(path, body):
+        bodies.append(body)
+        return {'data':[row]}
+    monkeypatch.setattr(requirement_design,'authorized',lambda *_: True)
+    monkeypatch.setattr(requirement_design_model,'generate',lambda *_:{'cases':[{'id':'C1'}]})
+    assert sync.sync(cfg,post=api)['counts'] == {'design_completed':1}
+    assert bodies[0]['expand']['need_rich_text_mark_down'] is True
+    context = plans.build_context(cfg,'19')
+    row['fields'] = []
+    row['project_key'] = 'unrelated'
+    assert sync.sync(cfg,post=api)['errors'][0]['code'] == 'item_scope_mismatch'
+    assert plans.build_context(cfg,'19') == context
+    row['project_key'] = 'P'
+    assert sync.sync(cfg,post=api)['errors'][0]['code'] == 'acceptance_text_required'
+    with pytest.raises(ValueError,match='design_not_ready'):
+        plans.build_context(cfg,'19')
+
+
+def test_same_search_requires_separate_authoritative_nodes(inputs,monkeypatch):
+    from task_server.services import feishu_requirement_sync as sync, feishu_build_plan as plans
+    from task_server.services import requirement_design_model
+    cfg=dict(project_key='P',work_item_type_key='story',username='a',user_id='u-a',app_id=APP,
+             acceptance_field='ac',mode='development_design',current_node_ids=['dev'],
+             search_group={'search_params':[{'param_key':'work_item_id','value':[19]}]})
+    qa={**cfg,'mode':'qa_build_smoke','current_node_ids':['qa'],'qa_packages':{'android':'qa.app'},
+        'build_source':'packaging_hook'}
+    one = dict(project_key='P',work_item_type_key='story',name='拼图',id=19,fields=[dict(field_key='ac',field_value='可打开拼图')])
+    search_row = {**one,'current_nodes':[{'id':'dev'}]}
+    detail = {**one, 'current_nodes':[{'id':'production'}]}
+    calls = []
+    def api(path,body):
+        calls.append((path,body))
+        return {'data':[detail] if path.endswith('/query') else [search_row]}
+    monkeypatch.setattr(requirement_design,'authorized',lambda *_:True)
+    monkeypatch.setattr(requirement_design_model,'generate',lambda *_:{'cases':[{'id':'C1'}]})
+    assert sync.sync(cfg,post=api)['counts'] == {'outside_current_node':1}
+    assert calls[-1][1]['work_item_ids']==[19]
+    assert calls[-1][1]['expand']['need_workflow'] is True
+    detail['current_nodes']=[{'id':'dev'}]
+    search_row.clear()
+    search_row['id'] = 19
+    assert sync.sync(cfg,post=api)['counts']=={'design_completed':1}
+    assert plans.build_context(cfg,'19')['requirement_id']=='19'
+    detail['fields']=[{'field_key':'ac','field_value':{},'field_value_markdown':{'markdown':'查看拼图样式'}}]
+    assert sync.sync(cfg,post=api)['counts']=={'design_completed':1}
+    detail['current_nodes'].append({'id':'qa'})
+    assert sync.sync(cfg,post=api,excluded_nodes=['qa'])['errors'][0]['code']=='project_lifecycle_nodes_ambiguous'
+    detail['current_nodes']=[{'id':'dev'}]
+    for broken in [{**detail,'id':20},{**detail,'project_key':'other'},{**detail,'current_nodes':None}]:
+        result=sync.sync(cfg,post=lambda path,body:{'data':[broken if path.endswith('/query') else search_row]})
+        assert result['errors'] and not result['counts']
+    assert sync.sync(qa,post=api)['counts']=={'outside_current_node':1}
+
+
+def test_same_search_requires_nonoverlapping_stage_ids(tmp_path,monkeypatch,capsys):
+    from task_server.services import feishu_requirement_sync as sync
+    path=tmp_path/'source.json'
+    monkeypatch.setenv('MIDSCENE_FEISHU_REQUIREMENT_CONFIG',str(path))
+    dev=dict(project_key='P',work_item_type_key='story',username='a',user_id='u-a',app_id=APP,
+             acceptance_field='ac',search_group={'search_params':[{'param_key':'work_item_id','value':[19]}]},
+             mode='development_design', current_node_ids=['dev'])
+    qa={**dev,'mode':'qa_build_smoke','qa_packages':{'ios':'app.qa'},'build_source':'packaging_hook','current_node_ids':['qa']}
+    path.write_text(json.dumps([dev,qa]))
+    monkeypatch.setattr(sync,'sync',lambda _,**kw: {'counts':{},'errors':[]})
+    assert sync.main()==0
+    path.write_text(json.dumps([{**dev,'title_contains':'【APP】'},qa]))
+    assert sync.main()==1
+    path.write_text(json.dumps([{**dev,'title_contains':'【APP】'},{**qa,'title_contains':'【APP】'}]))
+    assert sync.main()==0
+    for invalid in [[], ['dev'],['qa','dev'], ['qa','qa']]:
+        path.write_text(json.dumps([dev,{**qa,'current_node_ids':invalid}]))
+        assert sync.main()==1
+
+
+def test_development_can_start_with_qa_package_unconfigured(inputs,monkeypatch):
+    from task_server.services import feishu_requirement_sync as sync, feishu_build_plan, requirement_intake
+    cfg=dict(project_key='P',work_item_type_key='story',username='a',user_id='u-a',app_id=APP,
+             acceptance_field='wiki',mode='qa_build_smoke',current_node_ids=['qa'],
+             search_group={'search_params':[{'param_key':'work_item_id','value':[19]}]},
+             build_source='packaging_hook',qa_packages={},generated_targets={})
+    item=dict(project_key='P',work_item_type_key='story',id=19,name='拼图',current_nodes=[{'id':'qa'}],
+              fields=[{'field_key':'wiki','field_value':'https://example.invalid/wiki/X'}])
+    monkeypatch.setattr(requirement_design,'authorized',lambda *_:True)
+    monkeypatch.setattr(feishu_build_plan,'submit_build',lambda *_a,**_k:pytest.fail('dispatched without QA package'))
+    assert sync.sync(cfg,post=lambda *a:{'data':[item]}) == {'counts':{'qa_package_scope_required':1},'errors':[]}
+    with actor_context(ACTORS['a']):
+        stage=requirement_intake.recent()[0]
+        assert stage['status']=='qa_package_scope_required' and not stage['batches']
+    with pytest.raises(ValueError):
+        sync._config({**cfg,'build_source':'project_field','build_field':'package'})
+    with pytest.raises(ValueError):
+        sync._config({**cfg,'generated_targets':{'android':{'device_id':'d','runner_id':'r'}}})
+    with pytest.raises(ValueError,match='build_scope_mismatch'):
+        feishu_build_plan.record_build(cfg,dict(project_key='P',requirement_id='19',revision='v1',source_id='a'*64,
+            environment='qa',platform='android',build_id='b',package='production.app',version_name='1',version_code='1',build_sequence=1))
+
+
+def test_title_scope_uses_detail_before_prd_and_revokes_renamed_story(inputs,monkeypatch):
+    from task_server.services import feishu_requirement_sync as sync, feishu_build_plan as plans
+    from task_server.services import requirement_design_model, feishu_wiki_acceptance
+    cfg=dict(project_key='P',work_item_type_key='story',username='a',user_id='u-a',app_id=APP,
+             mode='development_design',title_contains='【APP】',acceptance_field='wiki',
+             search_group={'search_params':[{'param_key':'work_item_id','value':[19]}]})
+    search=dict(project_key='P',work_item_type_key='story',id=19,name='【平板】拼图',
+                fields=[{'field_key':'wiki','field_value':'https://example.invalid/wiki/X'}])
+    detail={**search,'name':'新功能【APP】拼图'}
+    prds=[]
+    def api(path,body):
+        return {'data':[detail if path.endswith('/query') else search]}
+    monkeypatch.setattr(requirement_design,'authorized',lambda *_:True)
+    monkeypatch.setattr(requirement_design_model,'generate',lambda *_:{'cases':[{'id':'C1'}]})
+    monkeypatch.setattr(feishu_wiki_acceptance,'read_wiki_clauses',lambda link:prds.append(link) or ['查看拼图'])
+    assert sync.sync(cfg,post=api)['counts']=={'design_completed':1}
+    assert len(prds)==1 and plans.build_context(cfg,'19')['requirement_id']=='19'
+    search['name']='【APP】旧标题'
+    detail['name']='【平板】拼图'
+    for stage in (cfg,{**cfg,'mode':'qa_build_smoke','qa_packages':{},'build_source':'packaging_hook'}):
+        assert sync.sync(stage,post=api)=={'counts':{'outside_title_scope':1},'errors':[]}
+    assert len(prds)==1
+    with pytest.raises(ValueError,match='design_not_ready'):
+        plans.build_context(cfg,'19')
+    for invalid in ('', '  ', '【APP】\n', ['【APP】']):
+        with pytest.raises(ValueError):
+            sync._config({**cfg,'title_contains':invalid})

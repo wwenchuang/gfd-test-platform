@@ -249,3 +249,68 @@ def test_route_bug_by_current_requirement_developer(flow,monkeypatch,owner,expec
         assert {'field_key':'owner','field_value':owner} in route[0]['field_value_pairs']
     else:
         assert not route
+
+
+@pytest.mark.parametrize('entries,expected', [
+    ([{'role':'qa','owners':['tester']},{'role':'mobile','owners':['developer']}], 'submitted'),
+    ([{'role':'mobile','owners':['first','second']}], 'owner_unresolved'),
+    ([{'role':'mobile','owners':['first']},{'role':'mobile','owners':['second']}], 'owner_unresolved'),
+    ([{'role':'qa','owners':['tester']}], 'owner_unresolved'),
+])
+def test_owner_from_named_requirement_role(flow, monkeypatch, entries, expected):
+    import os
+    from pathlib import Path
+    path = Path(os.environ['MIDSCENE_FEISHU_DEFECT_CONFIG'])
+    config = json.loads(path.read_text())
+    config['apps']['app']['developer_assignment'] = dict(requirement_type='story',developer_field='role_owners',
+                                                         developer_role='mobile',assignee_field='owner')
+    path.write_text(json.dumps(config))
+    monkeypatch.setattr(tickets,'requirement_for_batch',lambda _:dict(source='feishu-project:qa',requirement_id='71',revision='v2'))
+    writes = []
+    def api(path, body,headers=None):
+        if path.endswith('/plugin_token'):
+            return {'error':{'code':0}, 'data':{'token':'fixture'}}
+        if path.endswith('/query'):
+            assert body == {'work_item_ids':[71],'fields':['role_owners']}
+            return {'err_code':0,'data':[dict(id=71,project_key='qa',work_item_type_key='story',
+                                             fields=[dict(field_key='role_owners',field_value=entries)])]}
+        writes.append(body)
+        return {'err_code':0,'data':871}
+    monkeypatch.setattr(tickets.project,'_post',api)
+    assert tickets.process_ui_batch(ACTOR,BATCH)['attempts'][0]['status'] == expected
+    if expected == 'submitted':
+        assert {'field_key':'owner','field_value':'developer'} in writes[0]['field_value_pairs']
+    else:
+        assert not writes
+
+
+def test_routes_single_owner_to_multi_user_and_links_exact_story(flow,monkeypatch):
+    import os
+    from pathlib import Path
+    path=Path(os.environ['MIDSCENE_FEISHU_DEFECT_CONFIG'])
+    config=json.loads(path.read_text())
+    target=config['apps']['app']
+    target.update(requirement_link_field='_field_linked_story',developer_assignment=dict(
+        requirement_type='story',developer_field='role_owners',developer_role='Server',
+        assignee_field='issue_operator',assignee_field_type='multi_user'))
+    path.write_text(json.dumps(config))
+    req=dict(source='feishu-project:qa',requirement_id='7082224050',revision='v2')
+    monkeypatch.setattr(tickets,'requirement_for_batch',lambda _:req)
+    bodies=[]
+    def api(path,body,headers=None):
+        if path.endswith('/plugin_token'):
+            return {'error':{'code':0},'data':{'token':'ok'}}
+        if path.endswith('/query'):
+            return {'err_code':0,'data':[dict(project_key='qa',work_item_type_key='story',id=7082224050,
+                fields=[dict(field_key='role_owners',field_value=[dict(role='Server',owners=['dev'])])])]}
+        bodies.append(body)
+        return {'err_code':0,'data':91}
+    monkeypatch.setattr(tickets.project,'_post',api)
+    assert tickets.process_ui_batch(ACTOR,BATCH)['attempts'][0]['issue_id']==91
+    assert {'field_key':'issue_operator','field_value':['dev']} in bodies[0]['field_value_pairs']
+    assert {'field_key':'_field_linked_story','field_value':7082224050} in bodies[0]['field_value_pairs']
+    for collision in ('issue_operator','field_evidence'):
+        target['requirement_link_field']=collision
+        path.write_text(json.dumps(config))
+        with pytest.raises(ValueError,match='config_invalid'):
+            tickets._config('app')

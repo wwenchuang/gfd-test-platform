@@ -3,7 +3,7 @@ window.WorkbenchProject = (() => {
   const intakePath = '/platform/requirement-design/intake';
   const statuses = {awaiting_qa_target:'QA 包已到 · 等待配置该端的 QA 执行设备',no_admitted_scripts:'QA 包已到 · 本端尚无通过校验的需求脚本',build_unavailable:'构建回执待核对 · 暂缓执行',source_unavailable:'需求或设计材料读取异常 · 暂缓测试',smoke_running:'冒烟执行中 · 后续回归等待结果',smoke_blocked:'冒烟未达继续条件 · 后续回归已暂停',design_completed:'测试设计已生成', design_failed:'测试设计生成失败',
     design_running:'正在设计测试用例',design_busy:'测试设计等待模型资源',
-    awaiting_qa_build:'已转测 · 等待 QA 构建', design_changed_since_build:'已转测 · 构建对应的设计已变更',
+    qa_package_scope_required:'已转测 · 等待配置可核实的专用 QA 包', awaiting_qa_build:'已转测 · 等待 QA 构建', design_changed_since_build:'已转测 · 构建对应的设计已变更',
     awaiting_design:'已转测 · 等待当前版本测试设计',awaiting_reviewed_baselines:'已转测 · 待绑定已发布基线',awaiting_mapping:'需求已登记 · 可以从验收条件生成脚本', blocked:'执行受阻', partial:'部分平台已提交', submitted:'已提交回归'};
   function line(parent, text, tag='p') {
     const node = document.createElement(tag);

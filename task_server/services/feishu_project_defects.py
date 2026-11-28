@@ -59,9 +59,16 @@ def _config(app):
                     or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',field['field_key']) or field['field_key'] in field_keys):
                 raise ValueError()
             field_keys.add(field['field_key'])
+        if 'requirement_link_field' in target:
+            link_field = target['requirement_link_field']
+            if not isinstance(link_field,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',link_field) or link_field in field_keys:
+                raise ValueError()
+            field_keys.add(link_field)
         if 'developer_assignment' in target:
             routing = target['developer_assignment']
-            if (not isinstance(routing,dict) or set(routing) != {'requirement_type','developer_field','assignee_field'}
+            required = {'requirement_type','developer_field','assignee_field'}
+            if (not isinstance(routing,dict) or not required <= set(routing) <= required | {'developer_role','assignee_field_type'}
+                    or routing.get('assignee_field_type','user') not in {'user','multi_user'}
                     or any(not isinstance(v,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',v) for v in routing.values())
                     or routing['assignee_field'] in field_keys):
                 raise ValueError()
@@ -124,11 +131,19 @@ def _assigned_developer(target, requirement, headers):
     from .feishu_requirement_sync import _value
     fields = row.get('fields')
     value = _value(fields,routing['developer_field']) if isinstance(fields,list) else None
+    if 'developer_role' in routing:
+        if not isinstance(value,list):
+            return None
+        roles = [role for role in value if isinstance(role,dict) and role.get('role') == routing['developer_role']]
+        if len(roles) != 1 or roles[0].get('exist') is False or not isinstance(roles[0].get('owners'),list):
+            return None
+        value = roles[0]['owners']
     if isinstance(value,list) and len(value)==1:
         value = value[0]
     if not isinstance(value,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',value):
         return None
-    return {'field_key':routing['assignee_field'],'field_value':value}
+    return {'field_key':routing['assignee_field'],
+            'field_value':[value] if routing.get('assignee_field_type') == 'multi_user' else value}
 
 
 def _deliver(db, target, key, title, description, requirement):
@@ -155,6 +170,12 @@ def _deliver(db, target, key, title, description, requirement):
     except project.ProjectUnavailable as exc:
         return {**receipt(), 'detail':str(exc)}
     assigned = []
+    if prior['status'] != 'receipt_unknown' and 'requirement_link_field' in target:
+        item = requirement['requirement_id']
+        if (requirement['source'] != 'feishu-project:' + target['project_key']
+                or not re.fullmatch(r'[1-9][0-9]{0,18}',item) or int(item) >= 2**63):
+            return {**receipt(), 'status':'requirement_unresolved', 'detail':'requirement_link_unavailable'}
+        assigned.append({'field_key':target['requirement_link_field'],'field_value':int(item)})
     if prior['status'] != 'receipt_unknown' and 'developer_assignment' in target:
         try:
             owner_field = _assigned_developer(target,requirement,headers)
