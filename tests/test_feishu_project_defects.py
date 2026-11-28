@@ -314,3 +314,14 @@ def test_routes_single_owner_to_multi_user_and_links_exact_story(flow,monkeypatc
         path.write_text(json.dumps(config))
         with pytest.raises(ValueError,match='config_invalid'):
             tickets._config('app')
+
+
+def test_configured_destination_without_accepted_failure_signatures_keeps_evidence_pending(flow, tmp_path):
+    _, _, calls = flow
+    path = tmp_path / 'tickets.json'
+    config = json.loads(path.read_text())
+    config['apps']['app']['rules'] = []
+    path.write_text(json.dumps(config))
+    review = tickets.process_ui_batch(ACTOR, BATCH)
+    assert review['attempts'][0]['status'] == 'needs_evidence'
+    assert not calls

@@ -73,7 +73,7 @@ def _config(app):
                     or routing['assignee_field'] in field_keys):
                 raise ValueError()
         rules = target['rules']
-        if not isinstance(rules,list) or not rules:
+        if not isinstance(rules,list):
             raise ValueError()
         for rule in rules:
             if not re.fullmatch(r'[0-9a-f]{64}',rule['case_revision']) or not re.fullmatch(r'step_[0-9a-f]{24}',rule['step_id']):
