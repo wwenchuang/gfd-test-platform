@@ -40,3 +40,37 @@ class WikiAcceptance(unittest.TestCase):
         with patch.object(wiki, '_api', side_effect=[{'tenant_access_token':'t'},
                 {'data':{'node':{'obj_type':'sheet','obj_token':'ABC'}}}]), self.assertRaisesRegex(ValueError,'type'):
             wiki.read_wiki_clauses(self.url)
+
+    def test_personal_identity_reads_only_approved_documents_without_bot_token(self):
+        env = {'MIDSCENE_FEISHU_DOCS_IDENTITY':'user','MIDSCENE_FEISHU_DOCS_USER_DOCUMENTS':'wiki/Abc123'}
+        with patch.dict(os.environ,env), patch.object(wiki,'_personal_get',create=True,side_effect=[
+                {'data':{'node':{'obj_type':'docx','obj_token':'D123'}}}, {'data':{'content':'拼图正文'}}]) as get, patch.object(wiki,'_api') as bot:
+            self.assertEqual(wiki.read_wiki_clauses(self.url),['拼图正文'])
+            with self.assertRaisesRegex(ValueError,'scope'):
+                wiki.read_wiki_clauses('https://company.feishu.cn/wiki/Other')
+            self.assertEqual(get.call_count,2)
+            bot.assert_not_called()
+
+    def test_personal_login_failure_does_not_fall_back(self):
+        env={'MIDSCENE_FEISHU_DOCS_IDENTITY':'user','MIDSCENE_FEISHU_DOCS_USER_DOCUMENTS':'wiki/Abc123'}
+        with patch.dict(os.environ,env), patch.object(wiki,'_personal_get',create=True,side_effect=ValueError('prd_document_user_authorization_required')),patch.object(wiki,'_api') as bot:
+            with self.assertRaisesRegex(ValueError,'user_authorization'):
+                wiki.read_wiki_clauses(self.url)
+            bot.assert_not_called()
+
+    def test_cli_encodes_query_parameters_and_excludes_service_secrets(self):
+        import subprocess
+        import json
+        with patch.object(wiki.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'{"ok":true,"identity":"user","data":{}}',b'')) as run:
+            wiki._personal_get('/wiki/v2/spaces/get_node?token=Abc123')
+            args = run.call_args.args[0]
+            self.assertEqual(args[3],'/open-apis/wiki/v2/spaces/get_node')
+            self.assertEqual(json.loads(args[args.index('--params')+1]),{'token':'Abc123'})
+            self.assertEqual(args[args.index('--as')+1],'user')
+            self.assertNotIn('FEISHU_DOCS_APP_SECRET',run.call_args.kwargs['env'])
+
+    def test_cli_rejects_application_identity_in_personal_mode(self):
+        import subprocess
+        with patch.object(wiki.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'{"ok":true,"identity":"bot","data":{}}',b'')):
+            with self.assertRaisesRegex(ValueError,'rejected'):
+                wiki._personal_get('/docx/v1/documents/A/raw_content')

@@ -124,3 +124,7 @@ build 对象在 build-context 返回的四个字段外，需要 platform、envir
 ### 知识库中的需求正文
 
 当验收字段保存飞书知识库或新版云文档链接时，轮询器从配置的企业域名解析文档，通过飞书开放平台读取当前正文，再按实际内容计算版本。配置 `MIDSCENE_FEISHU_DOCS_HOST`、`FEISHU_DOCS_APP_ID` 和 `FEISHU_DOCS_APP_SECRET`。将目标知识库或单篇文档的阅读权限授予该应用，并开通节点与文档只读权限。文本超过平台设计容量会给出明确错误。拼图需求在工作项的 `wiki` 字段提供知识库链接，`field_4` 对应手机设计。后台定时读取与员工浏览器登录各自鉴权。[飞书知识库授权](https://open.feishu.cn/document/server-docs/docs/wiki-v2/wiki-overview)
+
+个人账号可授权需求同步器读取指定 PRD。服务器使用官方飞书 CLI 的用户身份，凭据保存在服务用户专用的 `/var/lib/midscene-feishu-docs`（权限 0700）。安装时核对官方发布包校验和，将可执行文件放入 `/opt/midscene-feishu-docs/lark-cli`。使用与轮询器相同的系统用户及该专用 HOME，通过官方页面完成配置和个人只读授权。运行 `auth status --json --verify` 检查用户授权，并通过工作项里的真实链接读取节点和正文验收。持续同步需要可续期的用户授权。
+
+在轮询器环境中设置 `MIDSCENE_FEISHU_DOCS_IDENTITY=user`，并将授权读取的文档标识以空格分隔配置在 `MIDSCENE_FEISHU_DOCS_USER_DOCUMENTS`，例如 `wiki/<节点标识>`。链接须同时匹配原有企业域名。撤销个人授权后同步器会记录读取错误。请勿将个人密码、浏览器 Cookie 或用户令牌填入项目配置。
